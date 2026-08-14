@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import LoginForm from "@/components/LoginForm";
-import { devLoginEnabled } from "@/lib/dev-auth";
 
 export const metadata = {
   title: "로그인 · 찜꽁",
@@ -16,7 +15,7 @@ export default function LoginPage() {
         </p>
       </div>
       <Suspense fallback={null}>
-        <LoginForm devLogin={devLoginEnabled()} />
+        <LoginForm />
       </Suspense>
     </main>
   );

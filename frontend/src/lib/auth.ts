@@ -5,7 +5,6 @@ import {
   DEV_SESSION_COOKIE,
   DEV_USER_EMAIL,
   DEV_USER_ID,
-  devLoginEnabled,
   isDevSessionValue,
 } from "@/lib/dev-auth";
 import type { UserProfile } from "@/generated/prisma/client";
@@ -28,16 +27,14 @@ export class UnauthorizedError extends Error {
  * therefore bypasses row-level security.
  */
 export async function requireUser(): Promise<UserProfile> {
-  // Dev-only test session; constant-false in a production build. See dev-auth.ts.
-  if (devLoginEnabled()) {
-    const store = await cookies();
-    if (isDevSessionValue(store.get(DEV_SESSION_COOKIE)?.value)) {
-      return prisma.userProfile.upsert({
-        where: { id: DEV_USER_ID },
-        update: { email: DEV_USER_EMAIL },
-        create: { id: DEV_USER_ID, email: DEV_USER_EMAIL },
-      });
-    }
+  // Dev test session; see dev-auth.ts for why this is unconditional.
+  const store = await cookies();
+  if (isDevSessionValue(store.get(DEV_SESSION_COOKIE)?.value)) {
+    return prisma.userProfile.upsert({
+      where: { id: DEV_USER_ID },
+      update: { email: DEV_USER_EMAIL },
+      create: { id: DEV_USER_ID, email: DEV_USER_EMAIL },
+    });
   }
 
   const supabase = await createClient();
