@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rm -rf /tmp/playwright-mcp-jjimkkong \"$CLAUDE_PROJECT_DIR/.playwright-mcp\" 2>/dev/null; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

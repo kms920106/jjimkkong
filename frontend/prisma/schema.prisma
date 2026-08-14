@@ -7,30 +7,77 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
-model User {
+enum MapProvider {
+  NAVER
+  KAKAO
+  GOOGLE
+}
+
+enum Platform {
+  INSTAGRAM
+  YOUTUBE
+  OTHER
+}
+
+/// Mirrors a row in Supabase's auth.users. Created lazily on the first
+/// authenticated request; Prisma cannot manage the auth schema itself.
+model UserProfile {
+  id          String      @id @db.Uuid
+  email       String?
+  mapProvider MapProvider @default(NAVER)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  posts SavedPost[]
+}
+
+model SavedPost {
   id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
+  userId    String   @db.Uuid
+  sourceUrl String
+  platform  Platform
+  title     String?
+  caption   String?  @db.Text
+  thumbnail String?
+  author    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  posts Post[]
+  user   UserProfile      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  places SavedPostPlace[]
+
+  @@unique([userId, sourceUrl])
+  @@index([userId, createdAt])
 }
 
-model Post {
+model Place {
   id        String   @id @default(cuid())
-  title     String
-  content   String?  @db.Text
-  published Boolean  @default(false)
+  name      String
+  address   String
+  lat       Float
+  lng       Float
+  category  String?
+  naverLink String?
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
-  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  authorId String
+  posts SavedPostPlace[]
 
-  @@index([authorId])
+  @@unique([name, address])
+}
+
+model SavedPostPlace {
+  postId  String
+  placeId String
+  memo    String?
+
+  post  SavedPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  place Place     @relation(fields: [placeId], references: [id], onDelete: Cascade)
+
+  @@id([postId, placeId])
+  @@index([placeId])
 }

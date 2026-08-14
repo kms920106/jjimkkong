@@ -8,7 +8,10 @@ export default defineConfig({
   schema: "prisma/schema.prisma",
   engine: "classic",
   datasource: {
-    url: env("DATABASE_URL"),
+    // Migrations must run over the direct connection: Supabase's transaction
+    // pooler (port 6543) does not support the prepared statements and advisory
+    // locks the migration engine relies on.
+    url: env("DIRECT_URL"),
   },
   migrations: {
     path: "prisma/migrations",

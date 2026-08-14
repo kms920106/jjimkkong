@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--output-dir",
+        "/tmp/playwright-mcp-jjimkkong",
+        "--output-max-size",
+        "52428800"
+      ]
+    }
+  }
+}
