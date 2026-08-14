@@ -2,11 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { loadKakaoMaps } from "@/lib/map/loader";
-import { DEFAULT_CENTER, type MapMarker } from "@/lib/map/types";
+import {
+  DEFAULT_CENTER,
+  type FocusRequest,
+  type MapMarker,
+} from "@/lib/map/types";
+import { useMarkerLookup } from "@/lib/map/useMarkerLookup";
 
 type Props = {
   markers: MapMarker[];
   onMarkerClick?: (id: string) => void;
+  focusRequest?: FocusRequest | null;
 };
 
 /**
@@ -15,15 +21,22 @@ type Props = {
  */
 const LEVEL_OVERVIEW = 9;
 const LEVEL_SINGLE = 4;
+/** Kakao's counterpart to the shared FOCUS_ZOOM. */
+const LEVEL_FOCUS = 3;
 
 type TrackedMarker = {
   marker: kakao.maps.Marker;
   handler?: () => void;
 };
 
-export default function KakaoMap({ markers, onMarkerClick }: Props) {
+export default function KakaoMap({
+  markers,
+  onMarkerClick,
+  focusRequest,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRefs = useRef<TrackedMarker[]>([]);
+  const findMarker = useMarkerLookup(markers);
   const [map, setMap] = useState<kakao.maps.Map | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,6 +118,24 @@ export default function KakaoMap({ markers, onMarkerClick }: Props) {
       map.setBounds(bounds);
     }
   }, [map, markers, onMarkerClick]);
+
+  // Panning lives apart from the marker effect so focusing a place does not
+  // tear down and rebuild every pin.
+  useEffect(() => {
+    if (!map || !focusRequest) return;
+    const target = findMarker(focusRequest.placeId);
+    if (!target) return;
+
+    const position = new window.kakao.maps.LatLng(target.lat, target.lng);
+
+    // Zoom first so panTo covers a short distance, and zoom without animating:
+    // an animated setLevel is still moving when panTo computes its trajectory,
+    // which lands the map at the wrong center.
+    if (map.getLevel() > LEVEL_FOCUS) {
+      map.setLevel(LEVEL_FOCUS, { animate: false });
+    }
+    map.panTo(position);
+  }, [map, findMarker, focusRequest]);
 
   if (error) {
     return (

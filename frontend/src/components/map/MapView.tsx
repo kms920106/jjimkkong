@@ -14,14 +14,17 @@ export default function MapView({
   provider,
   markers,
   onMarkerClick,
+  focusRequest,
 }: MapViewProps) {
+  const shared = { markers, onMarkerClick, focusRequest };
+
   switch (provider) {
     case "KAKAO":
-      return <KakaoMap key="kakao" markers={markers} onMarkerClick={onMarkerClick} />;
+      return <KakaoMap key="kakao" {...shared} />;
     case "GOOGLE":
-      return <GoogleMap key="google" markers={markers} onMarkerClick={onMarkerClick} />;
+      return <GoogleMap key="google" {...shared} />;
     case "NAVER":
     default:
-      return <NaverMap key="naver" markers={markers} onMarkerClick={onMarkerClick} />;
+      return <NaverMap key="naver" {...shared} />;
   }
 }

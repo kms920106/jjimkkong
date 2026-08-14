@@ -19,6 +19,11 @@ declare namespace naver.maps {
       options?: { center?: LatLng; zoom?: number },
     );
     setCenter(latlng: LatLng): void;
+    panTo(
+      latlng: LatLng,
+      transitionOptions?: { duration?: number; easing?: string },
+    ): void;
+    getZoom(): number;
     setZoom(zoom: number): void;
     fitBounds(bounds: LatLngBounds): void;
     destroy(): void;
@@ -49,7 +54,12 @@ declare namespace kakao.maps {
   class Map {
     constructor(element: HTMLElement, options: { center: LatLng; level?: number });
     setCenter(latlng: LatLng): void;
-    setLevel(level: number): void;
+    panTo(latlng: LatLng): void;
+    getLevel(): number;
+    setLevel(
+      level: number,
+      options?: { animate?: boolean; anchor?: LatLng },
+    ): void;
     setBounds(bounds: LatLngBounds): void;
   }
   class Marker {
@@ -86,6 +96,8 @@ declare namespace google.maps {
       },
     );
     setCenter(latlng: { lat: number; lng: number }): void;
+    panTo(latlng: { lat: number; lng: number }): void;
+    getZoom(): number | undefined;
     setZoom(zoom: number): void;
     fitBounds(bounds: LatLngBounds, padding?: number): void;
   }

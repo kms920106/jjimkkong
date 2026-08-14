@@ -2,16 +2,29 @@
 
 import { useEffect, useRef, useState } from "react";
 import { loadNaverMaps } from "@/lib/map/loader";
-import { DEFAULT_CENTER, DEFAULT_ZOOM, type MapMarker } from "@/lib/map/types";
+import { useMarkerLookup } from "@/lib/map/useMarkerLookup";
+import {
+  DEFAULT_CENTER,
+  DEFAULT_ZOOM,
+  FOCUS_ZOOM,
+  type FocusRequest,
+  type MapMarker,
+} from "@/lib/map/types";
 
 type Props = {
   markers: MapMarker[];
   onMarkerClick?: (id: string) => void;
+  focusRequest?: FocusRequest | null;
 };
 
-export default function NaverMap({ markers, onMarkerClick }: Props) {
+export default function NaverMap({
+  markers,
+  onMarkerClick,
+  focusRequest,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRefs = useRef<naver.maps.Marker[]>([]);
+  const findMarker = useMarkerLookup(markers);
   // The map lives in state, not a ref: the marker effect below must re-run
   // once the SDK finishes loading, and a ref assignment triggers no render.
   const [map, setMap] = useState<naver.maps.Map | null>(null);
@@ -87,6 +100,21 @@ export default function NaverMap({ markers, onMarkerClick }: Props) {
       map.fitBounds(bounds);
     }
   }, [map, markers, onMarkerClick]);
+
+  // Panning lives apart from the marker effect so focusing a place does not
+  // tear down and rebuild every pin.
+  useEffect(() => {
+    if (!map || !focusRequest) return;
+    const target = findMarker(focusRequest.placeId);
+    if (!target) return;
+
+    const position = new window.naver.maps.LatLng(target.lat, target.lng);
+
+    // Zoom first, then pan. panTo only animates over short distances, so a
+    // cross-country jump at overview zoom would crawl and only then close in.
+    if (map.getZoom() < FOCUS_ZOOM) map.setZoom(FOCUS_ZOOM);
+    map.panTo(position, { duration: 400 });
+  }, [map, findMarker, focusRequest]);
 
   if (error) {
     return (

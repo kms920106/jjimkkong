@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import MapView from "@/components/map/MapView";
 import CaptionPrompt from "@/components/CaptionPrompt";
 import type {
@@ -8,7 +8,7 @@ import type {
   MapProvider,
   SavedPostDTO,
 } from "@/lib/types";
-import type { MapMarker } from "@/lib/map/types";
+import type { FocusRequest, MapMarker } from "@/lib/map/types";
 
 type Props = {
   initialPosts: SavedPostDTO[];
@@ -30,7 +30,28 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
   const [captionNeeded, setCaptionNeeded] = useState<IngestResponse | null>(
     null,
   );
-  const [focusedPlaceId, setFocusedPlaceId] = useState<string | null>(null);
+  // The request drives the camera; the id it carries drives the highlight.
+  // A bare id could not express "focus this again" after the user pans away,
+  // because React skips the re-render when state is unchanged.
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  const focusedPlaceId = focusRequest?.placeId ?? null;
+  const mapRef = useRef<HTMLDivElement>(null);
+
+  const requestFocus = useCallback((placeId: string) => {
+    setFocusRequest((prev) => ({ placeId, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+
+  /**
+   * The map sits above the list, so on a phone it can be scrolled off screen
+   * when a place is picked — panning it would then be invisible.
+   */
+  const focusPlaceFromList = useCallback(
+    (placeId: string) => {
+      requestFocus(placeId);
+      mapRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    },
+    [requestFocus],
+  );
 
   const markers = useMemo<MapMarker[]>(() => {
     const byId = new Map<string, MapMarker>();
@@ -180,7 +201,14 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
   async function handleDelete(postId: string) {
     const res = await fetch(`/api/posts/${postId}`, { method: "DELETE" });
     if (res.ok) {
-      setPosts((prev) => prev.filter((post) => post.id !== postId));
+      const remaining = posts.filter((post) => post.id !== postId);
+      // The same place can be saved from two posts, so focus only goes stale
+      // once no remaining post holds it.
+      const stillSaved = remaining.some((post) =>
+        post.places.some((place) => place.id === focusedPlaceId),
+      );
+      if (focusedPlaceId && !stillSaved) setFocusRequest(null);
+      setPosts(remaining);
     } else {
       setError(await readError(res, "삭제하지 못했습니다."));
     }
@@ -209,11 +237,15 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       )}
 
-      <div className="h-[45dvh] min-h-72 overflow-hidden rounded-xl border border-neutral-200 dark:border-neutral-800">
+      <div
+        ref={mapRef}
+        className="h-[45dvh] min-h-72 overflow-hidden rounded-xl border border-neutral-200 dark:border-neutral-800"
+      >
         <MapView
           provider={mapProvider}
           markers={markers}
-          onMarkerClick={setFocusedPlaceId}
+          onMarkerClick={requestFocus}
+          focusRequest={focusRequest}
         />
       </div>
 
@@ -233,6 +265,7 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
                 key={post.id}
                 post={post}
                 focusedPlaceId={focusedPlaceId}
+                onFocusPlace={focusPlaceFromList}
                 onDelete={() => handleDelete(post.id)}
               />
             ))}
@@ -263,17 +296,43 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
 function PostCard({
   post,
   focusedPlaceId,
+  onFocusPlace,
   onDelete,
 }: {
   post: SavedPostDTO;
   focusedPlaceId: string | null;
+  onFocusPlace: (id: string) => void;
   onDelete: () => void;
 }) {
   const isFocused = post.places.some((place) => place.id === focusedPlaceId);
+  // A post can hold several places (one Instagram reel, several stops); the
+  // card focuses the first one rather than asking which.
+  const firstPlace = post.places[0];
 
   return (
     <li
+      role={firstPlace ? "button" : undefined}
+      tabIndex={firstPlace ? 0 : undefined}
+      // Overrides the default name (which would otherwise absorb the link
+      // and delete button text below) with what the click actually does.
+      aria-label={firstPlace ? `지도에서 ${firstPlace.name} 보기` : undefined}
+      // Not aria-pressed: clicking moves the camera rather than toggling a
+      // state the user can un-press.
+      aria-current={isFocused || undefined}
+      onClick={firstPlace ? () => onFocusPlace(firstPlace.id) : undefined}
+      onKeyDown={
+        firstPlace
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onFocusPlace(firstPlace.id);
+              }
+            }
+          : undefined
+      }
       className={`flex gap-3 rounded-xl border p-3 transition ${
+        firstPlace ? "cursor-pointer" : ""
+      } focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 ${
         isFocused
           ? "border-neutral-900 dark:border-white"
           : "border-neutral-200 dark:border-neutral-800"
@@ -293,6 +352,9 @@ function PostCard({
             href={post.sourceUrl}
             target="_blank"
             rel="noreferrer noopener"
+            // The card behind it also opens on click; without stopping
+            // propagation, opening the link would also re-fire the focus.
+            onClick={(event) => event.stopPropagation()}
             className="block truncate text-sm font-medium hover:underline"
           >
             {post.title ?? post.sourceUrl}
@@ -321,7 +383,11 @@ function PostCard({
       </div>
       <button
         type="button"
-        onClick={onDelete}
+        onClick={(event) => {
+          // Otherwise deleting would also focus the card it just removed.
+          event.stopPropagation();
+          onDelete();
+        }}
         aria-label="삭제"
         className="h-fit shrink-0 rounded-lg px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-100 hover:text-red-600 dark:hover:bg-neutral-800"
       >
