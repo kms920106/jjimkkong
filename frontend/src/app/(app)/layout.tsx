@@ -1,12 +1,8 @@
-import AppHeader from "@/components/AppHeader";
-
+/**
+ * No shared chrome: the home page is a fullscreen map that floats its own
+ * hamburger and + buttons, and every other page brings its own header and
+ * width container.
+ */
 export default function AppLayout({ children }: LayoutProps<"/">) {
-  return (
-    <>
-      <AppHeader />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        {children}
-      </main>
-    </>
-  );
+  return <main className="flex-1">{children}</main>;
 }

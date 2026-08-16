@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { savedPostInclude, toSavedPostDTO } from "@/lib/serialize";
@@ -16,9 +17,17 @@ export default async function HomePage() {
   });
 
   return (
-    <HomeClient
-      initialPosts={posts.map(toSavedPostDTO)}
-      mapProvider={user.mapProvider}
-    />
+    // HomeClient reads ?place= via useSearchParams, which Next requires to sit
+    // under a Suspense boundary.
+    <Suspense>
+      <HomeClient
+        initialPosts={posts.map(toSavedPostDTO)}
+        profile={{
+          nickname: user.nickname,
+          email: user.email,
+          mapProvider: user.mapProvider,
+        }}
+      />
+    </Suspense>
   );
 }

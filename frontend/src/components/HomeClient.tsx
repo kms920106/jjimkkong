@@ -1,18 +1,17 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import MapView from "@/components/map/MapView";
 import CaptionPrompt from "@/components/CaptionPrompt";
-import type {
-  IngestResponse,
-  MapProvider,
-  SavedPostDTO,
-} from "@/lib/types";
+import AppDrawer from "@/components/AppDrawer";
+import UrlSheet from "@/components/UrlSheet";
+import type { IngestResponse, ProfileDTO, SavedPostDTO } from "@/lib/types";
 import type { FocusRequest, MapMarker } from "@/lib/map/types";
 
 type Props = {
   initialPosts: SavedPostDTO[];
-  mapProvider: MapProvider;
+  profile: ProfileDTO;
 };
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -20,11 +19,12 @@ async function readError(res: Response, fallback: string): Promise<string> {
   return body?.error ?? fallback;
 }
 
-export default function HomeClient({ initialPosts, mapProvider }: Props) {
+export default function HomeClient({ initialPosts, profile }: Props) {
   const [posts, setPosts] = useState(initialPosts);
-  const [url, setUrl] = useState("");
   const [ingesting, setIngesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   // Only set when the caption could not be fetched; saving needs the user to
   // paste it before there is any text to extract places from.
   const [captionNeeded, setCaptionNeeded] = useState<IngestResponse | null>(
@@ -33,25 +33,26 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
   // The request drives the camera; the id it carries drives the highlight.
   // A bare id could not express "focus this again" after the user pans away,
   // because React skips the re-render when state is unchanged.
-  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
-  const focusedPlaceId = focusRequest?.placeId ?? null;
-  const mapRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // /posts sends the user back here with ?place=<id> to move the camera.
+  // Seeding the initial state from it (rather than setting it in an effect)
+  // gets the pin centred on the very first paint, with no visible jump.
+  const requestedPlace = searchParams.get("place");
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(() =>
+    requestedPlace ? { placeId: requestedPlace, nonce: 0 } : null,
+  );
 
   const requestFocus = useCallback((placeId: string) => {
     setFocusRequest((prev) => ({ placeId, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
 
-  /**
-   * The map sits above the list, so on a phone it can be scrolled off screen
-   * when a place is picked — panning it would then be invisible.
-   */
-  const focusPlaceFromList = useCallback(
-    (placeId: string) => {
-      requestFocus(placeId);
-      mapRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    },
-    [requestFocus],
-  );
+  // Strip the consumed param so a refresh or a back-navigation does not yank
+  // the map back to a pin the user has since panned away from. This is a URL
+  // side effect only — the focus above already happened.
+  useEffect(() => {
+    if (requestedPlace) router.replace("/", { scroll: false });
+  }, [requestedPlace, router]);
 
   const markers = useMemo<MapMarker[]>(() => {
     const byId = new Map<string, MapMarker>();
@@ -140,8 +141,8 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
         throw new Error(await readError(res, "저장하지 못했습니다."));
       }
 
-      setUrl("");
       setCaptionNeeded(null);
+      setSheetOpen(false);
       await refreshPosts();
     },
     [refreshPosts],
@@ -159,9 +160,11 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
         const result = await ingest(targetUrl, manualCaption);
 
         // Without a caption there is nothing to extract places from, so ask
-        // for it instead of failing the save.
+        // for it instead of failing the save. The sheet steps aside so the
+        // two dialogs are never stacked on top of each other.
         if (result.needsManualCaption) {
           setCaptionNeeded(result);
+          setSheetOpen(false);
           return;
         }
 
@@ -191,87 +194,83 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
     [captionNeeded, ingest, save],
   );
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed || ingesting) return;
-    await ingestAndSave(trimmed);
-  }
-
-  async function handleDelete(postId: string) {
-    const res = await fetch(`/api/posts/${postId}`, { method: "DELETE" });
-    if (res.ok) {
-      const remaining = posts.filter((post) => post.id !== postId);
-      // The same place can be saved from two posts, so focus only goes stale
-      // once no remaining post holds it.
-      const stillSaved = remaining.some((post) =>
-        post.places.some((place) => place.id === focusedPlaceId),
-      );
-      if (focusedPlaceId && !stillSaved) setFocusRequest(null);
-      setPosts(remaining);
-    } else {
-      setError(await readError(res, "삭제하지 못했습니다."));
-    }
-  }
-
   return (
-    <div className="flex flex-col gap-4">
-      <form onSubmit={handleSubmit} className="flex gap-2">
-        <input
-          type="url"
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          placeholder="인스타그램 또는 유튜브 링크를 붙여넣으세요"
-          className="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-transparent px-4 py-3 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700"
-        />
-        <button
-          type="submit"
-          disabled={ingesting || !url.trim()}
-          className="shrink-0 rounded-lg bg-neutral-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-        >
-          {ingesting ? "읽는 중…" : "저장"}
-        </button>
-      </form>
+    // The map fills the viewport; every other control floats above it.
+    <div className="fixed inset-0">
+      <MapView
+        provider={profile.mapProvider}
+        markers={markers}
+        onMarkerClick={requestFocus}
+        focusRequest={focusRequest}
+      />
 
-      {error && (
-        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      <button
+        type="button"
+        onClick={() => setDrawerOpen(true)}
+        aria-label="메뉴 열기"
+        className="absolute top-4 left-4 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-white text-neutral-800 shadow-lg transition hover:bg-neutral-50 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-5 w-5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          aria-hidden
+        >
+          <path d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          setError(null);
+          setSheetOpen(true);
+        }}
+        aria-label="링크 추가"
+        className="absolute right-5 bottom-6 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-neutral-900 text-white shadow-lg transition hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-7 w-7"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          aria-hidden
+        >
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+
+      {/* The sheet owns its own error line while open; this banner is for the
+          failures that land after it closes (a caption retry, say). */}
+      {error && !sheetOpen && !captionNeeded && (
+        <p
+          role="status"
+          className="absolute inset-x-4 bottom-24 z-30 rounded-xl bg-red-600 px-4 py-3 text-sm text-white shadow-lg"
+        >
+          {error}
+        </p>
       )}
 
-      <div
-        ref={mapRef}
-        className="h-[45dvh] min-h-72 overflow-hidden rounded-xl border border-neutral-200 dark:border-neutral-800"
-      >
-        <MapView
-          provider={mapProvider}
-          markers={markers}
-          onMarkerClick={requestFocus}
-          focusRequest={focusRequest}
+      <AppDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        profile={profile}
+        savedCount={posts.length}
+      />
+
+      {sheetOpen && (
+        <UrlSheet
+          busy={ingesting}
+          error={error}
+          onClose={() => setSheetOpen(false)}
+          onSubmit={(targetUrl) => void ingestAndSave(targetUrl)}
         />
-      </div>
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold text-neutral-500 dark:text-neutral-400">
-          저장한 게시글 {posts.length}개
-        </h2>
-
-        {posts.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-neutral-300 p-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
-            아직 저장한 게시글이 없습니다. 링크를 붙여넣어 시작하세요.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {posts.map((post) => (
-              <PostCard
-                key={post.id}
-                post={post}
-                focusedPlaceId={focusedPlaceId}
-                onFocusPlace={focusPlaceFromList}
-                onDelete={() => handleDelete(post.id)}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+      )}
 
       {captionNeeded && (
         <CaptionPrompt
@@ -290,109 +289,5 @@ export default function HomeClient({ initialPosts, mapProvider }: Props) {
         />
       )}
     </div>
-  );
-}
-
-function PostCard({
-  post,
-  focusedPlaceId,
-  onFocusPlace,
-  onDelete,
-}: {
-  post: SavedPostDTO;
-  focusedPlaceId: string | null;
-  onFocusPlace: (id: string) => void;
-  onDelete: () => void;
-}) {
-  const isFocused = post.places.some((place) => place.id === focusedPlaceId);
-  // A post can hold several places (one Instagram reel, several stops); the
-  // card focuses the first one rather than asking which.
-  const firstPlace = post.places[0];
-
-  return (
-    <li
-      role={firstPlace ? "button" : undefined}
-      tabIndex={firstPlace ? 0 : undefined}
-      // Overrides the default name (which would otherwise absorb the link
-      // and delete button text below) with what the click actually does.
-      aria-label={firstPlace ? `지도에서 ${firstPlace.name} 보기` : undefined}
-      // Not aria-pressed: clicking moves the camera rather than toggling a
-      // state the user can un-press.
-      aria-current={isFocused || undefined}
-      onClick={firstPlace ? () => onFocusPlace(firstPlace.id) : undefined}
-      onKeyDown={
-        firstPlace
-          ? (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onFocusPlace(firstPlace.id);
-              }
-            }
-          : undefined
-      }
-      className={`flex gap-3 rounded-xl border p-3 transition ${
-        firstPlace ? "cursor-pointer" : ""
-      } focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 ${
-        isFocused
-          ? "border-neutral-900 dark:border-white"
-          : "border-neutral-200 dark:border-neutral-800"
-      }`}
-    >
-      {post.thumbnail && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={post.thumbnail}
-          alt=""
-          className="h-20 w-20 shrink-0 rounded-lg object-cover"
-        />
-      )}
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="min-w-0">
-          <a
-            href={post.sourceUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            // The card behind it also opens on click; without stopping
-            // propagation, opening the link would also re-fire the focus.
-            onClick={(event) => event.stopPropagation()}
-            className="block truncate text-sm font-medium hover:underline"
-          >
-            {post.title ?? post.sourceUrl}
-          </a>
-          {post.author && (
-            <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-              {post.author}
-            </p>
-          )}
-        </div>
-        <ul className="flex flex-wrap gap-1.5">
-          {post.places.map((place) => (
-            <li
-              key={place.id}
-              title={place.address}
-              className={`rounded-full px-2.5 py-1 text-xs ${
-                place.id === focusedPlaceId
-                  ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                  : "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-              }`}
-            >
-              {place.name}
-            </li>
-          ))}
-        </ul>
-      </div>
-      <button
-        type="button"
-        onClick={(event) => {
-          // Otherwise deleting would also focus the card it just removed.
-          event.stopPropagation();
-          onDelete();
-        }}
-        aria-label="삭제"
-        className="h-fit shrink-0 rounded-lg px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-100 hover:text-red-600 dark:hover:bg-neutral-800"
-      >
-        삭제
-      </button>
-    </li>
   );
 }

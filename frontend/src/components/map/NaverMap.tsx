@@ -53,12 +53,24 @@ export default function NaverMap({
     return () => {
       cancelled = true;
       for (const marker of markerRefs.current) {
-        window.naver?.maps?.Event.clearInstanceListeners(marker);
-        marker.setMap(null);
+        // An unauthorized key still loads the script but leaves the instance
+        // half-built, so tearing a marker down throws from inside the SDK.
+        // Unmounting must not take the page with it — navigating away from
+        // the map is an ordinary action now that the list has its own route.
+        try {
+          window.naver?.maps?.Event.clearInstanceListeners(marker);
+          marker.setMap(null);
+        } catch {
+          // Nothing to recover: the page is discarding this map anyway.
+        }
       }
       markerRefs.current = [];
       // `created` covers the case where the map was built after unmount began.
-      created?.destroy();
+      try {
+        created?.destroy();
+      } catch {
+        // Same as above.
+      }
       setMap(null);
     };
   }, []);

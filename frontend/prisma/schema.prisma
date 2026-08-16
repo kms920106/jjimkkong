@@ -29,6 +29,9 @@ enum Platform {
 model UserProfile {
   id          String      @id @db.Uuid
   email       String?
+  /// User-chosen display name. Null until they set one; the UI falls back to
+  /// the local part of the email so the drawer always has something to show.
+  nickname    String?
   mapProvider MapProvider @default(NAVER)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt

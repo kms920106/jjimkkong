@@ -54,4 +54,24 @@ export type IngestResponse = {
   needsManualCaption: boolean;
 };
 
+/** The subset of UserProfile the client shell renders. */
+export type ProfileDTO = {
+  nickname: string | null;
+  email: string | null;
+  mapProvider: MapProvider;
+};
+
+/**
+ * What the drawer shows above the menu. The email's local part stands in
+ * until the user sets a nickname, so the profile row is never blank.
+ */
+export function displayName(profile: {
+  nickname: string | null;
+  email: string | null;
+}): string {
+  if (profile.nickname) return profile.nickname;
+  const local = profile.email?.split("@")[0];
+  return local && local.length > 0 ? local : "찜꽁 사용자";
+}
+
 export type { MapProvider, Platform };
