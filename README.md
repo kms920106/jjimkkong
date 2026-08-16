@@ -59,12 +59,12 @@ npm run dev
 Supabase 대시보드 → Authentication → Providers에서 Google(및 카카오)을 활성화하고,
 Authentication → URL Configuration의 Redirect URLs에 다음을 추가합니다.
 
-- `http://localhost:3000/auth/callback`
+- `http://localhost:4000/auth/callback`
 - `https://<vercel-도메인>/auth/callback`
 
 ### 지도 도메인 등록
 
-각 지도 콘솔의 허용 도메인에 `http://localhost:3000`과 Vercel 도메인을 등록해야 지도가 렌더링됩니다.
+각 지도 콘솔의 허용 도메인에 `http://localhost:4000`과 Vercel 도메인을 등록해야 지도가 렌더링됩니다.
 
 ## 배포 (Vercel)
 
