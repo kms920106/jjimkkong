@@ -1,10 +1,18 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
+// engineType = "client" compiles queries in JS and runs them through the
+// node-postgres driver adapter (see lib/prisma.ts), so no native engine binary
+// is generated. The default "library" engine needs a platform-specific
+// libquery_engine .node file, and Next.js does not copy that into the Vercel
+// function bundle when the client sits under a custom `output` path — the
+// deploy then builds fine and dies at runtime with "could not locate the Query
+// Engine for runtime rhel-openssl-3.0.x".
 generator client {
-  provider      = "prisma-client"
-  output        = "../src/generated/prisma"
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  provider   = "prisma-client"
+  output     = "../src/generated/prisma"
+  runtime    = "nodejs"
+  engineType = "client"
 }
 
 datasource db {
