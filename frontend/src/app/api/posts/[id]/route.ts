@@ -19,7 +19,7 @@ export async function DELETE(
 
     if (count === 0) {
       return NextResponse.json(
-        { error: "저장한 게시글을 찾을 수 없습니다." },
+        { error: "저장한 링크를 찾을 수 없습니다." },
         { status: 404 },
       );
     }

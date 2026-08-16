@@ -10,6 +10,12 @@ export type PostMetadata = {
   author: string | null;
   /** True when the caption could not be fetched and the user must paste it. */
   needsManualCaption: boolean;
+  /**
+   * Set only for map links, which name one place outright. The ingest route
+   * geocodes this directly instead of sending a caption through the model —
+   * there is no prose to read, and the page already told us the answer.
+   */
+  place?: { name: string; hint: string | null };
 };
 
 export class UnsupportedUrlError extends Error {
@@ -32,6 +38,7 @@ export function classifyUrl(raw: string): {
   platform: Platform;
   url: URL;
   youtubeId?: string;
+  mapPlace?: MapPlaceRef;
 } {
   let url: URL;
   try {
@@ -71,13 +78,81 @@ export function classifyUrl(raw: string): {
     }
   }
 
+  const mapPlace = classifyMapPlace(host, url);
+  if (mapPlace) {
+    return { platform: platformOf(mapPlace), url, mapPlace };
+  }
+
   throw new UnsupportedUrlError(raw);
 }
 
+/**
+ * A short link is classified before its vendor page is known, but the host it
+ * was handed out under already names the vendor — so the platform never has to
+ * wait for the redirect to resolve.
+ */
+function platformOf(ref: MapPlaceRef): Platform {
+  return ref.vendor === "kakao" ? Platform.KAKAO : Platform.NAVER;
+}
+
+/**
+ * A map link *is* a place, unlike a post that mentions several. Both Naver and
+ * Kakao key their place pages on a numeric id, so recognising the id is the
+ * whole classification — the name is looked up from it later.
+ *
+ * Share sheets hand out short links (naver.me, kko.to) that carry no id until
+ * they are followed, so those are marked for a redirect resolve at fetch time
+ * rather than being parsed here, where there is no network.
+ */
+export type MapPlaceRef =
+  | { vendor: "naver" | "kakao"; id: string }
+  | { vendor: "naver" | "kakao"; shortUrl: string };
+
+function classifyMapPlace(host: string, url: URL): MapPlaceRef | undefined {
+  if (host === "naver.me") return { vendor: "naver", shortUrl: url.toString() };
+  if (host === "kko.to" || host === "kko.kakao.com") {
+    return { vendor: "kakao", shortUrl: url.toString() };
+  }
+
+  if (host === "map.naver.com" || host === "m.place.naver.com") {
+    // /p/entry/place/<id>, /p/search/…/place/<id> and the bare
+    // m.place.naver.com/<type>/<id>/home all end on the same numeric id.
+    const id = url.pathname.match(/\/place\/(\d+)|^\/[a-z]+\/(\d+)/);
+    const found = id?.[1] ?? id?.[2];
+    if (found) return { vendor: "naver", id: found };
+  }
+
+  if (host === "place.map.kakao.com" || host === "m.place.map.kakao.com") {
+    const found = url.pathname.match(/^\/(\d+)/)?.[1];
+    if (found) return { vendor: "kakao", id: found };
+  }
+
+  if (host === "map.kakao.com" || host === "applink.map.kakao.com") {
+    // The share sheet's applink form carries the id in the query string.
+    const found = url.searchParams.get("id") ?? url.searchParams.get("itemId");
+    if (found && /^\d+$/.test(found)) return { vendor: "kakao", id: found };
+  }
+
+  return undefined;
+}
+
 /** Strips tracking params so the same post always yields one stored row. */
-function canonicalize(platform: Platform, url: URL, youtubeId?: string): string {
+function canonicalize(
+  platform: Platform,
+  url: URL,
+  youtubeId?: string,
+  mapPlace?: MapPlaceRef,
+): string {
   if (platform === Platform.YOUTUBE && youtubeId) {
     return `https://www.youtube.com/watch?v=${youtubeId}`;
+  }
+  if (mapPlace && "id" in mapPlace) {
+    // The share sheet, the mobile site and the desktop map all point at one
+    // place through different paths; collapsing them onto the canonical entry
+    // keeps the (userId, sourceUrl) dedupe key stable.
+    return mapPlace.vendor === "naver"
+      ? `https://map.naver.com/p/entry/place/${mapPlace.id}`
+      : `https://place.map.kakao.com/${mapPlace.id}`;
   }
   if (platform === Platform.INSTAGRAM) {
     const [, kind, shortcode] = url.pathname.split("/");
@@ -459,15 +534,117 @@ async function fetchInstagram(sourceUrl: string): Promise<PostMetadata> {
 }
 
 /**
+ * The tagline Naver serves for an id that does not resolve. It comes back in
+ * the same og:description slot a real place name would, so without this check
+ * a dead link would be geocoded as if "모든 여정의 시작" were a restaurant.
+ */
+const NAVER_MAP_PLACEHOLDER = "모든 여정의 시작";
+
+/**
+ * Follows a share-sheet short link to the place id behind it. The redirect
+ * chain ends on a vendor URL that {@link classifyUrl} already knows how to
+ * read, so the landing URL is fed straight back through it.
+ */
+async function resolveShortLink(
+  ref: Extract<MapPlaceRef, { shortUrl: string }>,
+): Promise<Extract<MapPlaceRef, { id: string }>> {
+  let landing: string;
+  try {
+    const res = await fetchWithTimeout(ref.shortUrl, {
+      headers: { "User-Agent": CRAWLER_UA },
+      redirect: "follow",
+    });
+    landing = res.url;
+  } catch {
+    throw new UnsupportedUrlError(ref.shortUrl);
+  }
+
+  // A short link that expired or never existed lands back on itself or on a
+  // vendor home page. classifyUrl rejects those outright, so the throw is
+  // caught here to name the link the user actually pasted.
+  let resolved: MapPlaceRef | undefined;
+  try {
+    resolved = classifyUrl(landing).mapPlace;
+  } catch {
+    throw new UnsupportedUrlError(ref.shortUrl);
+  }
+  if (!resolved || !("id" in resolved)) {
+    throw new UnsupportedUrlError(ref.shortUrl);
+  }
+  return resolved;
+}
+
+/**
+ * Reads a place name off a map page. Neither vendor exposes an API for this,
+ * but both render the name into og tags for link previews: Naver puts it in
+ * og:description (og:title is always the literal string "네이버지도"), and
+ * Kakao puts the name in og:title with the address in og:description.
+ */
+async function fetchMapPlace(
+  sourceUrl: string,
+  ref: MapPlaceRef,
+): Promise<PostMetadata> {
+  const base: PostMetadata = {
+    sourceUrl,
+    platform: platformOf(ref),
+    title: null,
+    caption: null,
+    thumbnail: null,
+    author: null,
+    // A map link never needs one: it names a place outright, so there is no
+    // prose for the user to supply.
+    needsManualCaption: false,
+  };
+
+  const res = await fetchWithTimeout(sourceUrl, {
+    headers: { "User-Agent": CRAWLER_UA },
+    redirect: "follow",
+  });
+  if (!res.ok) throw new UnsupportedUrlError(sourceUrl);
+
+  const root = parse(await res.text());
+  const meta = (property: string) =>
+    root
+      .querySelector(`meta[property="${property}"]`)
+      ?.getAttribute("content")
+      ?.trim() || null;
+
+  const ogTitle = meta("og:title");
+  const ogDescription = meta("og:description");
+
+  const name = ref.vendor === "naver" ? ogDescription : ogTitle;
+  // Kakao's og:description is the road address, which sharpens the geocode
+  // lookup the same way a caption's area hint does. Naver gives us no address.
+  const hint = ref.vendor === "kakao" ? ogDescription : null;
+
+  if (!name || name.includes(NAVER_MAP_PLACEHOLDER)) {
+    throw new UnsupportedUrlError(sourceUrl);
+  }
+
+  // Kakao serves og:image protocol-relative (`//img1.kakaocdn.net/…`), which
+  // POST /api/posts rejects for not being an http(s) URL — the save would 400
+  // on a link the ingest just accepted.
+  const image = meta("og:image");
+  const thumbnail = image?.startsWith("//") ? `https:${image}` : image;
+
+  return {
+    ...base,
+    title: name,
+    thumbnail,
+    place: { name, hint },
+  };
+}
+
+/**
  * Classifies and canonicalizes a URL without any network call, for the retry
  * where the user has pasted the caption and the remote fetch has nothing left
  * to contribute. Callers that need title, author or thumbnail must still go
  * through {@link fetchMetadata}.
  */
 export function describePost(rawUrl: string): PostMetadata {
-  const { platform, url, youtubeId } = classifyUrl(rawUrl);
+  const { platform, url, youtubeId, mapPlace } = classifyUrl(rawUrl);
   return {
-    sourceUrl: canonicalize(platform, url, youtubeId),
+    sourceUrl: canonicalize(platform, url, youtubeId, mapPlace),
     platform,
     title: null,
     caption: null,
@@ -480,11 +657,20 @@ export function describePost(rawUrl: string): PostMetadata {
 }
 
 export async function fetchMetadata(rawUrl: string): Promise<PostMetadata> {
-  const { platform, url, youtubeId } = classifyUrl(rawUrl);
-  const sourceUrl = canonicalize(platform, url, youtubeId);
+  const { platform, url, youtubeId, mapPlace } = classifyUrl(rawUrl);
+  const sourceUrl = canonicalize(platform, url, youtubeId, mapPlace);
 
   if (platform === Platform.YOUTUBE && youtubeId) {
     return fetchYouTube(sourceUrl, youtubeId);
+  }
+  if (mapPlace) {
+    // A short link carries no id, so following it is the only way to learn
+    // which place it names — and where the canonical URL should point.
+    const resolved = "shortUrl" in mapPlace ? await resolveShortLink(mapPlace) : mapPlace;
+    return fetchMapPlace(
+      canonicalize(platform, url, youtubeId, resolved),
+      resolved,
+    );
   }
   return fetchInstagram(sourceUrl);
 }

@@ -46,10 +46,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const extracted = await extractPlaces({
-      title: post.title,
-      caption: post.caption,
-    });
+    // A map link names one place outright, so there is no prose to read and
+    // nothing for the model to infer — going through it would only risk
+    // rewriting a name the vendor already gave us verbatim.
+    const extracted = post.place
+      ? [post.place]
+      : await extractPlaces({ title: post.title, caption: post.caption });
     // Each candidate costs up to two sequential Naver calls; cap the fan-out
     // so one long caption cannot exhaust the shared client-id quota.
     const candidates = await geocodeCandidates(extracted.slice(0, MAX_PLACES));

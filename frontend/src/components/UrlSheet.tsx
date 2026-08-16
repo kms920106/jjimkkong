@@ -7,20 +7,6 @@ function subscribeToNothing(): () => void {
   return () => {};
 }
 
-/**
- * Mirrors what classifyUrl() on the server accepts. Used only to decide
- * whether a clipboard string is worth pre-filling — the server still has the
- * final say, so this stays deliberately loose.
- */
-function looksSupported(text: string): boolean {
-  try {
-    const { hostname } = new URL(text.trim());
-    return /(^|\.)(instagram\.com|youtube\.com|youtu\.be)$/.test(hostname);
-  } catch {
-    return false;
-  }
-}
-
 type Props = {
   busy: boolean;
   error: string | null;
@@ -49,38 +35,16 @@ export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   /**
-   * Silent best-effort read on open — a shortcut, never the guarantee. It
-   * works on Android Chrome, where the tap that opened the sheet counts as
-   * the gesture. It cannot work on iOS Safari at all: Apple hands the
-   * clipboard over only through a real paste gesture, so readText() there
-   * hangs or rejects rather than resolving. Over plain HTTP the API is
-   * missing entirely. The input's onPaste handler is the path that always
-   * works; everything here is an attempt to save the user that step.
+   * Focus only. There used to be a silent clipboard.readText() here to
+   * pre-fill the field, but on iOS Safari that call is not silent: it raises
+   * the system "Paste" confirmation *on top of* the sheet, so the user saw a
+   * bare Paste button instead of the dialog they asked for. The explicit
+   * 붙여넣기 button and the input's onPaste handler cover the same shortcut
+   * without hijacking the open.
    */
   useEffect(() => {
-    let cancelled = false;
     inputRef.current?.focus();
-
-    if (!canReadClipboard) return;
-
-    navigator.clipboard
-      .readText()
-      .then((text) => {
-        // Only a link this service accepts is worth pre-filling; pasting an
-        // unrelated clipboard into the field would just have to be cleared.
-        // Never overwrites typing that beat the clipboard promise.
-        if (!cancelled && looksSupported(text)) {
-          setUrl((current) => (current === "" ? text.trim() : current));
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-    // canReadClipboard is fixed for this sheet's lifetime, so listing it does
-    // not re-run the read; it only satisfies the exhaustive-deps check.
-  }, [canReadClipboard]);
+  }, []);
 
   /** Runs inside the button's own gesture, which is what iOS requires. */
   async function pasteFromClipboard() {
@@ -174,7 +138,7 @@ export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
                 event.preventDefault();
                 setUrl(text.trim());
               }}
-              placeholder="인스타그램 또는 유튜브 링크"
+              placeholder="인스타그램 · 유튜브 · 지도 링크"
               className="min-w-0 flex-1 rounded-xl border border-neutral-300 bg-transparent px-4 py-3 text-base outline-none focus:border-neutral-500 dark:border-neutral-700"
             />
             {/* Hidden where navigator.clipboard does not exist, since there

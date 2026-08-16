@@ -30,6 +30,8 @@ enum MapProvider {
 enum Platform {
   INSTAGRAM
   YOUTUBE
+  NAVER
+  KAKAO
   OTHER
 }
 

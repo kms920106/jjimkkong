@@ -1,12 +1,12 @@
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { savedPostInclude, toSavedPostDTO } from "@/lib/serialize";
-import PostsClient from "@/components/PostsClient";
+import LinksClient from "@/components/LinksClient";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "저장한 게시글 · 찜꽁",
+  title: "링크 · 찜꽁",
 };
 
 export default async function PostsPage() {
@@ -18,5 +18,5 @@ export default async function PostsPage() {
     include: savedPostInclude,
   });
 
-  return <PostsClient initialPosts={posts.map(toSavedPostDTO)} />;
+  return <LinksClient initialPosts={posts.map(toSavedPostDTO)} />;
 }

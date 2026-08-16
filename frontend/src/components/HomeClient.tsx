@@ -35,7 +35,7 @@ export default function HomeClient({ initialPosts, profile }: Props) {
   // because React skips the re-render when state is unchanged.
   const router = useRouter();
   const searchParams = useSearchParams();
-  // /posts sends the user back here with ?place=<id> to move the camera.
+  // /links sends the user back here with ?place=<id> to move the camera.
   // Seeding the initial state from it (rather than setting it in an effect)
   // gets the pin centred on the very first paint, with no visible jump.
   const requestedPlace = searchParams.get("place");

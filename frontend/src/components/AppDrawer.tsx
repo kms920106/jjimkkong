@@ -215,11 +215,11 @@ export default function AppDrawer({
 
         <nav className="flex-1 overflow-y-auto px-5 pb-6">
           <Link
-            href="/posts"
+            href="/links"
             onClick={onClose}
             className="flex items-center justify-between rounded-xl border border-neutral-200 px-4 py-3.5 transition hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-900"
           >
-            <span className="text-sm font-medium">저장한 게시글</span>
+            <span className="text-sm font-medium">링크</span>
             <span className="flex items-center gap-2 text-sm text-neutral-400">
               {savedCount}
               <svg
