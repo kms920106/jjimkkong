@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import MapLoadError from "./MapLoadError";
 import { loadGoogleMaps } from "@/lib/map/loader";
 import {
   DEFAULT_CENTER,
@@ -114,9 +115,7 @@ export default function GoogleMap({
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center bg-neutral-100 p-6 text-center text-sm text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400">
-        구글 지도를 불러오지 못했습니다. {error}
-      </div>
+      <MapLoadError title="구글 지도를 불러오지 못했습니다." detail={error} />
     );
   }
 

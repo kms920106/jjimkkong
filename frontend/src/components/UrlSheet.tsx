@@ -1,6 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { XIcon } from "lucide-react";
+import { useRef, useState, useSyncExternalStore } from "react";
+
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 /** Whether the clipboard API exists cannot change while the sheet is open. */
 function subscribeToNothing(): () => void {
@@ -14,11 +25,7 @@ type Props = {
   onSubmit: (url: string) => void;
 };
 
-/**
- * Mounted only while open, so mounting is the "sheet opened" event — the
- * initial clipboard read happens here rather than in an effect watching a
- * prop.
- */
+/** Mounted only while open, so mounting is the "sheet opened" event. */
 export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
   const [url, setUrl] = useState("");
   const [pasting, setPasting] = useState(false);
@@ -33,18 +40,6 @@ export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
     () => false,
   );
   const inputRef = useRef<HTMLInputElement>(null);
-
-  /**
-   * Focus only. There used to be a silent clipboard.readText() here to
-   * pre-fill the field, but on iOS Safari that call is not silent: it raises
-   * the system "Paste" confirmation *on top of* the sheet, so the user saw a
-   * bare Paste button instead of the dialog they asked for. The explicit
-   * 붙여넣기 button and the input's onPaste handler cover the same shortcut
-   * without hijacking the open.
-   */
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
 
   /** Runs inside the button's own gesture, which is what iOS requires. */
   async function pasteFromClipboard() {
@@ -64,55 +59,65 @@ export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
     }
   }
 
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) onClose();
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [busy, onClose]);
-
   return (
-    // dvh rather than inset-0: iOS shrinks the visual viewport when the
-    // keyboard opens but leaves the layout viewport (and so inset-0) at full
-    // height, which pushed the sheet's lower half off screen.
-    <div className="fixed inset-x-0 top-0 z-50 flex h-dvh items-end justify-center sm:items-center">
-      <div
-        aria-hidden
-        onClick={() => !busy && onClose()}
-        className="absolute inset-0 bg-black/40"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="링크 추가"
-        // pb picks up the home-indicator inset so the button is never under
-        // it; max-h + overflow keep the sheet scrollable instead of clipped
-        // when the keyboard leaves very little room.
-        className="relative max-h-dvh w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-xl sm:rounded-2xl sm:pb-5 dark:bg-neutral-950"
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose();
+      }}
+    >
+      <SheetContent
+        side="bottom"
+        // dvh rather than inset-0: iOS shrinks the visual viewport when the
+        // keyboard opens but leaves the layout viewport (and so inset-0) at
+        // full height, which pushed the sheet's lower half off screen. The
+        // sheet is anchored to the bottom of the *dynamic* viewport with
+        // top + translate rather than the primitive's bottom-0, and max-h +
+        // overflow keep it scrollable instead of clipped when the keyboard
+        // leaves very little room. pb picks up the home-indicator inset so
+        // the button is never under it.
+        //
+        // On sm+ the bottom sheet becomes a centered dialog, which the
+        // generated data-[side=bottom] rules do not express on their own.
+        // The overrides carry the same data-[side=bottom] prefix so
+        // tailwind-merge replaces the generated rules instead of stacking
+        // with them.
+        // The generated enter/exit rules translate on the Y axis too, under a
+        // longer variant prefix that tailwind-merge treats as its own group —
+        // so they survive alongside the anchor translate above and fight it
+        // mid-transition. Cancelling them leaves opacity, which the base class
+        // already animates, to carry the transition on its own.
+        className="mx-auto max-h-dvh w-full max-w-lg gap-0 overflow-y-auto rounded-t-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] data-[side=bottom]:inset-x-0 data-[side=bottom]:top-[100dvh] data-[side=bottom]:bottom-auto data-[side=bottom]:-translate-y-full data-[side=bottom]:data-ending-style:-translate-y-full data-[side=bottom]:data-starting-style:-translate-y-full sm:rounded-2xl sm:border sm:pb-5 sm:data-[side=bottom]:top-1/2 sm:data-[side=bottom]:-translate-y-1/2 sm:data-[side=bottom]:data-ending-style:-translate-y-1/2 sm:data-[side=bottom]:data-starting-style:-translate-y-1/2"
+        // Base UI focuses the first tabbable element by default, and on touch
+        // it focuses the popup instead to keep the keyboard down. The URL
+        // field is the whole point of the sheet, so it is named explicitly.
+        //
+        // Focus only. There used to be a silent clipboard.readText() here to
+        // pre-fill the field, but on iOS Safari that call is not silent: it
+        // raises the system "Paste" confirmation *on top of* the sheet, so the
+        // user saw a bare Paste button instead of the dialog they asked for.
+        // The explicit 붙여넣기 button and the input's onPaste handler cover
+        // the same shortcut without hijacking the open.
+        initialFocus={inputRef}
+        showCloseButton={false}
       >
-        <div className="flex items-center justify-between pb-4">
-          <h2 className="text-base font-semibold">링크 추가</h2>
-          <button
+        {/* The built-in close button is suppressed above in favour of this
+            one, which takes `disabled={busy}` — the built-in has no way to
+            refuse a close while the ingest request is still in flight. */}
+        <SheetHeader className="flex-row items-center justify-between p-0 pb-4">
+          <SheetTitle>링크 추가</SheetTitle>
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={onClose}
             disabled={busy}
             aria-label="닫기"
-            className="rounded-full p-1.5 text-neutral-500 transition hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-900"
+            className="rounded-full text-muted-foreground"
           >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.8}
-              strokeLinecap="round"
-              aria-hidden
-            >
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
-        </div>
+            <XIcon />
+          </Button>
+        </SheetHeader>
 
         <form
           onSubmit={(event) => {
@@ -124,7 +129,7 @@ export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
           className="flex flex-col gap-3"
         >
           <div className="flex gap-2">
-            <input
+            <Input
               ref={inputRef}
               type="url"
               value={url}
@@ -139,38 +144,41 @@ export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
                 setUrl(text.trim());
               }}
               placeholder="인스타그램 · 유튜브 · 지도 링크"
-              className="min-w-0 flex-1 rounded-xl border border-neutral-300 bg-transparent px-4 py-3 text-base outline-none focus:border-neutral-500 dark:border-neutral-700"
+              className="h-auto min-w-0 flex-1 rounded-xl px-4 py-3"
             />
             {/* Hidden where navigator.clipboard does not exist, since there
                 the button could only ever do nothing. */}
             {canReadClipboard && (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={pasteFromClipboard}
                 disabled={pasting || busy}
-                className="shrink-0 rounded-xl border border-neutral-300 px-3.5 py-3 text-sm font-medium whitespace-nowrap transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                className="h-auto shrink-0 rounded-xl px-3.5 py-3"
               >
                 붙여넣기
-              </button>
+              </Button>
             )}
           </div>
           {!canReadClipboard && url === "" && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            <p className="text-xs text-muted-foreground">
               입력창을 길게 눌러 &lsquo;붙여넣기&rsquo;를 선택하세요.
             </p>
           )}
           {error && (
-            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
-          <button
+          <Button
             type="submit"
             disabled={busy || !url.trim()}
-            className="w-full rounded-xl bg-neutral-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+            className="h-auto w-full rounded-xl px-5 py-3"
           >
             {busy ? "읽는 중…" : "저장"}
-          </button>
+          </Button>
         </form>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -3,7 +3,25 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import type { Platform, SavedPlaceDTO, SavedPostDTO } from "@/lib/types";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
 /**
  * "전체" is not a Platform value, so the filter is widened rather than typed
@@ -82,60 +100,61 @@ export default function LinksClient({
         <Link
           href="/"
           aria-label="지도로 돌아가기"
-          className="rounded-full p-2 text-neutral-500 transition hover:bg-neutral-100 dark:hover:bg-neutral-900"
+          className={cn(
+            buttonVariants({ variant: "ghost", size: "icon" }),
+            "rounded-full text-muted-foreground",
+          )}
         >
-          <svg
-            viewBox="0 0 24 24"
-            className="h-5 w-5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.8}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
+          <ChevronLeft aria-hidden />
         </Link>
         <h1 className="text-base font-semibold">링크 {posts.length}개</h1>
       </header>
 
-      {/* Scrolls rather than wraps: the row must stay one line on a phone,
-          where four or five tabs do not fit across. */}
-      <div
-        role="tablist"
+      {/* The filter drives `filter` state directly rather than TabsContent:
+          the list below is one shared surface, so re-rendering it per panel
+          would duplicate the whole card list. */}
+      <Tabs
+        value={filter}
+        // Base UI also reports `null` when the active tab unmounts — deleting
+        // the last post of a platform drops its tab — so that falls back to
+        // 전체 rather than becoming a filter that matches nothing.
+        onValueChange={(value) =>
+          setFilter(typeof value === "string" ? (value as Filter) : "ALL")
+        }
         aria-label="플랫폼"
-        className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1"
       >
-        {tabs.map((tab) => {
-          const active = filter === tab.value;
-          return (
-            <button
+        {/* Scrolls rather than wraps: the row must stay one line on a phone,
+            where four or five tabs do not fit across. TabsList is
+            `inline-flex w-fit` by default, so the scroll container is the
+            list itself with `max-w-full` holding it inside the viewport. */}
+        <TabsList
+          variant="line"
+          className="-mx-4 h-auto max-w-[calc(100%+2rem)] justify-start overflow-x-auto px-4 pb-1"
+        >
+          {tabs.map((tab) => (
+            <TabsTrigger
               key={tab.value}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setFilter(tab.value)}
-              className={`shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium transition ${
-                active
-                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                  : "border-neutral-200 text-neutral-600 hover:bg-neutral-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-900"
-              }`}
+              value={tab.value}
+              className="h-8 shrink-0 flex-none rounded-full border-border px-3.5 data-active:bg-primary data-active:text-primary-foreground"
             >
               {tab.label} {counts.get(tab.value) ?? 0}
-            </button>
-          );
-        })}
-      </div>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       {visible.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-neutral-300 p-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+        <Card className="border border-dashed border-border bg-transparent p-8 text-center text-sm text-muted-foreground ring-0">
           {posts.length === 0
             ? "아직 저장한 링크가 없습니다. 지도에서 + 버튼을 눌러 링크를 붙여넣으세요."
             : "이 플랫폼으로 저장한 링크가 없습니다."}
-        </p>
+        </Card>
       ) : (
         <ul className="flex flex-col gap-3">
           {visible.map((post) => (
@@ -209,85 +228,137 @@ function PostCard({
   // card is titled by the first one and the rest follow as their own rows.
   const firstPlace = post.places[0];
 
+  // Card renders a plain div, so the list item wraps it rather than replacing
+  // it — a div directly under <ul> would not be valid list markup.
   return (
-    <li className="flex gap-3 rounded-xl border border-neutral-200 p-3 transition dark:border-neutral-800">
-      {post.thumbnail && (
-        // The thumbnail is the post's own picture, so it opens the post —
-        // the card body links to the maps instead.
-        <a
-          href={post.sourceUrl}
-          target="_blank"
-          rel="noreferrer noopener"
-          aria-label={`${sourceLabel(post.platform)}에서 원본 보기`}
-          className="shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={post.thumbnail}
-            alt=""
-            className="h-20 w-20 rounded-lg object-cover transition hover:opacity-80"
-          />
-        </a>
-      )}
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-medium">
-            {firstPlace?.name ?? post.title ?? post.sourceUrl}
-          </h2>
-          {firstPlace && (
-            <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-              {firstPlace.address}
-            </p>
+    <li>
+      <Card size="sm" className="w-full">
+        <CardContent className="flex gap-3">
+          {post.thumbnail && (
+            // The thumbnail is the post's own picture, so it opens the post —
+            // the card body links to the maps instead.
+            <a
+              href={post.sourceUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              aria-label={`${sourceLabel(post.platform)}에서 원본 보기`}
+              className="shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={post.thumbnail}
+                alt=""
+                className="h-20 w-20 rounded-lg object-cover transition hover:opacity-80"
+              />
+            </a>
           )}
-        </div>
-        {/* Not gated on firstPlace: a post whose geocoding matched nothing
-            still has to expose the link the user saved. */}
-        <div className="flex flex-wrap gap-1.5">
-          {placeLinks(post, firstPlace).map((link) => (
-            <PlaceLink
-              key={link.label}
-              href={link.href}
-              label={link.label}
-              describedBy={firstPlace?.name}
-            />
-          ))}
-        </div>
-        {/* Places beyond the first still need to be reachable — the card's
-            heading only covers one of them. */}
-        {post.places.length > 1 && (
-          <ul className="flex flex-col gap-1.5 border-t border-neutral-100 pt-2 dark:border-neutral-800">
-            {post.places.slice(1).map((place) => (
-              <li key={place.id} className="flex flex-wrap items-center gap-1.5">
-                <span
-                  title={place.address}
-                  className="truncate text-xs font-medium"
-                >
-                  {place.name}
-                </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className="min-w-0">
+              <h2 className="truncate text-sm font-medium">
+                {firstPlace?.name ?? post.title ?? post.sourceUrl}
+              </h2>
+              {firstPlace && (
+                <p className="truncate text-xs text-muted-foreground">
+                  {firstPlace.address}
+                </p>
+              )}
+            </div>
+            {/* Not gated on firstPlace: a post whose geocoding matched nothing
+                still has to expose the link the user saved. */}
+            <div className="flex flex-wrap gap-1.5">
+              {placeLinks(post, firstPlace).map((link) => (
                 <PlaceLink
-                  href={naverMapUrl(place)}
-                  label="네이버맵"
-                  describedBy={place.name}
+                  key={link.label}
+                  href={link.href}
+                  label={link.label}
+                  describedBy={firstPlace?.name}
                 />
-                <PlaceLink
-                  href={kakaoMapUrl(place)}
-                  label="카카오맵"
-                  describedBy={place.name}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        aria-label="삭제"
-        className="h-fit shrink-0 rounded-lg px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-100 hover:text-red-600 dark:hover:bg-neutral-800"
+              ))}
+            </div>
+            {/* Places beyond the first still need to be reachable — the card's
+                heading only covers one of them. */}
+            {post.places.length > 1 && (
+              <ul className="flex flex-col gap-1.5 border-t border-border pt-2">
+                {post.places.slice(1).map((place) => (
+                  <li
+                    key={place.id}
+                    className="flex flex-wrap items-center gap-1.5"
+                  >
+                    <span
+                      title={place.address}
+                      className="truncate text-xs font-medium"
+                    >
+                      {place.name}
+                    </span>
+                    <PlaceLink
+                      href={naverMapUrl(place)}
+                      label="네이버맵"
+                      describedBy={place.name}
+                    />
+                    <PlaceLink
+                      href={kakaoMapUrl(place)}
+                      label="카카오맵"
+                      describedBy={place.name}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <DeleteButton onDelete={onDelete} />
+        </CardContent>
+      </Card>
+    </li>
+  );
+}
+
+/**
+ * Deletion is not undoable — the post row and its place links are gone once
+ * the request lands — so it is gated behind a confirmation.
+ */
+function DeleteButton({ onDelete }: { onDelete: () => void }) {
+  // Controlled because `AlertDialogAction` is a plain Button — unlike
+  // `AlertDialogCancel` it is not wrapped in the primitive's Close, so
+  // confirming would run the delete and leave the dialog standing. An alert
+  // dialog also refuses outside-press dismissal by design, which on a phone
+  // leaves no way out at all.
+  const [open, setOpen] = useState(false);
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-label="삭제"
+            className="h-fit shrink-0 text-muted-foreground hover:text-destructive"
+          />
+        }
       >
         삭제
-      </button>
-    </li>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>이 링크를 삭제할까요?</AlertDialogTitle>
+          <AlertDialogDescription>
+            삭제한 링크와 장소는 되돌릴 수 없습니다.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>취소</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              setOpen(false);
+              onDelete();
+            }}
+          >
+            삭제
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -311,14 +382,18 @@ function PlaceLink({
   describedBy?: string;
 }) {
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer noopener"
-      aria-label={describedBy ? `${describedBy} — ${label}` : undefined}
-      className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-700 transition hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+    <Badge
+      variant="secondary"
+      render={
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+          aria-label={describedBy ? `${describedBy} — ${label}` : undefined}
+        />
+      }
     >
       {label}
-    </a>
+    </Badge>
   );
 }

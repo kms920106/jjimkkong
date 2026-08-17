@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import MapLoadError from "./MapLoadError";
 import { loadNaverMaps } from "@/lib/map/loader";
 import { useMarkerLookup } from "@/lib/map/useMarkerLookup";
 import {
@@ -130,9 +131,7 @@ export default function NaverMap({
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center bg-neutral-100 p-6 text-center text-sm text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400">
-        네이버 지도를 불러오지 못했습니다. {error}
-      </div>
+      <MapLoadError title="네이버 지도를 불러오지 못했습니다." detail={error} />
     );
   }
 

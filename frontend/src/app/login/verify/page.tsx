@@ -28,7 +28,7 @@ export default async function VerifyPage() {
     <main className="flex min-h-dvh flex-col items-center justify-center gap-8 px-6">
       <div className="text-center">
         <h1 className="text-2xl font-bold tracking-tight">휴대폰 인증</h1>
-        <p className="mt-2 max-w-xs text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="mt-2 max-w-xs text-sm text-muted-foreground">
           계정을 안전하게 연결하기 위해 휴대폰 번호를 확인합니다.
         </p>
       </div>

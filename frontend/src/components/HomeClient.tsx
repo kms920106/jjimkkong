@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Menu, Plus } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import MapView from "@/components/map/MapView";
 import CaptionPrompt from "@/components/CaptionPrompt";
 import AppDrawer from "@/components/AppDrawer";
@@ -186,12 +189,20 @@ export default function HomeClient({ initialPosts, profile }: Props) {
             : result,
         );
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "저장하지 못했습니다.");
+        const message =
+          cause instanceof Error ? cause.message : "저장하지 못했습니다.";
+        setError(message);
+        // Fired here rather than from an effect on `error`: two failures in a
+        // row carry the same message, React bails out of the identical state
+        // update, and an effect would never re-run — the second attempt would
+        // report nothing at all. The overlays below render `error` inline, so
+        // the toast is only for a failure with nothing else on screen.
+        if (!sheetOpen && !captionNeeded) toast.error(message);
       } finally {
         setIngesting(false);
       }
     },
-    [captionNeeded, ingest, save],
+    [captionNeeded, ingest, save, sheetOpen],
   );
 
   return (
@@ -204,57 +215,32 @@ export default function HomeClient({ initialPosts, profile }: Props) {
         focusRequest={focusRequest}
       />
 
-      <button
+      {/* Both controls float over the map, so they carry their own surface
+          colour and shadow rather than the transparent ghost/outline the map
+          would show straight through. */}
+      <Button
         type="button"
+        variant="secondary"
+        size="icon"
         onClick={() => setDrawerOpen(true)}
         aria-label="메뉴 열기"
-        className="absolute top-4 left-4 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-white text-neutral-800 shadow-lg transition hover:bg-neutral-50 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+        className="absolute top-4 left-4 z-30 h-11 w-11 rounded-full bg-background shadow-lg hover:bg-accent"
       >
-        <svg
-          viewBox="0 0 24 24"
-          className="h-5 w-5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.8}
-          strokeLinecap="round"
-          aria-hidden
-        >
-          <path d="M4 7h16M4 12h16M4 17h16" />
-        </svg>
-      </button>
+        <Menu className="h-5 w-5" />
+      </Button>
 
-      <button
+      <Button
         type="button"
+        size="icon"
         onClick={() => {
           setError(null);
           setSheetOpen(true);
         }}
         aria-label="링크 추가"
-        className="absolute right-5 bottom-6 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-neutral-900 text-white shadow-lg transition hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        className="absolute right-5 bottom-6 z-30 h-14 w-14 rounded-full shadow-lg"
       >
-        <svg
-          viewBox="0 0 24 24"
-          className="h-7 w-7"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          aria-hidden
-        >
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-      </button>
-
-      {/* The sheet owns its own error line while open; this banner is for the
-          failures that land after it closes (a caption retry, say). */}
-      {error && !sheetOpen && !captionNeeded && (
-        <p
-          role="status"
-          className="absolute inset-x-4 bottom-24 z-30 rounded-xl bg-red-600 px-4 py-3 text-sm text-white shadow-lg"
-        >
-          {error}
-        </p>
-      )}
+        <Plus className="h-7 w-7" />
+      </Button>
 
       <AppDrawer
         open={drawerOpen}
@@ -276,8 +262,8 @@ export default function HomeClient({ initialPosts, profile }: Props) {
         <CaptionPrompt
           post={captionNeeded.post}
           busy={ingesting}
-          // The prompt covers the page, so the banner above is not visible
-          // while it is open.
+          // Rendered inline here, which is why the toast effect above stays
+          // quiet while this prompt is open.
           error={error}
           onCancel={() => {
             setCaptionNeeded(null);

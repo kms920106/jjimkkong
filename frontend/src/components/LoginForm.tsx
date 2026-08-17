@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+
 /** Callback errors arrive as `?error=` slugs; anything else falls through. */
 const ERROR_MESSAGES: Record<string, string> = {
   access_denied: "로그인을 취소했습니다.",
@@ -44,32 +48,34 @@ export default function LoginForm() {
   return (
     <div className="flex w-full max-w-xs flex-col gap-3">
       {/* A plain link, not a fetch: the provider handshake is a series of
-          top-level navigations, so it works with JavaScript disabled too. */}
-      <a
-        href="/api/auth/naver/start"
+          top-level navigations, so it works with JavaScript disabled too.
+          `render` keeps the anchor as the rendered element; #03C75A is
+          Naver's mandated brand color, so it stays hardcoded. */}
+      <Button
+        render={<a href="/api/auth/naver/start">네이버로 계속하기</a>}
         onClick={() => setPending(true)}
         aria-disabled={pending}
-        className="rounded-lg bg-[#03C75A] px-4 py-3 text-center text-sm font-medium text-white transition hover:brightness-95"
-      >
-        네이버로 계속하기
-      </a>
-      <div className="my-1 flex items-center gap-3 text-xs text-neutral-400">
-        <span className="h-px flex-1 bg-neutral-200 dark:bg-neutral-800" />
+        className="h-auto bg-[#03C75A] px-4 py-3 text-white hover:bg-[#03C75A] hover:brightness-95"
+      />
+      <div className="my-1 flex items-center gap-3 text-xs text-muted-foreground">
+        <Separator className="flex-1" />
         개발용
-        <span className="h-px flex-1 bg-neutral-200 dark:bg-neutral-800" />
+        <Separator className="flex-1" />
       </div>
-      <button
+      {/* Dashed border marks this as the development-only auth bypass. */}
+      <Button
         type="button"
+        variant="outline"
         onClick={signInAsTestUser}
         disabled={pending}
-        className="rounded-lg border border-dashed border-neutral-400 px-4 py-3 text-sm font-medium text-neutral-600 transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-900"
+        className="h-auto border-dashed px-4 py-3 text-muted-foreground"
       >
         테스트 계정으로 로그인
-      </button>
+      </Button>
       {error && (
-        <p className="text-center text-sm text-red-600 dark:text-red-400">
-          {error}
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription className="text-center">{error}</AlertDescription>
+        </Alert>
       )}
     </div>
   );

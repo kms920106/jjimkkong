@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import ThemeProvider from "@/components/ThemeProvider";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,11 +21,22 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
+    // suppressHydrationWarning: next-themes writes the theme class onto <html>
+    // before React hydrates, so the server markup never matches here.
     <html
       lang="ko"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">{children}</body>
+      <body className="flex min-h-full flex-col">
+        <ThemeProvider>
+          {children}
+          {/* Sonner labels its region "Notifications" by default, which a
+              screen reader would read out in English. The close label sits on
+              toastOptions rather than here — it is a per-toast option. */}
+          <Toaster containerAriaLabel="알림" position="bottom-center" />
+        </ThemeProvider>
+      </body>
     </html>
   );
 }

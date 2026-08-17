@@ -1,6 +1,17 @@
 "use client";
 
 import { useState } from "react";
+
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import type { IngestedPost } from "@/lib/types";
 
 type Props = {
@@ -27,9 +38,17 @@ export default function CaptionPrompt({
   const [caption, setCaption] = useState("");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center">
-      <div className="flex w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-xl sm:rounded-2xl dark:bg-neutral-900">
-        <header className="flex items-start gap-3 border-b border-neutral-200 p-4 dark:border-neutral-800">
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) onCancel();
+      }}
+    >
+      <DialogContent
+        className="max-w-lg gap-0 p-0 sm:max-w-lg"
+        showCloseButton={false}
+      >
+        <DialogHeader className="flex-row items-start gap-3 border-b p-4">
           {post.thumbnail && (
             // Remote thumbnails come from arbitrary CDNs; next/image would
             // need every host allowlisted in next.config.
@@ -40,54 +59,60 @@ export default function CaptionPrompt({
               className="h-16 w-16 shrink-0 rounded-lg object-cover"
             />
           )}
+          {/* The visible header is the post being saved, not a heading. The
+              primitive still requires a title, so it is screen-reader only. */}
+          <DialogTitle className="sr-only">캡션 직접 입력</DialogTitle>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">
               {post.title ?? post.sourceUrl}
             </p>
             {post.author && (
-              <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+              <p className="truncate text-xs text-muted-foreground">
                 {post.author}
               </p>
             )}
           </div>
-        </header>
+        </DialogHeader>
 
         <div className="flex flex-col gap-3 p-4">
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <p className="text-sm text-muted-foreground">
             게시글 내용을 가져오지 못했습니다. 캡션(본문)을 복사해 아래에
             붙여넣으면 장소를 찾아 저장합니다.
           </p>
-          <textarea
+          <Textarea
             value={caption}
             onChange={(event) => setCaption(event.target.value)}
             rows={6}
             placeholder="게시글 캡션을 붙여넣으세요"
-            className="w-full resize-y rounded-lg border border-neutral-300 bg-transparent p-3 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700"
+            className="w-full resize-y p-3 text-sm"
           />
           {error && (
-            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
         </div>
 
-        <footer className="flex gap-2 border-t border-neutral-200 p-4 dark:border-neutral-800">
-          <button
+        <DialogFooter className="mx-0 mb-0 flex-row gap-2 rounded-b-xl border-t p-4 sm:justify-stretch">
+          <Button
             type="button"
+            variant="outline"
             onClick={onCancel}
             disabled={busy}
-            className="flex-1 rounded-lg border border-neutral-300 px-4 py-2.5 text-sm font-medium disabled:opacity-50 dark:border-neutral-700"
+            className="h-auto flex-1 px-4 py-2.5"
           >
             취소
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={() => onSubmit(caption.trim())}
             disabled={busy || !caption.trim()}
-            className="flex-1 rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+            className="h-auto flex-1 px-4 py-2.5"
           >
             {busy ? "저장 중…" : "저장"}
-          </button>
-        </footer>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

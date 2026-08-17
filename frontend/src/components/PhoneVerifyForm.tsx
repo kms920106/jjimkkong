@@ -3,6 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
 type Step = "phone" | "code";
 
 /** Reads the API's Korean error message, falling back when the body is not JSON. */
@@ -87,10 +92,8 @@ export default function PhoneVerifyForm() {
     <div className="flex w-full max-w-xs flex-col gap-4">
       {step === "phone" ? (
         <form onSubmit={sendCode} className="flex flex-col gap-3">
-          <label htmlFor="phone" className="text-sm font-medium">
-            휴대폰 번호
-          </label>
-          <input
+          <Label htmlFor="phone">휴대폰 번호</Label>
+          <Input
             id="phone"
             name="phone"
             type="tel"
@@ -101,22 +104,16 @@ export default function PhoneVerifyForm() {
             value={phone}
             onChange={(event) => setPhone(event.target.value)}
             placeholder="010-1234-5678"
-            className="rounded-lg border border-neutral-300 bg-transparent px-3 py-2.5 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700"
+            className="h-auto px-3 py-2.5 text-sm"
           />
-          <button
-            type="submit"
-            disabled={pending}
-            className="rounded-lg bg-neutral-900 px-4 py-3 text-sm font-medium text-white transition disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-          >
+          <Button type="submit" disabled={pending} className="h-auto px-4 py-3">
             {pending ? "보내는 중…" : "인증번호 받기"}
-          </button>
+          </Button>
         </form>
       ) : (
         <form onSubmit={verifyCode} className="flex flex-col gap-3">
-          <label htmlFor="code" className="text-sm font-medium">
-            인증번호 6자리
-          </label>
-          <input
+          <Label htmlFor="code">인증번호 6자리</Label>
+          <Input
             id="code"
             name="code"
             type="text"
@@ -130,39 +127,40 @@ export default function PhoneVerifyForm() {
               setCode(event.target.value.replace(/[^\d]/g, ""))
             }
             placeholder="000000"
-            className="rounded-lg border border-neutral-300 bg-transparent px-3 py-2.5 text-center text-lg tracking-[0.4em] outline-none focus:border-neutral-500 dark:border-neutral-700"
+            className="h-auto px-3 py-2.5 text-center text-lg tracking-[0.4em] md:text-lg"
           />
-          <button
+          <Button
             type="submit"
             disabled={pending || code.length !== 6}
-            className="rounded-lg bg-neutral-900 px-4 py-3 text-sm font-medium text-white transition disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+            className="h-auto px-4 py-3"
           >
             {pending ? "확인 중…" : "인증하고 시작하기"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="link"
             onClick={() => {
               setStep("phone");
               setCode("");
               setError(null);
               setNotice(null);
             }}
-            className="text-xs text-neutral-500 transition hover:text-neutral-900 dark:hover:text-white"
+            className="text-xs text-muted-foreground hover:text-foreground"
           >
             번호 다시 입력하기
-          </button>
+          </Button>
         </form>
       )}
 
       {notice && (
-        <p className="text-center text-sm text-neutral-500 dark:text-neutral-400">
-          {notice}
-        </p>
+        <Alert>
+          <AlertDescription className="text-center">{notice}</AlertDescription>
+        </Alert>
       )}
       {error && (
-        <p className="text-center text-sm text-red-600 dark:text-red-400">
-          {error}
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription className="text-center">{error}</AlertDescription>
+        </Alert>
       )}
     </div>
   );
