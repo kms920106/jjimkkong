@@ -58,6 +58,15 @@ export type IngestResponse = {
 export type ProfileDTO = {
   nickname: string | null;
   email: string | null;
+  /**
+   * Already masked (`010-****-5678`) by the server, and null when the account
+   * has no verified number or its stored value could not be decrypted.
+   *
+   * Masked before it leaves the server rather than in the component: the full
+   * number has no use in the browser, so it should not be in the payload at
+   * all. Never send the decrypted number to the client.
+   */
+  phoneMasked: string | null;
   mapProvider: MapProvider;
 };
 

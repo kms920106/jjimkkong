@@ -28,7 +28,8 @@ function cookieOptions(maxAgeSeconds: number) {
     httpOnly: true,
     // Lax rather than Strict: the OAuth callback is a top-level cross-site
     // navigation back from the provider, and Strict would withhold the cookie
-    // on that first request and bounce the user straight back to /login.
+    // on that first request, so the page it lands on would render as logged
+    // out despite the login having just succeeded.
     sameSite: "lax" as const,
     secure: process.env.NODE_ENV === "production",
     path: "/",

@@ -38,19 +38,27 @@ Vercel의 Root Directory도 `frontend`다.
 ```
 frontend/src/
   app/
-    (app)/          로그인 후 페이지 — 홈(붙여넣기 + 지도 + 목록), 설정
+    (app)/          모든 페이지 — 홈(붙여넣기 + 지도 + 목록), 링크 목록
     api/            ingest, posts, settings, dev-login
     api/auth/       [provider]/start·callback, phone/send·verify, logout
-    login/          로그인 + login/verify(휴대폰 인증)
-  components/       HomeClient(메인 플로우 전체), CaptionPrompt, map/*
+    verify-phone/   휴대폰 인증 — 모든 첫 로그인이 반드시 거치는 관문
+  components/       HomeClient(메인 플로우 전체), LoginDrawer, PhoneVerifyForm,
+                    CaptionPrompt, map/*
   lib/
     ingest/         metadata.ts → extract.ts → geocode.ts  (파이프라인, 이 순서대로)
     map/            SDK 로더, 지도 공용 타입, 마커 조회 훅
     auth/           세션·OAuth·계정연결·SMS 인증 (아래 "인증" 절)
     auth.ts         requireUser() — 모든 라우트의 소유권 게이트
   generated/prisma/ Prisma 클라이언트 생성물 — 생성 파일, gitignore, 직접 수정 금지
-  proxy.ts          Next proxy(미들웨어); 페이지 이동 전용, /api에는 절대 걸지 않음
 ```
+
+**페이지는 전부 로그인 없이 열린다.** 로그인 페이지도, proxy(미들웨어)도 없다. 페이지는
+`requireUser()` 대신 `getUser()`를 부르고, 세션이 없으면 빈 지도·빈 목록을 렌더링한 뒤
+`LoginDrawer`로 로그인을 권한다. 저장·삭제 같은 실제 동작은 여전히 API가 막는다 — 라우트
+핸들러의 `requireUser()`가 유일한 게이트다.
+
+유일한 예외가 `/verify-phone`이다. 이건 로그인 진입점이 아니라 이미 시작된 로그인의 후반부라서,
+pending 쿠키가 없으면 홈으로 돌려보낸다. 세션을 요구하는 게 아니므로 위 원칙과 충돌하지 않는다.
 
 ## 명령어
 
@@ -63,6 +71,9 @@ npm run lint
 npm run db:migrate     # prisma migrate dev — DIRECT_URL 사용
 npm run db:deploy      # prisma migrate deploy — CI/운영용, 빌드 중 실행 금지
 npm run db:studio
+
+# 일회성: 평문으로 남은 전화번호를 암호화한다. 아래 "전화번호 암호화 마이그레이션" 참고.
+npx tsx --env-file=.env scripts/backfill-phone-encryption.ts
 ```
 
 테스트 스위트는 없다. 검증은 `npm run lint` + `npm run build` + 브라우저에서 직접 플로우를
@@ -120,14 +131,54 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 지오코딩한다. 이미 있는 `Place` 행은 `update: {}`로 upsert한다 — 다른 게시글의 것이기도
 하기 때문이다.
 
-**proxy는 의도적으로 `/api`를 제외한다.** proxy의 리다이렉트 분기는 세션이 만료된
-`fetch()`에 `/login`으로 가는 307을 돌려주고, 그 HTML 본문이 `res.json()`을 깨뜨린다.
-클라이언트가 기대하는 것은 401이다. 라우트 핸들러는 이미 `requireUser()`를 호출한다.
+**리다이렉트로 페이지를 막지 말 것.** proxy(미들웨어)는 삭제됐다. 페이지를 세션으로 걷어내던
+장치가 없어졌으니, 인가는 전부 라우트 핸들러의 `requireUser()` 한 곳에서만 일어난다. 페이지에
+`requireUser()`를 다시 넣으면 로그인 없이 접속 가능하다는 전제가 깨지고, 미들웨어를 되살리면
+세션이 만료된 `fetch()`가 401 대신 로그인 페이지 HTML을 받아 `res.json()`이 깨진다.
 
-**proxy의 세션 검사는 쿠키가 있는지만 본다.** Edge 런타임이라 DB도 `node:crypto`도 못 쓴다.
-이건 인가 게이트가 아니라 사용자 편의를 위한 리다이렉트이고, 실제 검증은 모든 라우트가
-부르는 `requireUser()`가 DB에 대고 한다. 위조 쿠키는 proxy를 통과해서 401을 만난다. 이
-구분을 헷갈려서 proxy에 권한 판단을 얹지 말 것.
+**페이지가 비어 보이는 것과 막히는 것은 다르다.** 로그아웃 상태의 홈은 핀이 없고 목록은
+비어 있지만, 그건 `getUser()`가 null을 돌려줘서 조회할 `userId`가 없기 때문이다. 저장·삭제·
+설정 변경은 그대로 401이다. 클라이언트의 `signedIn` 플래그는 UI를 고르는 값일 뿐 권한이
+아니다 — 이걸 근거로 서버 검사를 생략하지 말 것.
+
+**회원탈퇴는 삭제가 아니라 상태 변경이다.** `DELETE /api/account`는 아무것도 지우지 않는다 —
+`UserProfile`·`AuthIdentity`·`SavedPost`는 전부 남고 `withdrawnAt`만 찍힌다(`Session`만 예외로
+삭제한다. 남겨두면 살아 있는 쿠키가 탈퇴 계정을 가리킨 채 `requireUser()` 검사 하나에만 의존하게
+된다). 이 플래그가 장식이 아니게 만드는 건 **세 곳의 필터**이고, 셋은 반드시 함께 움직인다:
+
+1. `requireUser()`가 `withdrawnAt: null`로 조회한다 — 하드 삭제와 달리 행이 남아 있으므로,
+   이 필터를 빼면 탈퇴 계정이 그대로 정상 로그인 상태가 된다.
+2. `linkProviderIdentity()`의 identity 조회가 탈퇴 행을 건너뛴다 — 여기서 걸러지지 않으면
+   탈퇴 계정이 재방문 로그인으로 세션을 받는다. (예전에는 여기에 phone 조회도 있었지만,
+   첫 로그인이 전부 SMS로 가면서 그 조회는 사라졌다. 살아 있는 행만 병합 대상으로 보는
+   판단은 아래 3번으로 옮겨졌다.)
+3. `attachIdentity()` 트랜잭션 안의 owner 조회도 마찬가지다 — 여기가 재로그인 시 신규 생성이냐
+   재사용이냐를 가르는 지점이다.
+
+**unique는 살아 있는 행에만 걸린다.** 탈퇴 행이 전화번호와 제공자 id를 그대로 들고 있으므로,
+`UserProfile.phoneHash`와 `AuthIdentity[provider, providerUserId]`의 전역 unique를 그대로 두면 같은
+사람이 다시 가입할 수 없다. 둘 다 **partial unique index**(`WHERE "withdrawnAt" IS NULL`)로
+바뀌었고, Prisma 스키마 언어로는 표현할 수 없어서 마이그레이션 raw SQL에만 있다. 그래서
+스키마에는 `@unique`가 아니라 평범한 `@@index`가 적혀 있다 — **다시 `@unique`로 되돌리면
+탈퇴한 사용자가 영구히 재가입 불가가 된다.** 전화번호로 `findUnique`를 쓸 수 없게 된 것도
+의도된 것이다(컴파일이 깨진다). 반드시 `findFirst` + `withdrawnAt: null`을 쓸 것.
+
+**재로그인하면 새 `UserProfile`이 생긴다.** 탈퇴 계정은 그대로 보존되고, 같은 네이버 계정으로
+다시 들어와도 이전 링크는 보이지 않는다. `AuthIdentity.withdrawnAt`은 `UserProfile`의 것을
+비정규화한 값이다 — partial unique index가 자기 테이블 컬럼만 읽을 수 있어서 필요하고, 같은
+트랜잭션에서 함께 쓰므로 어긋날 수 없다.
+
+**`dev-auth.ts`의 `ensureDevUser()`는 탈퇴를 되돌린다.** 고정 uuid를 upsert하므로 `withdrawnAt`을
+`null`로 되돌리지 않으면 탈퇴 테스트 한 번에 모든 환경의 유일한 진입로가 막힌다. 실제 계정은
+이 경로를 타지 않는다(제공자 identity나 전화번호로 매칭되고, 둘 다 탈퇴 행을 무시한다).
+
+**탈퇴 확인은 `AlertDialog` 하나다.** 문구 입력은 없고, 라우트는 요청 본문을 아예 읽지 않는다 —
+읽지 않는 본문은 침입 경로가 될 수 없다. 실제 게이트는 `requireSameOrigin()` + 세션이고, 이
+라우트에 닿을 수 있는 호출자는 이미 계정 주인이다. **탈퇴가 소프트 삭제라서 이 정도로 충분하다**
+— 되돌릴 수 없는 하드 삭제로 되돌린다면 타이핑 확인 같은 추가 게이트를 다시 넣을 것.
+
+**UI 문구로 "모두 삭제"라고 쓰지 말 것** — 데이터는 남는다. 사용자에게는 "다시 볼 수 없고
+재로그인 시 새 계정으로 시작한다"고만 약속한다.
 
 **`dev-auth.ts`는 살아 있는 인증 우회다.** 네이버 로그인 검수가 끝나지 않아 프로덕션 빌드를
 포함해 무조건 활성화되어 있다. 인증되지 않은 누구든 `POST /api/dev-login`으로 고정된 dev uuid가
@@ -136,6 +187,27 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 
 **`src/generated/prisma/`는 생성물이다.** gitignore되어 있고 `prisma generate`가 다시 쓴다.
 대신 `prisma/schema.prisma`를 수정한다.
+
+**전화번호 암호화 마이그레이션은 3단계다.** 두 마이그레이션 사이에 백필이 끼기 때문이다 —
+HMAC과 AES는 앱 키를 요구하므로 SQL로는 계산할 수 없다.
+
+```bash
+npx prisma migrate deploy   # 20260817160000_encrypt_phone 까지
+npx tsx --env-file=.env scripts/backfill-phone-encryption.ts
+npx prisma migrate deploy   # 20260817160100_drop_phone_plaintext
+```
+
+백필을 건너뛰고 두 번째 마이그레이션을 적용하면 그 계정들은 번호를 잃고 다음 로그인에서 SMS
+재인증을 하게 된다(깨지지는 않는다 — `phoneHash`가 NULL인 건 SMS 인증 전 계정과 같은 상태다).
+백필은 idempotent해서 중간에 죽으면 다시 돌리면 된다. 유효한 휴대폰 번호 형식이 아닌 행은
+건너뛰고 목록을 경고로 출력한다 — 두 번째 마이그레이션이 원본을 지우므로 그 목록은 실제로
+잃게 되는 데이터다.
+
+**살아 있는 트래픽에 적용한다면 이 순서로는 안 된다.** 구버전 앱 인스턴스가 `phoneHash`를
+NULL로 둔 신규 행을 쓰는 창이 생기고, Postgres는 unique index에서 NULL을 서로 다른 값으로
+취급하므로 그 행들이 병합 키 유일성을 그대로 통과한다 — 한 번호가 살아 있는 계정 둘을 갖는다.
+그때는 컬럼 추가 → dual-write 배포 → 백필 → unique index 추가 → 읽기 전환 배포 → 컬럼 삭제로
+쪼갤 것. 지금 한 번에 한 이유는 이 앱에 번호를 든 살아 있는 계정이 아직 없었기 때문이다.
 
 **마이그레이션은 `DIRECT_URL`(5432 포트)로 실행한다.** 풀러(6543)에는 마이그레이션 엔진이
 의존하는 prepared statement와 advisory lock이 없다. 앱 자체는 풀링된 `DATABASE_URL`로
@@ -151,11 +223,39 @@ Supabase Auth는 쓰지 않는다. 네이버가 Supabase의 기본 제공자 목
 세션을 전부 앱이 직접 소유한다. 코드는 [frontend/src/lib/auth/](frontend/src/lib/auth/)에 있다.
 
 ```
-/api/auth/naver/start → 네이버 동의 화면 → /api/auth/naver/callback
-   → 토큰 교환 → 프로필 조회 → linkProviderIdentity()
-   → 전화번호 있음: 세션 발급 → /
-   → 전화번호 없음: pending 쿠키 → /login/verify → SMS 인증 → 세션 발급
+LoginDrawer → /api/auth/naver/start?next=<현재 경로> → 네이버 동의 화면
+   → /api/auth/naver/callback → 토큰 교환 → 프로필 조회 → linkProviderIdentity()
+   → 재방문(AuthIdentity 있음): 세션 발급 → <원래 경로>
+   → 그 외 전부(첫 로그인): pending 쿠키 → /verify-phone (페이지)
+                     → SMS 인증 → 세션 발급 → <원래 경로>
 ```
+
+제공자가 전화번호를 줬는지 여부는 **분기를 바꾸지 않는다.** 줬으면 `/verify-phone`의 입력값이
+미리 채워지는 것뿐이다.
+
+**제공자 선택은 drawer, 휴대폰 인증은 페이지다.** `LoginDrawer`는 보던 화면을 떠나지 않아야
+하는 진입점이라 하단 drawer이고, `/verify-phone`은 반드시 통과해야 하는 관문이라 페이지다.
+페이지인 이유는 **렌더 자체를 거부할 수 있어야** 하기 때문이다 — pending 쿠키 없이 들어오면
+`redirect("/")`로 돌려보낸다. drawer 안에 두면 검증할 대상이 있는지 모르는 상태로 폼을 먼저
+그리게 되고, 그 폼의 모든 제출은 401밖에 될 수 없다.
+
+**시작 경로는 `?next=`로 넘기고 `RETURN_TO_COOKIE`에 담긴다.** 제공자 왕복은 다른 오리진을
+거치므로 쿼리스트링이나 메모리에 든 값은 살아남지 못한다. `/verify-phone`도 이 쿠키를 읽어
+인증을 마친 뒤 원래 페이지로 보낸다 — 그래서 콜백의 pendingPhone 분기는 이 쿠키를 지우지
+않는다. 돌아오는 경로는 `safeReturnPath()`가 앱 내부로 제한한다. 절대 URL이나 `//evil.com`을
+그대로 받으면 로그인이 오픈 리다이렉트가 된다.
+
+**`safeReturnPath()`는 문자열을 검사하지 않고 파싱해서 확인한다.** 임시 오리진에 대고
+`new URL()`로 풀어 본 뒤 그 오리진이 그대로 남았는지만 본다. 막아야 하는 대상이 바로
+`new URL()`이 문자열을 어떻게 재해석하는지이기 때문에, 입력을 패턴으로 걸러내는 방식은
+계속 뚫린다 — 파서는 authority 자리에서 `\`를 `/`와 같게 취급하고, 탭·개행 같은 C0 제어문자는
+authority를 찾기 *전에* 떼어낸다. 그래서 `/\evil.com`과 `/<TAB>/evil.com`은 둘 다
+`startsWith("/")`와 `startsWith("//")` 검사를 통과하면서 `http://evil.com/`으로 풀린다.
+`startsWith` 기반 블랙리스트로 되돌리지 말 것.
+
+**로그인 실패는 `?auth=login&error=<slug>`로 알린다.** `HomeClient`가 이걸 초기 상태로 한 번
+읽고 URL에서 지운다 — 남겨두면 새로고침이 이미 닫은 drawer를 다시 열어버린다. 여기로 오는
+건 실패한 로그인뿐이다. 정상적으로 진행된 첫 로그인은 `/verify-phone`으로 간다.
 
 **제공자 추가는 파일 하나다.** `providers/`에 `OAuthProviderConfig`를 하나 만들고
 `AuthProvider` enum과 `providers/index.ts`의 `FACTORIES`에 등록하면 끝이다. 라우트·세션·계정
@@ -176,14 +276,74 @@ cuid라 추측 가능해서, 확인 없이 지우면 남을 강제 로그아웃�
 **계정 병합 키는 이메일이 아니라 전화번호다.** 제공자가 주는 이메일은 검증 여부를 보장할 수
 없고, 검증 안 된 이메일로 매칭하면 그 제공자에서 이메일만 바꿔도 남의 계정을 가져간다.
 
-**이미 있는 계정에 붙는 경우는 항상 SMS 인증을 거친다.** 신규 생성만 제공자가 준 번호로
-바로 통과시킨다. 기존 계정에 붙이는 건 그 사람의 저장된 링크를 통째로 넘기는 방향이라,
-제공자의 말이 아니라 그 기기에서 직접 증명하게 해야 한다. `ProviderProfile.phoneVerified`가
-이 구분을 들고 있다 — **새 제공자를 추가할 때 기본값은 `false`이고**, 문서로 확인한 경우에만
-`true`로 둔다. 네이버 `mobile`은 통신사 인증 값이라 `true`다.
+**전화번호는 하이픈 없는 로컬 숫자 11자리로 정규화한다.** `01012345678`이고 E.164가 아니다.
+`/verify-phone`의 입력은 타이핑되는 대로 숫자만 남기므로 `010-1234-5678`을 붙여넣어도 조용히
+`01012345678`이 된다(서버는 어차피 다시 정규화한다 — 이건 편의이고 검사가 아니다). 나라가
+하나뿐이라 `+82`는 모든 소비자가 다시 떼어내는 상수 접두어였고, Solapi도 로컬 숫자를 원한다.
+`normalizeKoreanMobile()`은 branded `LocalMobile`을 돌려주는데, 이건 장식이 아니다 —
+정규화되지 않은 문자열이 `blindIndex()`에 닿으면 아무것도 매칭하지 않는 해시가 나오고,
+그 실패는 에러가 아니라 조용한 조회 실패다.
+
+**전화번호는 두 컬럼에 나뉘어 암호화 저장된다.** 코드는
+[frontend/src/lib/auth/phone-crypto.ts](frontend/src/lib/auth/phone-crypto.ts)에 있다.
+
+| 컬럼 | 내용 | 용도 |
+|---|---|---|
+| `phoneHash` | HMAC-SHA256, `v1:` 접두 | partial unique index + 모든 조회 |
+| `phoneEnc` | AES-256-GCM, 랜덤 IV, `v1.` 접두 | 복호화 → `01012345678` |
+
+**한 컬럼으로는 안 되기 때문이다.** 랜덤 IV 인증 암호화는 같은 번호가 매번 다른 암호문이
+되므로 unique index와 `findFirst({ phone })`가 전부 깨진다. 반대로 결정적 암호화만 두면
+사용자에게 번호를 다시 보여줄 수 없다. 그래서 결정적 해시가 유일성과 조회를, 암호문이 복구를
+맡는다. **`blindIndex()`가 equality를 누설하는 것은 감수한 대가다** — 테이블을 가진 사람은 두
+행이 같은 번호인지 알 수 있고, HMAC 키까지 가진 사람은 찍은 번호를 확인할 수 있다(한국 휴대폰
+번호 공간은 ~10^8로 전수조사가 쉽다). 그래서 **키는 절대 DB에 두지 않는다.**
+
+**두 컬럼은 항상 함께 움직인다.** `sealPhone()` 하나로 쌍을 만들고, DB의 CHECK 제약
+(`("phoneHash" IS NULL) = ("phoneEnc" IS NULL)`)이 반쪽 행을 거부한다. 해시만 있으면 주인에게
+번호를 못 보여주고, 암호문만 있으면 매칭이 안 돼서 그 사람은 다음 로그인에 조용히 계정을 하나
+더 갖는다. 둘 다 상태가 아니라 손상이다.
+
+**`hashCode()`에는 평문 번호를 넘긴다.** 컬럼이 blind index를 저장하더라도 그렇다. 두 호출부
+(`sms.ts`의 발송·검증)는 이미 평문을 손에 들고 있다 — 사용자가 같은 요청에 보냈기 때문이다.
+평문을 쓰면 테이블 덤프만으로는 그 해시가 어느 번호에서 나왔는지 알 수 없어서 10^6짜리 코드
+공간을 오프라인으로 갈아낼 수 없다. blind index를 접으면 그 저항이 사라진다.
+
+**번호로 지원 조회를 하려면 먼저 해시해야 한다.** 컬럼에 HMAC이 들어 있으니 Studio에
+`01012345678`을 타이핑해도 아무것도 안 나온다. `blindIndex()`를 통과시킨 값으로 조회할 것.
+
+**`AuthIdentity.phone`은 암호화하지 않고 삭제했다.** 아무도 읽지 않는 support용 데이터였고,
+쓰이는 자리가 두 곳(제공자 원본 / 정규화된 값)이라 형식이 이미 어긋나 있었다. 키 없이 읽을 수
+없는 디버그 데이터는 디버그 데이터가 아니다. 복구 가능한 사본은 `UserProfile.phoneEnc` 하나다.
+
+**키 회전은 구현되어 있지 않다.** `phoneEnc` 쪽은 원리상 싸지만 `phoneHash` 쪽은 아니다 — 모든
+해시가 바뀌고, 두 세대가 공존하는 동안 한 사람의 구·신 해시가 서로 다른 값이라서 partial unique
+index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계정 병합 불변조건이다. 양쪽 `v1`
+표식은 나중에 그걸 가능하게 하려고 있는 것이니 **떼지 말 것**.
+
+**`PHONE_ENCRYPTION_KEY`를 잃으면 저장된 번호는 못 읽고 못 맞춘다.** 모든 계정이 SMS 재인증을
+해야 한다. `AUTH_SECRET`과 분리한 이유가 이것이다 — 그쪽 회전은 진행 중인 로그인만 잃는다.
+길이 검사는 **디코드한 바이트 수**로 한다. 문자 32개는 엔트로피 32바이트를 보장하지 않는다.
+
+**첫 로그인은 예외 없이 SMS 인증을 거친다.** 신규 가입도, 기존 계정 병합도 똑같다.
+`linkProviderIdentity()`에서 세션이 바로 나오는 경로는 **이미 연결된 `AuthIdentity`가 있는
+재방문 로그인 하나뿐**이고, 나머지는 전부 `pendingPhone`으로 나간다.
+
+예전에는 제공자가 "통신사 인증했다"고 말한 번호(`ProviderProfile.phoneVerified`)면 신규 생성을
+바로 통과시켰다. 그 필드는 **삭제됐다.** 제공자가 주는 번호는 그 계정 주인이 언젠가 등록해 둔
+값일 뿐이고, 지금 이 로그인을 진행하는 사람이 그 번호로 문자를 받을 수 있다는 증명은 아니다.
+동의 화면을 읽지 않고 넘긴 경우도, 제공자 기록이 오래된 경우도 전부 여기에 걸린다. 번호는
+계정 병합 키이자 이 앱이 가진 유일한 추가 credential이므로, 세션을 가질 기기에서 직접 증명한다.
+
+**`ProviderProfile.phone`은 이제 힌트다.** `/verify-phone`의 입력값을 미리 채워 넣는 데만
+쓰이고(`normalizeKoreanMobile()`을 통과시켜 넘긴다), 저장되는 번호는 항상 SMS로 증명된 쪽이다.
+`completeIdentityLink()`는 제공자가 준 번호를 절대 대신 쓰지 않는다 — 둘이 일치할 때도
+그렇다. **새 제공자를 추가할 때 `phoneVerified` 같은 플래그를 다시 만들지 말 것.** 그 플래그의
+존재 자체가 "제공자의 말로 가입을 통과시키는 경로"를 되살린다.
 
 **네이버는 필수 항목도 사용자가 거부할 수 있다.** `response` 안의 `id`를 빼면 전부 optional로
-다뤄야 한다. 전화번호가 안 오면 로그인은 끝나지 않고 SMS 인증 단계로 넘어간다.
+다뤄야 한다. 전화번호가 안 와도 로그인 흐름은 바뀌지 않는다 — 어차피 SMS 인증을 거치므로,
+입력값이 미리 채워지지 않는 차이만 있다.
 
 **네이버 응답은 200으로도 실패한다.** `resultcode`가 `"00"`인지 따로 봐야 하고, 토큰
 엔드포인트도 200 본문에 `error`를 담아 보낸다. HTTP 상태만 믿지 말 것.
@@ -192,13 +352,26 @@ cuid라 추측 가능해서, 확인 없이 지우면 남을 강제 로그아웃�
 제한은 전부 `sms.ts`와 `PhoneVerification`이 직접 관리한다. 발신번호는 Solapi 콘솔에 사전
 등록·승인(영업일 1~3일)되어 있어야 하고, 미등록 번호로 보내면 그냥 실패한다.
 
+**SMS 발송 제한은 두 축이다.** 번호별(재발송 30초, 시간당 5회, 시도 10회)과 **로그인별**
+(`MAX_SENDS_PER_PENDING`, `purpose` 기준 3회). 번호별 제한만으로는 한 로그인이 여러 번호로
+퍼지는 걸 못 막는다 — pending 쿠키는 TTL 10분 동안 의도적으로 재사용 가능하므로, OAuth 왕복
+한 번으로 30초마다 새 번호에 문자를 보낼 수 있게 된다. 첫 로그인이 전부 이 경로를 지나게
+되면서 이 엔드포인트가 유일한 가입 경로가 됐기 때문에 두 축이 다 필요하다. **한쪽만 남기지
+말 것.** `purpose`에 인덱스가 걸려 있는 이유도 이 카운트가 매 발송마다 돌기 때문이다.
+
+`phone/send`는 어떤 번호로 보낼지를 제한하지 않는다 — 사용자가 번호를 고르고 그 번호를
+증명하는 것이 설계다. 어느 계정에 붙을지는 *증명된 번호*가 결정하고(`attachIdentity()`),
+그 게이트는 문자 코드다. 제공자가 준 번호와 대조하는 검사를 넣지 말 것: 번호를 바꿔야 하는
+정상 사용자를 막으면서 보안은 나아지지 않는다.
+
 **네이버 로그인 키는 지역검색 키와 다른 애플리케이션이다.** `NAVER_LOGIN_CLIENT_ID`와
 `NAVER_CLIENT_ID`를 섞어 쓰면 불친절한 401이 온다.
 
 ## 데이터 모델
 
 `UserProfile`은 사람 하나다. 제공자별 필드는 들고 있지 않다 — 한 사람이 여러 제공자로
-로그인할 수 있기 때문이다. `phone`이 유니크이고 계정 병합의 키다. 사용자가 고른
+로그인할 수 있기 때문이다. `phoneHash`가 살아 있는 행 사이에서 유니크이고 계정 병합의 키다
+(`phoneEnc`가 같은 번호의 복호화 가능한 사본 — 위 "전화번호는 두 컬럼에" 참고). 사용자가 고른
 `mapProvider`도 여기에 담는다.
 
 `AuthIdentity`는 `UserProfile`에 붙은 소셜 로그인 하나다. `[provider, providerUserId]`에
@@ -238,7 +411,8 @@ cuid라 추측 가능해서, 확인 없이 지우면 남을 강제 로그아웃�
 ## 환경변수
 
 `frontend/.env.example`을 `frontend/.env`로 복사한다. 앱을 띄우려면 `DATABASE_URL`/`DIRECT_URL`,
-`AUTH_SECRET`, `LLM_API_KEY`, 네이버 검색 키 쌍, `NEXT_PUBLIC_NAVER_MAP_CLIENT_ID`가 필요하다.
+`AUTH_SECRET`, `PHONE_ENCRYPTION_KEY`, `LLM_API_KEY`, 네이버 검색 키 쌍,
+`NEXT_PUBLIC_NAVER_MAP_CLIENT_ID`가 필요하다.
 실제 네이버 로그인에는 `NAVER_LOGIN_CLIENT_ID`/`NAVER_LOGIN_CLIENT_SECRET`이, SMS 인증에는
 `SOLAPI_API_KEY`/`SOLAPI_API_SECRET`/`SOLAPI_SENDER_PHONE`이 추가로 필요하다(없으면 테스트
 계정 로그인만 동작한다).

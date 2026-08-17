@@ -1,0 +1,14 @@
+-- Every first sign-in now goes through the SMS challenge — a provider handing us
+-- a number it says it carrier-verified no longer skips it — so POST
+-- /api/auth/phone/send became the app's only registration path.
+--
+-- That promoted a gap in the rate limiting. Every existing limit is keyed on
+-- `phoneHash`, the *destination*, which bounds abuse of one number but says
+-- nothing about one login attempt fanning out across many numbers. The pending
+-- cookie is deliberately replayable for its 10-minute TTL, so a single OAuth
+-- round trip could fund a send to a fresh number every 30 seconds. sms.ts now
+-- also counts sends per `purpose` (`login:<provider>:<nonce>`, one per round
+-- trip), and that count runs on every send.
+--
+-- Not unique: one pending login legitimately holds several rows, one per send.
+CREATE INDEX "PhoneVerification_purpose_idx" ON "PhoneVerification"("purpose");

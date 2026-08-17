@@ -6,22 +6,18 @@ export type ProviderProfile = {
   providerUserId: string;
   email: string | null;
   /**
-   * As the provider gave it, in whatever format they use. Normalized to E.164
-   * by the caller — providers are wildly inconsistent here (Naver returns
-   * `010-1234-5678`, Kakao returns `+82 10-1234-5678`).
+   * As the provider gave it, in whatever format they use — providers are wildly
+   * inconsistent here (Naver returns `010-1234-5678`, Kakao returns
+   * `+82 10-1234-5678`), so anything reading it normalizes first.
+   *
+   * A hint, never a credential. It prefills the SMS form and nothing else: the
+   * phone is the key accounts merge on, so the number that gets stored is always
+   * one the user proved by receiving a code on this device. There is deliberately
+   * no `phoneVerified` flag beside this any more — a provider claiming it
+   * carrier-checked the number used to skip our own challenge, which meant a
+   * sign-in could register an account on the provider's word alone.
    */
   phone: string | null;
-  /**
-   * Whether the provider carrier-verified that number, rather than letting the
-   * user type whatever they liked into a profile field.
-   *
-   * This is the difference between a convenience and an account takeover: the
-   * phone is the key accounts merge on, so an unverified number would let
-   * anyone who can set a profile field at a sloppy provider walk into the
-   * matching account here. Default it to `false` for every provider added
-   * later and only set it where the guarantee is documented.
-   */
-  phoneVerified: boolean;
   name: string | null;
 };
 

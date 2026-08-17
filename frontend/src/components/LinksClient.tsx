@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import LoginDrawer from "@/components/LoginDrawer";
 import { cn } from "@/lib/utils";
 
 /**
@@ -40,13 +41,16 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
 
 export default function LinksClient({
   initialPosts,
+  signedIn,
 }: {
   initialPosts: SavedPostDTO[];
+  signedIn: boolean;
 }) {
   const router = useRouter();
   const [posts, setPosts] = useState(initialPosts);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("ALL");
+  const [loginOpen, setLoginOpen] = useState(false);
 
   const counts = useMemo(() => {
     const byPlatform = new Map<Filter, number>([["ALL", posts.length]]);
@@ -150,10 +154,21 @@ export default function LinksClient({
       )}
 
       {visible.length === 0 ? (
-        <Card className="border border-dashed border-border bg-transparent p-8 text-center text-sm text-muted-foreground ring-0">
-          {posts.length === 0
-            ? "아직 저장한 링크가 없습니다. 지도에서 + 버튼을 눌러 링크를 붙여넣으세요."
-            : "이 플랫폼으로 저장한 링크가 없습니다."}
+        <Card className="flex flex-col items-center gap-4 border border-dashed border-border bg-transparent p-8 text-center text-sm text-muted-foreground ring-0">
+          {/* Signed out the list is empty for a reason the user can act on,
+              so the copy names it and offers the login right here. */}
+          {!signedIn ? (
+            <>
+              로그인하면 저장한 링크를 여기에서 볼 수 있습니다.
+              <Button type="button" onClick={() => setLoginOpen(true)}>
+                로그인
+              </Button>
+            </>
+          ) : posts.length === 0 ? (
+            "아직 저장한 링크가 없습니다. 지도에서 + 버튼을 눌러 링크를 붙여넣으세요."
+          ) : (
+            "이 플랫폼으로 저장한 링크가 없습니다."
+          )}
         </Card>
       ) : (
         <ul className="flex flex-col gap-3">
@@ -166,6 +181,14 @@ export default function LinksClient({
           ))}
         </ul>
       )}
+
+      {/* Returns here rather than to the map, so the login does not cost the
+          user the page they were on. */}
+      <LoginDrawer
+        open={loginOpen}
+        onOpenChange={setLoginOpen}
+        redirectTo="/links"
+      />
     </div>
   );
 }

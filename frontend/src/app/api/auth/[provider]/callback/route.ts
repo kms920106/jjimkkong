@@ -14,8 +14,11 @@ import {
 } from "@/lib/auth/session";
 import {
   clearPendingCookie,
+  clearReturnToCookie,
   clearStateCookie,
   OAUTH_STATE_COOKIE,
+  RETURN_TO_COOKIE,
+  safeReturnPath,
   sealPending,
   setPendingCookie,
   stateMatches,
@@ -25,10 +28,10 @@ import { callbackUrl } from "@/lib/auth/urls";
 /**
  * Finishes a social login.
  *
- * Two possible endings: a session cookie and a redirect home, or — when the
- * provider withheld the phone number we identify people by — a pending-login
- * cookie and a redirect to the verification step. No session is issued on the
- * second path, so an unverified pending login can do nothing.
+ * Two possible endings: a session cookie and a redirect home for a returning
+ * user, or — for every first sign-in with this provider account — a
+ * pending-login cookie and a redirect to the SMS step. No session is issued on
+ * the second path, so an unverified pending login can do nothing.
  */
 export async function GET(
   request: NextRequest,
@@ -36,16 +39,26 @@ export async function GET(
 ) {
   const { provider: slug } = await params;
   const origin = request.nextUrl.origin;
+  // Set by the start route from the page the login drawer was opened on.
+  const returnTo = safeReturnPath(request.cookies.get(RETURN_TO_COOKIE)?.value);
 
-  // The state is spent the moment the callback is reached, however it ends —
-  // leaving it set would turn a one-shot CSRF token into one that stays
-  // replayable for the rest of its TTL across retries.
+  /**
+   * Sends the user back where they started with the reason attached, since
+   * there is no login page to land on. `?auth=login` reopens the drawer so the
+   * message is shown in the place the attempt was made.
+   *
+   * The state is spent the moment the callback is reached, however it ends —
+   * leaving it set would turn a one-shot CSRF token into one that stays
+   * replayable for the rest of its TTL across retries.
+   */
   const fail = (reason: string) => {
-    const response = NextResponse.redirect(
-      `${origin}/login?error=${encodeURIComponent(reason)}`,
-    );
+    const url = new URL(returnTo, origin);
+    url.searchParams.set("auth", "login");
+    url.searchParams.set("error", reason);
+    const response = NextResponse.redirect(url.toString());
     clearStateCookie(response);
     clearPendingCookie(response);
+    clearReturnToCookie(response);
     return response;
   };
 
@@ -81,8 +94,11 @@ export async function GET(
     const outcome = await linkProviderIdentity(provider, profile);
 
     if (outcome.status === "pendingPhone") {
+      // To the verification page, which gates on the pending cookie set here.
+      // The return-to cookie is deliberately left in place: that page reads it
+      // to send the user back where the login started once the code checks out.
       const { value, binding } = sealPending(provider, profile);
-      const response = NextResponse.redirect(`${origin}/login/verify`);
+      const response = NextResponse.redirect(`${origin}/verify-phone`);
       setPendingCookie(response, value, binding);
       clearStateCookie(response);
       return response;
@@ -96,9 +112,10 @@ export async function GET(
     const cookie = await createSession(outcome.user.id, {
       userAgent: request.headers.get("user-agent"),
     });
-    const response = NextResponse.redirect(`${origin}/`);
+    const response = NextResponse.redirect(new URL(returnTo, origin).toString());
     setSessionCookie(response, cookie);
     clearStateCookie(response);
+    clearReturnToCookie(response);
     return response;
   } catch (error) {
     console.error(`OAuth callback failed for ${slug}:`, error);

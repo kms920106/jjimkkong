@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { ZodError } from "zod";
 import { UnauthorizedError } from "@/lib/auth";
 import { UnsupportedUrlError } from "@/lib/ingest/metadata";
@@ -6,10 +6,44 @@ import { LlmRateLimitedError } from "@/lib/ingest/extract";
 import { SmsDeliveryError, SmsVerificationError } from "@/lib/auth/sms";
 import { OAuthConfigError, OAuthFlowError } from "@/lib/auth/providers";
 
+/** Thrown when a mutating request arrives from another origin. */
+export class CrossOriginError extends Error {
+  constructor() {
+    super("Cross-origin request");
+    this.name = "CrossOriginError";
+  }
+}
+
+/**
+ * Rejects mutating requests whose Origin is not this deployment.
+ *
+ * Belt to the browser's braces, not a replacement for them. SameSite=Lax
+ * already withholds the session cookie from script-initiated cross-site
+ * requests, and a JSON-bodied DELETE additionally forces a CORS preflight this
+ * app never answers — so forgery is not reachable today. Both of those are
+ * browser defaults we do not control, though, and loosening CORS on /api/*
+ * later (a native client, a sibling subdomain) would silently open every
+ * mutating route at once. This makes the boundary something the server asserts.
+ */
+export function requireSameOrigin(request: NextRequest): void {
+  const origin = request.headers.get("origin");
+  // Browsers always send Origin on non-GET. Its absence means a non-browser
+  // caller (curl, a server), which carries no ambient cookie to ride on — so
+  // rejecting it would break those without closing an attack path.
+  if (origin === null) return;
+  if (origin !== new URL(request.url).origin) throw new CrossOriginError();
+}
+
 /** Maps known failures onto status codes; anything else becomes a 500. */
 export function toErrorResponse(error: unknown): NextResponse {
   if (error instanceof UnauthorizedError) {
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+  if (error instanceof CrossOriginError) {
+    return NextResponse.json(
+      { error: "요청을 처리할 수 없습니다." },
+      { status: 403 },
+    );
   }
   // Carries its own status: the wrong-code, expired, and rate-limited cases
   // are all user-correctable but map onto different codes.

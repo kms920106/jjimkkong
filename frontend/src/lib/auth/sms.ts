@@ -1,6 +1,7 @@
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 import { prisma } from "@/lib/prisma";
-import type { E164 } from "./phone";
+import type { LocalMobile } from "./phone";
+import { blindIndex } from "./phone-crypto";
 
 /** How long a code stays redeemable. */
 const CODE_TTL_MS = 1000 * 60 * 5;
@@ -16,6 +17,18 @@ const RESEND_COOLDOWN_MS = 1000 * 30;
 
 /** Sends allowed to one number per hour, capping the cost of an abused form. */
 const HOURLY_SEND_LIMIT = 5;
+
+/**
+ * Sends allowed for one pending login, across every number it tries.
+ *
+ * The limits above are all keyed on the destination number, which bounds abuse
+ * *of a number* but not abuse *by a login*. Since every first sign-in now goes
+ * through the SMS challenge, this endpoint is the app's only registration path,
+ * and the pending cookie is deliberately replayable for its 10-minute TTL — so
+ * without a per-login budget one OAuth round trip funds a send to a fresh number
+ * every 30 seconds. Three is enough for a typo and a resend.
+ */
+const MAX_SENDS_PER_PENDING = 3;
 
 /** Raised for every user-correctable failure; carries the message shown to them. */
 export class SmsVerificationError extends Error {
@@ -36,9 +49,15 @@ export class SmsDeliveryError extends Error {
   }
 }
 
-function hashCode(phone: string, purpose: string, code: string): string {
+function hashCode(phone: LocalMobile, purpose: string, code: string): string {
   // The phone and purpose are folded in so a hash cannot be lifted from one
   // challenge row and replayed against another.
+  //
+  // The *plaintext* number, deliberately, even though the column stores a blind
+  // index. Both callers already hold it — it arrived in the request body — and
+  // using it means a stolen table dump does not contain the number this hash was
+  // built from, so the 10^6 code space cannot be ground through offline with
+  // only the row in hand.
   return createHash("sha256").update(`${phone}:${purpose}:${code}`).digest("hex");
 }
 
@@ -55,16 +74,44 @@ function generateCode(): string {
  * Sends a verification code to `phone` and records the challenge.
  *
  * `purpose` scopes the challenge to one pending sign-in, so a code minted for
- * a Naver login cannot be redeemed to complete a Kakao one.
+ * a Naver login cannot be redeemed to complete a Kakao one. It also carries the
+ * per-login send budget, which is a separate axis from the per-number limits —
+ * see MAX_SENDS_PER_PENDING.
+ *
+ * Deliberately does not check `phone` against anything. The user chooses the
+ * number and proves it, and which account they land on follows from the number
+ * they proved; constraining it to one the provider supplied would block a
+ * legitimate number change without making the code any harder to guess.
  */
 export async function startPhoneVerification(
-  phone: E164,
+  phone: LocalMobile,
   purpose: string,
 ): Promise<void> {
   const now = new Date();
+  // Every per-number query below is an equality match, so the deterministic hash
+  // serves them all. The plaintext stays in this function for hashCode() and the
+  // send itself.
+  const phoneHash = blindIndex(phone);
+
+  // Checked before the per-number limits: this one bounds how many *different*
+  // numbers a single pending login can reach, which is the axis the per-number
+  // limits cannot see. `purpose` is `login:<provider>:<nonce>` with a fresh nonce
+  // per OAuth round trip, so counting rows for it counts this login's sends —
+  // including the ones already retired by the sweep below, which is why it counts
+  // rows rather than live ones.
+  const perPending = await prisma.phoneVerification.count({ where: { purpose } });
+  if (perPending >= MAX_SENDS_PER_PENDING) {
+    throw new SmsVerificationError(
+      "인증번호 요청 횟수를 초과했습니다. 처음부터 다시 시도해 주세요.",
+      429,
+    );
+  }
 
   const recent = await prisma.phoneVerification.findFirst({
-    where: { phone, createdAt: { gt: new Date(now.getTime() - RESEND_COOLDOWN_MS) } },
+    where: {
+      phoneHash,
+      createdAt: { gt: new Date(now.getTime() - RESEND_COOLDOWN_MS) },
+    },
     orderBy: { createdAt: "desc" },
   });
   if (recent) {
@@ -75,7 +122,7 @@ export async function startPhoneVerification(
   }
 
   const hourlyCount = await prisma.phoneVerification.count({
-    where: { phone, createdAt: { gt: new Date(now.getTime() - 1000 * 60 * 60) } },
+    where: { phoneHash, createdAt: { gt: new Date(now.getTime() - 1000 * 60 * 60) } },
   });
   if (hourlyCount >= HOURLY_SEND_LIMIT) {
     throw new SmsVerificationError(
@@ -89,7 +136,7 @@ export async function startPhoneVerification(
   // effective guess count against a 6-digit space is attempts × sends rather
   // than attempts.
   const recentAttempts = await prisma.phoneVerification.aggregate({
-    where: { phone, createdAt: { gt: new Date(now.getTime() - 1000 * 60 * 60) } },
+    where: { phoneHash, createdAt: { gt: new Date(now.getTime() - 1000 * 60 * 60) } },
     _sum: { attempts: true },
   });
   if ((recentAttempts._sum.attempts ?? 0) >= MAX_ATTEMPTS_PER_HOUR) {
@@ -105,7 +152,7 @@ export async function startPhoneVerification(
   // is redeemable at a time. Otherwise old unconsumed rows linger until expiry
   // and each carries its own untouched attempt budget.
   await prisma.phoneVerification.updateMany({
-    where: { phone, consumedAt: null },
+    where: { phoneHash, consumedAt: null },
     data: { consumedAt: now },
   });
 
@@ -114,7 +161,7 @@ export async function startPhoneVerification(
   // stored, which reads to them as the service silently losing their code.
   const challenge = await prisma.phoneVerification.create({
     data: {
-      phone,
+      phoneHash,
       purpose,
       codeHash: hashCode(phone, purpose, code),
       expiresAt: new Date(now.getTime() + CODE_TTL_MS),
@@ -138,12 +185,14 @@ export async function startPhoneVerification(
  * finite, because a 6-digit space falls to brute force without one.
  */
 export async function verifyPhoneCode(
-  phone: E164,
+  phone: LocalMobile,
   purpose: string,
   code: string,
 ): Promise<void> {
+  const phoneHash = blindIndex(phone);
+
   const challenge = await prisma.phoneVerification.findFirst({
-    where: { phone, purpose, consumedAt: null },
+    where: { phoneHash, purpose, consumedAt: null },
     orderBy: { createdAt: "desc" },
   });
 
@@ -179,7 +228,7 @@ export async function verifyPhoneCode(
   // above resets with each resend, so on its own it bounds guesses per code
   // rather than per number.
   const spent = await prisma.phoneVerification.aggregate({
-    where: { phone, createdAt: { gt: new Date(Date.now() - 1000 * 60 * 60) } },
+    where: { phoneHash, createdAt: { gt: new Date(Date.now() - 1000 * 60 * 60) } },
     _sum: { attempts: true },
   });
   if ((spent._sum.attempts ?? 0) > MAX_ATTEMPTS_PER_HOUR) {
@@ -219,7 +268,7 @@ export async function verifyPhoneCode(
  * imported lazily so a build without SMS configured does not pull it into
  * every route bundle.
  */
-async function sendVerificationSms(phone: E164, code: string): Promise<void> {
+async function sendVerificationSms(phone: LocalMobile, code: string): Promise<void> {
   const apiKey = process.env.SOLAPI_API_KEY;
   const apiSecret = process.env.SOLAPI_API_SECRET;
   const from = process.env.SOLAPI_SENDER_PHONE;
@@ -234,9 +283,10 @@ async function sendVerificationSms(phone: E164, code: string): Promise<void> {
   const service = new SolapiMessageService(apiKey, apiSecret);
 
   try {
-    // Solapi wants bare digits, not E.164 — `+8210…` is rejected.
+    // Solapi wants bare local digits, which is now the stored and normalized
+    // form as well — so there is nothing to convert here any more.
     await service.send({
-      to: toLocalDigits(phone),
+      to: phone,
       from: from.replace(/[^\d]/g, ""),
       text: `[찜꽁] 인증번호 ${code}를 입력해 주세요.`,
     });
@@ -244,14 +294,18 @@ async function sendVerificationSms(phone: E164, code: string): Promise<void> {
     // The SDK's error codes are not enumerated in its docs, so the specific
     // reason (unregistered sender, empty balance, bad number) is only visible
     // in the log — the user gets one retryable message either way.
-    console.error("Solapi send failed:", cause);
+    //
+    // Narrowed rather than logging `cause` whole: the SDK's error can embed the
+    // request payload, which holds the destination number and the code text.
+    // Logs are storage, and the number is encrypted everywhere else it is
+    // stored — dumping it here would put back exactly what that buys.
+    console.error("Solapi send failed:", {
+      name: cause instanceof Error ? cause.name : "unknown",
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
     throw new SmsDeliveryError(
       "인증번호를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.",
     );
   }
 }
 
-/** `+821012345678` → `01012345678`. */
-function toLocalDigits(e164: E164): string {
-  return `0${e164.replace(/^\+82/, "")}`;
-}

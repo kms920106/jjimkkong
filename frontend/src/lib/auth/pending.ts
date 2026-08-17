@@ -39,10 +39,11 @@ const PendingSchema = z.object({
   profile: z.object({
     providerUserId: z.string(),
     email: z.string().nullable(),
+    // Carried through but never trusted on the way out: the verify route hands
+    // completeIdentityLink the number the user proved by SMS, and this one only
+    // prefills the form. It is why the pending branch is now the only path a
+    // first sign-in can take.
     phone: z.string().nullable(),
-    // Carried through but not trusted on the way out: completeIdentityLink
-    // uses the number the user proved by SMS, never this one.
-    phoneVerified: z.boolean(),
     name: z.string().nullable(),
   }),
   /** Random per pending login; scopes the SMS challenge to this attempt. */
@@ -178,6 +179,63 @@ export function clearPendingCookie(response: NextResponse): void {
 /** CSRF token for the authorize redirect, echoed back by the provider. */
 export function createOAuthState(): string {
   return randomBytes(32).toString("base64url");
+}
+
+/**
+ * Where to send the browser once the login finishes.
+ *
+ * Every page is reachable without a session now, so a login can start from
+ * anywhere and has to end up back there. The provider handshake is a round trip
+ * through another origin, which drops anything held in memory or in the query
+ * string, so the return path travels in a cookie of its own.
+ */
+export const RETURN_TO_COOKIE = "jjimkkong-return-to";
+
+/** Throwaway origin used to test whether a return path stays in-app. */
+const RETURN_PROBE_ORIGIN = "https://return.invalid";
+
+/**
+ * Confines the return path to this app. Without this the login is an open
+ * redirect: an attacker sends a victim a first-party `?next=` link, the victim
+ * completes a real consent screen on the provider's real domain, and our own
+ * callback then hands them to the attacker's host with maximum credibility.
+ *
+ * Resolve-then-verify rather than pattern-matching the input, because the thing
+ * being defended against is precisely how `new URL()` reinterprets the string.
+ * It treats `\` as an authority delimiter, and it strips tabs, newlines and
+ * other C0 controls *before* looking for the authority — so `/\evil.com` and
+ * `/<TAB>/evil.com` both leave the site while passing any `startsWith("/")` and
+ * `startsWith("//")` check you write. Parsing against a throwaway origin and
+ * requiring that origin to survive is immune to that whole class, since it asks
+ * the same parser that will resolve the redirect.
+ */
+export function safeReturnPath(value: string | null | undefined): string {
+  if (!value) return "/";
+  // Dropped up front so a stripped control character cannot reveal a `//`
+  // authority that was not visible in the raw string.
+  const cleaned = value.replace(/[\u0000-\u001F\u007F]/g, "");
+  try {
+    const url = new URL(cleaned, RETURN_PROBE_ORIGIN);
+    if (url.origin !== RETURN_PROBE_ORIGIN) return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
+export function setReturnToCookie(
+  response: NextResponse,
+  value: string,
+): void {
+  response.cookies.set(
+    RETURN_TO_COOKIE,
+    safeReturnPath(value),
+    shortLivedCookie(60 * 10),
+  );
+}
+
+export function clearReturnToCookie(response: NextResponse): void {
+  response.cookies.set(RETURN_TO_COOKIE, "", shortLivedCookie(0));
 }
 
 export function setStateCookie(response: NextResponse, state: string): void {

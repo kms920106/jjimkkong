@@ -1,16 +1,19 @@
 import type { AuthProvider, UserProfile } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { normalizeKoreanMobile, type E164 } from "./phone";
+import { sealPhone } from "./phone-crypto";
+import type { LocalMobile } from "./phone";
 import type { ProviderProfile } from "./providers";
 
 /**
  * What a provider sign-in resolved to.
  *
- * `pendingPhone` is the branch that makes the phone the merge key: the
- * provider gave us no usable number, so we cannot yet tell whether this is a
- * new person or an existing one signing in through a second provider. The
- * caller must run the SMS challenge and come back through
- * `completeIdentityLink` — no session is issued until then.
+ * `pendingPhone` is the branch that makes the phone the merge key: nothing yet
+ * tells us whether this is a new person or an existing one signing in through a
+ * second provider, and only a number proven by SMS can answer that. The caller
+ * must run the challenge and come back through `completeIdentityLink` — no
+ * session is issued until then.
+ *
+ * `linked` therefore only ever means a returning sign-in.
  */
 export type LinkOutcome =
   | { status: "linked"; user: UserProfile }
@@ -22,12 +25,12 @@ export type LinkOutcome =
  * Resolution order, and why:
  *  1. An existing AuthIdentity for [provider, providerUserId] — the only
  *     identifier the provider guarantees is stable. A returning user always
- *     lands here regardless of what else changed.
- *  2. A brand-new person, when the provider verified a phone nobody holds yet.
- *  3. Everything else goes to the SMS challenge — including the account merge
- *     (signing in with Kakao after registering with Naver), because attaching
- *     to an existing person must be proven on the device, not asserted by the
- *     provider.
+ *     lands here regardless of what else changed, and this is the only path
+ *     that issues a session directly.
+ *  2. Everything else goes to the SMS challenge: both a brand-new person and
+ *     the account merge (signing in with Kakao after registering with Naver).
+ *     Registration and merge are the same code path precisely because we do not
+ *     know which one it is until the number is proven.
  *
  * Email is deliberately not a matching key. Providers do not all verify the
  * addresses they hand out, and matching on an unverified one lets anybody who
@@ -37,56 +40,55 @@ export async function linkProviderIdentity(
   provider: AuthProvider,
   profile: ProviderProfile,
 ): Promise<LinkOutcome> {
-  const existing = await prisma.authIdentity.findUnique({
+  // findFirst on withdrawnAt: null, not findUnique — the pair is only unique
+  // among live rows now (a partial unique index; see the soft-delete
+  // migration), because a withdrawn identity keeps the provider id it was
+  // created with. Matching a withdrawn row here would hand a returning user
+  // their withdrawn account back instead of starting them fresh, which is
+  // exactly what withdrawal is supposed to prevent.
+  const existing = await prisma.authIdentity.findFirst({
     where: {
-      provider_providerUserId: { provider, providerUserId: profile.providerUserId },
+      provider,
+      providerUserId: profile.providerUserId,
+      withdrawnAt: null,
     },
     include: { user: true },
   });
 
   if (existing) {
     // Refresh what the provider last told us, but never overwrite a profile
-    // field the user has since set themselves.
+    // field the user has since set themselves. The provider's phone number is
+    // not recorded here — see the note on AuthIdentity in the schema.
     await prisma.authIdentity.update({
       where: { id: existing.id },
-      data: { email: profile.email, phone: profile.phone },
+      data: { email: profile.email },
     });
     const user = await backfillProfile(existing.user, profile);
     return { status: "linked", user };
   }
 
-  const phone = profile.phoneVerified
-    ? normalizeKoreanMobile(profile.phone)
-    : null;
-  if (!phone) {
-    // No usable number: the user declined the consent item, the provider does
-    // not supply one, or it supplies one it never verified. Fall through to
-    // the SMS challenge.
-    return { status: "pendingPhone", provider, profile };
-  }
-
-  // Attaching to an account that already exists is the dangerous direction —
-  // it hands this provider login the existing person's saved links. Make the
-  // user prove the number on this device rather than trusting the provider's
-  // word for it, even when that provider is one we trust to have checked.
-  const owner = await prisma.userProfile.findUnique({ where: { phone } });
-  if (owner) {
-    return { status: "pendingPhone", provider, profile };
-  }
-
-  const user = await attachIdentity(provider, profile, phone);
-  return { status: "linked", user };
+  // Every first-time sign-in goes to the SMS challenge, including the one where
+  // the provider handed us a number it says it verified itself. The number is
+  // the merge key and the only credential this app has besides the provider
+  // session, so it is proven on the device that will hold the session — not
+  // asserted by a third party whose verification we cannot inspect, whose
+  // records may be stale, and whose consent screen the user may have clicked
+  // through without reading. The profile travels into the pending cookie only
+  // so the form can prefill the number; completeIdentityLink uses the number the
+  // user actually proved.
+  return { status: "pendingPhone", provider, profile };
 }
 
 /**
  * Second half of the `pendingPhone` branch, called once the SMS code for
- * `phone` has been verified. Same merge rule as above, with the number the
- * user proved they control instead of the one the provider withheld.
+ * `phone` has been verified. `phone` is always the number the user proved on
+ * this device; the one the provider may have supplied is never substituted for
+ * it, even when the two agree.
  */
 export async function completeIdentityLink(
   provider: AuthProvider,
   profile: ProviderProfile,
-  phone: E164,
+  phone: LocalMobile,
 ): Promise<UserProfile> {
   return attachIdentity(provider, profile, phone);
 }
@@ -102,10 +104,23 @@ export async function completeIdentityLink(
 async function attachIdentity(
   provider: AuthProvider,
   profile: ProviderProfile,
-  phone: E164,
+  phone: LocalMobile,
 ): Promise<UserProfile> {
+  // Sealed once, outside the transaction: encryptPhone() uses a random IV, so
+  // calling it twice for one number yields two different ciphertexts. Only one
+  // is written here, but deriving the pair in a single place is what keeps the
+  // hash and the ciphertext describing the same number.
+  const sealed = sealPhone(phone);
+
   return prisma.$transaction(async (tx) => {
-    const owner = await tx.userProfile.findUnique({ where: { phone } });
+    // Live rows only, matching the partial unique index that now backs the
+    // number. This is the decision point for the withdraw-then-return case: the
+    // withdrawn row is invisible here, so `owner` is null and a brand-new
+    // person is created with the same phone — which the index permits, because
+    // it only constrains rows where withdrawnAt IS NULL.
+    const owner = await tx.userProfile.findFirst({
+      where: { phoneHash: sealed.hash, withdrawnAt: null },
+    });
 
     const user =
       owner ??
@@ -113,7 +128,8 @@ async function attachIdentity(
         data: {
           email: profile.email,
           nickname: profile.name,
-          phone,
+          phoneHash: sealed.hash,
+          phoneEnc: sealed.enc,
           phoneVerifiedAt: new Date(),
         },
       }));
@@ -124,7 +140,6 @@ async function attachIdentity(
         provider,
         providerUserId: profile.providerUserId,
         email: profile.email,
-        phone,
       },
     });
 

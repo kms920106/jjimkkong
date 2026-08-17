@@ -6,6 +6,16 @@ import Link from "next/link";
 import { ChevronRight, Pencil } from "lucide-react";
 import { displayName, type MapProvider, type ProfileDTO } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +58,11 @@ export default function AppDrawer({
   const provider = pendingProvider ?? profile.mapProvider;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  // Separate from `error`, which renders inside the settings nav — a failed
+  // withdrawal has to appear in the dialog the user is looking at.
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
   async function patch(body: Record<string, unknown>) {
     setSaving(true);
@@ -93,8 +108,42 @@ export default function AppDrawer({
     // Revokes the session row as well as the cookie, so the token is dead
     // even if a copy of it was captured.
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    router.push("/login");
+    onClose();
+    // Home, not a login page — there is no longer one. refresh() rebuilds the
+    // tree without the session, which is what empties the map of pins.
+    router.push("/");
     router.refresh();
+  }
+
+  async function withdraw() {
+    setWithdrawing(true);
+    setWithdrawError(null);
+    try {
+      // No body: the dialog itself is the confirmation, so there is nothing to
+      // send. Content-Type is still set — it is what forces a CORS preflight on
+      // a cross-origin attempt, which requireSameOrigin() then rejects outright.
+      const res = await fetch("/api/account", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(
+          typeof body?.error === "string" ? body.error : "탈퇴하지 못했습니다.",
+        );
+      }
+      setWithdrawOpen(false);
+      onClose();
+      // Same landing as sign-out: the account is gone, so refresh() rebuilds
+      // the tree with no session and the map comes back empty.
+      router.push("/");
+      router.refresh();
+    } catch (cause) {
+      setWithdrawError(
+        cause instanceof Error ? cause.message : "탈퇴하지 못했습니다.",
+      );
+      setWithdrawing(false);
+    }
   }
 
   const name = displayName({ nickname: profile.nickname, email: profile.email });
@@ -160,6 +209,12 @@ export default function AppDrawer({
                 {profile.email}
               </p>
             )}
+            {/* Masked by the server; the full number is never sent here. */}
+            {profile.phoneMasked && (
+              <p className="truncate text-xs text-muted-foreground">
+                {profile.phoneMasked}
+              </p>
+            )}
           </div>
         </div>
 
@@ -203,11 +258,66 @@ export default function AppDrawer({
           )}
         </nav>
 
-        <div className="border-t border-border px-5 py-4">
+        <div className="flex items-center justify-between border-t border-border px-5 py-4">
           <Button variant="ghost" size="sm" onClick={signOut}>
             로그아웃
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              // Reset here, not on close: reopening after a failed attempt
+              // should start clean, and the dialog keeps no state of its own.
+              setWithdrawError(null);
+              setWithdrawOpen(true);
+            }}
+            className="text-xs text-muted-foreground hover:text-destructive"
+          >
+            회원탈퇴
+          </Button>
         </div>
+
+        <AlertDialog
+          open={withdrawOpen}
+          onOpenChange={(next) => {
+            // Mid-delete: dismissing would leave the user on a page whose
+            // account may already be gone, with no indication either way.
+            if (!next && withdrawing) return;
+            setWithdrawOpen(next);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>회원탈퇴</AlertDialogTitle>
+              <AlertDialogDescription>
+                탈퇴하면 지금 바로 로그아웃되고, 저장한 링크 {savedCount}개를 다시
+                볼 수 없습니다. 같은 계정으로 다시 로그인하더라도 새 계정으로
+                시작하며 이전 링크는 복구되지 않습니다.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            {withdrawError && (
+              <Alert variant="destructive">
+                <AlertDescription>{withdrawError}</AlertDescription>
+              </Alert>
+            )}
+
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={withdrawing}>취소</AlertDialogCancel>
+              <AlertDialogAction
+                // A plain Button, not a Base UI Close, so nothing dismisses the
+                // dialog for us — withdraw() closes it, and only once the
+                // delete actually succeeded. A Close here would tear the dialog
+                // down mid-request and swallow the error message.
+                onClick={() => void withdraw()}
+                disabled={withdrawing}
+                className="bg-destructive text-white hover:bg-destructive/90"
+              >
+                {withdrawing ? "탈퇴 중…" : "탈퇴하기"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </SheetContent>
     </Sheet>
   );

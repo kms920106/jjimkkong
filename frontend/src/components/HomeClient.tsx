@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import MapView from "@/components/map/MapView";
 import CaptionPrompt from "@/components/CaptionPrompt";
 import AppDrawer from "@/components/AppDrawer";
+import LoginDrawer, { loginErrorMessage } from "@/components/LoginDrawer";
 import UrlSheet from "@/components/UrlSheet";
 import type { IngestResponse, ProfileDTO, SavedPostDTO } from "@/lib/types";
 import type { FocusRequest, MapMarker } from "@/lib/map/types";
@@ -15,14 +16,17 @@ import type { FocusRequest, MapMarker } from "@/lib/map/types";
 type Props = {
   initialPosts: SavedPostDTO[];
   profile: ProfileDTO;
+  signedIn: boolean;
 };
 
 async function readError(res: Response, fallback: string): Promise<string> {
-  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  const body = (await res.json().catch(() => null)) as {
+    error?: string;
+  } | null;
   return body?.error ?? fallback;
 }
 
-export default function HomeClient({ initialPosts, profile }: Props) {
+export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   const [posts, setPosts] = useState(initialPosts);
   const [ingesting, setIngesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,16 +50,28 @@ export default function HomeClient({ initialPosts, profile }: Props) {
     requestedPlace ? { placeId: requestedPlace, nonce: 0 } : null,
   );
 
+  // A failed OAuth attempt comes back here as ?auth=login&error=<slug>. It is
+  // read once into initial state and then stripped from the URL below, so a
+  // refresh does not reopen a drawer the user already dismissed. The
+  // needs-a-phone-number case does not land here at all — it goes to
+  // /verify-phone.
+  const authParam = searchParams.get("auth");
+  const [loginOpen, setLoginOpen] = useState(authParam !== null);
+  const [loginError] = useState(() =>
+    loginErrorMessage(searchParams.get("error")),
+  );
+
   const requestFocus = useCallback((placeId: string) => {
     setFocusRequest((prev) => ({ placeId, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
 
-  // Strip the consumed param so a refresh or a back-navigation does not yank
-  // the map back to a pin the user has since panned away from. This is a URL
-  // side effect only — the focus above already happened.
+  // Strip the consumed params so a refresh or a back-navigation does not yank
+  // the map back to a pin the user has since panned away from, or reopen the
+  // login drawer. This is a URL side effect only — the focus and the drawer's
+  // initial state above already happened.
   useEffect(() => {
-    if (requestedPlace) router.replace("/", { scroll: false });
-  }, [requestedPlace, router]);
+    if (requestedPlace || authParam) router.replace("/", { scroll: false });
+  }, [requestedPlace, authParam, router]);
 
   const markers = useMemo<MapMarker[]>(() => {
     const byId = new Map<string, MapMarker>();
@@ -91,7 +107,9 @@ export default function HomeClient({ initialPosts, profile }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          manualCaption ? { url: targetUrl, manualCaption } : { url: targetUrl },
+          manualCaption
+            ? { url: targetUrl, manualCaption }
+            : { url: targetUrl },
         ),
       });
 
@@ -218,12 +236,14 @@ export default function HomeClient({ initialPosts, profile }: Props) {
       {/* Both controls float over the map, so they carry their own surface
           colour and shadow rather than the transparent ghost/outline the map
           would show straight through. */}
+      {/* Both controls ask for a login before doing anything that needs one,
+          so a signed-out visitor meets the drawer rather than a 401. */}
       <Button
         type="button"
         variant="secondary"
         size="icon"
-        onClick={() => setDrawerOpen(true)}
-        aria-label="메뉴 열기"
+        onClick={() => (signedIn ? setDrawerOpen(true) : setLoginOpen(true))}
+        aria-label={signedIn ? "메뉴 열기" : "로그인"}
         className="absolute top-4 left-4 z-30 h-11 w-11 rounded-full bg-background shadow-lg hover:bg-accent"
       >
         <Menu className="h-5 w-5" />
@@ -233,20 +253,35 @@ export default function HomeClient({ initialPosts, profile }: Props) {
         type="button"
         size="icon"
         onClick={() => {
+          if (!signedIn) {
+            setLoginOpen(true);
+            return;
+          }
           setError(null);
           setSheetOpen(true);
         }}
         aria-label="링크 추가"
-        className="absolute right-5 bottom-6 z-30 h-14 w-14 rounded-full shadow-lg"
+        className="absolute right-5 bottom-6 z-30 h-11 w-11 rounded-full shadow-lg"
       >
         <Plus className="h-7 w-7" />
       </Button>
 
-      <AppDrawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        profile={profile}
-        savedCount={posts.length}
+      {/* Signed out there is no profile to render or settings to change, so
+          the menu is replaced by the login drawer rather than shown empty. */}
+      {signedIn && (
+        <AppDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          profile={profile}
+          savedCount={posts.length}
+        />
+      )}
+
+      <LoginDrawer
+        open={loginOpen}
+        onOpenChange={setLoginOpen}
+        redirectTo="/"
+        initialError={loginError}
       />
 
       {sheetOpen && (

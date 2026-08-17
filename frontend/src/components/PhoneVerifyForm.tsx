@@ -11,7 +11,10 @@ import { Label } from "@/components/ui/label";
 type Step = "phone" | "code";
 
 /** Reads the API's Korean error message, falling back when the body is not JSON. */
-async function errorMessage(response: Response, fallback: string): Promise<string> {
+async function errorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
   try {
     const body = await response.json();
     return typeof body?.error === "string" ? body.error : fallback;
@@ -21,14 +24,32 @@ async function errorMessage(response: Response, fallback: string): Promise<strin
 }
 
 /**
- * The second half of a social login, shown when the provider did not give us a
- * phone number. The number is what accounts are matched on, so the login
- * cannot complete without one.
+ * The second half of a social login. The number is what accounts are matched
+ * on, and it has to be proven on this device, so every first sign-in comes
+ * through here — including the ones where the provider already supplied a
+ * number.
+ *
+ * A page rather than a step inside the login drawer: this is a checkpoint the
+ * user must clear, and it needs the server-side pending-cookie check that only
+ * a route can do. The drawer would have to render the form before knowing
+ * whether there is anything to verify against.
  */
-export default function PhoneVerifyForm() {
+export default function PhoneVerifyForm({
+  redirectTo,
+  initialPhone = "",
+}: {
+  /** Where the login started, so finishing lands back there. */
+  redirectTo: string;
+  /**
+   * The number the provider gave us, if any, as a starting value for the input.
+   * Purely a typing shortcut — the user can replace it, and the SMS still has to
+   * reach whatever number is submitted.
+   */
+  initialPhone?: string;
+}) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("phone");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(initialPhone);
   const [code, setCode] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,14 +97,20 @@ export default function PhoneVerifyForm() {
 
       if (!response.ok) {
         setError(await errorMessage(response, "인증에 실패했습니다."));
+        // Only the failure paths clear `pending`. The success path navigates
+        // away, and re-enabling the button during that navigation would let a
+        // second submit fire against an already-consumed verification.
+        setPending(false);
         return;
       }
 
+      // refresh() first so the RSC cache is rebuilt with the new session
+      // cookie; without it the destination would render from the cached
+      // logged-out tree.
       router.refresh();
-      router.push("/");
+      router.push(redirectTo);
     } catch {
       setError("네트워크 오류가 발생했습니다.");
-    } finally {
       setPending(false);
     }
   }
@@ -102,8 +129,16 @@ export default function PhoneVerifyForm() {
             required
             autoFocus
             value={phone}
-            onChange={(event) => setPhone(event.target.value)}
-            placeholder="010-1234-5678"
+            // Digits only, stripped as they are typed rather than validated on
+            // submit: the number is entered without hyphens, so a pasted
+            // `010-1234-5678` should quietly become `01012345678` instead of
+            // bouncing back an error the user has to fix by hand. The server
+            // normalizes again regardless — this is a convenience, not the check.
+            onChange={(event) =>
+              setPhone(event.target.value.replace(/[^\d]/g, "").slice(0, 11))
+            }
+            maxLength={11}
+            placeholder="01012345678"
             className="h-auto px-3 py-2.5 text-sm"
           />
           <Button type="submit" disabled={pending} className="h-auto px-4 py-3">

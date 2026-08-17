@@ -23,14 +23,20 @@ export class UnauthorizedError extends Error {
  * here, because creating a person requires a verified phone number to attach
  * them to; a session that resolves to a missing row is a deleted account and
  * must be rejected rather than silently recreated.
+ *
+ * A withdrawn profile is rejected the same way. Withdrawal keeps the row and
+ * its saved links, so unlike a hard delete the lookup still succeeds — the
+ * `withdrawnAt` filter is the only thing standing between a withdrawn account
+ * and a fully working session. Dropping it from this query silently un-withdraws
+ * every account in the system.
  */
 export async function requireUser(): Promise<UserProfile> {
   const store = await cookies();
   const session = await resolveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) throw new UnauthorizedError();
 
-  const user = await prisma.userProfile.findUnique({
-    where: { id: session.userId },
+  const user = await prisma.userProfile.findFirst({
+    where: { id: session.userId, withdrawnAt: null },
   });
   if (!user) throw new UnauthorizedError();
 

@@ -25,31 +25,49 @@ export async function ensureDevUser(): Promise<UserProfile> {
   return prisma.$transaction(async (tx) => {
     const user = await tx.userProfile.upsert({
       where: { id: DEV_USER_ID },
-      update: {},
+      // Un-withdraws on sign-in. The dev user is a fixed id rather than a
+      // person, so withdrawing it is a test of the flow, not a decision to
+      // respect — leaving the stamp on would brick the only way into the app in
+      // every environment. Real accounts never take this path: they are matched
+      // by provider identity or phone, both of which ignore withdrawn rows.
+      update: { withdrawnAt: null },
       create: {
         id: DEV_USER_ID,
         email: DEV_USER_EMAIL,
         nickname: "테스트 계정",
         // No phone: the dev user must never collide with a real person's
-        // number, and UserProfile.phone is unique.
+        // number, and phone is unique among live rows.
       },
     });
 
-    await tx.authIdentity.upsert({
+    // findFirst + create rather than upsert: [provider, providerUserId] is only
+    // unique among live rows now (partial unique index), so Prisma no longer
+    // accepts it as an upsert target. Scoped to this user id as well as the
+    // provider id, so a withdrawn identity row left over from an earlier cycle
+    // does not satisfy the check and leave the new session with no identity.
+    const identity = await tx.authIdentity.findFirst({
       where: {
-        provider_providerUserId: {
-          provider: AuthProvider.DEV,
-          providerUserId: DEV_PROVIDER_USER_ID,
-        },
-      },
-      update: {},
-      create: {
-        userId: user.id,
         provider: AuthProvider.DEV,
         providerUserId: DEV_PROVIDER_USER_ID,
-        email: DEV_USER_EMAIL,
+        userId: user.id,
       },
     });
+
+    if (identity) {
+      await tx.authIdentity.update({
+        where: { id: identity.id },
+        data: { withdrawnAt: null },
+      });
+    } else {
+      await tx.authIdentity.create({
+        data: {
+          userId: user.id,
+          provider: AuthProvider.DEV,
+          providerUserId: DEV_PROVIDER_USER_ID,
+          email: DEV_USER_EMAIL,
+        },
+      });
+    }
 
     return user;
   });

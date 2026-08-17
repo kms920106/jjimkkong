@@ -61,12 +61,12 @@ export function naverProvider(): OAuthProviderConfig {
       return {
         providerUserId: id,
         email: email ?? null,
+        // Naver's `mobile` is the carrier-verified number on the NID account
+        // rather than a free-text profile field, but it still only prefills our
+        // own SMS challenge. It is a number the account holder registered at
+        // some point, which is not the same as proof that whoever is completing
+        // this login can receive messages on it today.
         phone: mobile ?? null,
-        // Naver's `mobile` is the carrier-verified number on the NID account,
-        // not a free-text profile field, so it can stand in for our own SMS
-        // check. Do not copy this `true` to a new provider without confirming
-        // the same guarantee in its documentation.
-        phoneVerified: Boolean(mobile),
         name: name ?? nickname ?? null,
       };
     },

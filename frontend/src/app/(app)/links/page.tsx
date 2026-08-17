@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth";
+import { getUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { savedPostInclude, toSavedPostDTO } from "@/lib/serialize";
 import LinksClient from "@/components/LinksClient";
@@ -10,13 +10,22 @@ export const metadata = {
 };
 
 export default async function PostsPage() {
-  const user = await requireUser();
+  // Public, like the map: signed out this is an empty list that offers a login
+  // rather than a redirect.
+  const user = await getUser();
 
-  const posts = await prisma.savedPost.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    include: savedPostInclude,
-  });
+  const posts = user
+    ? await prisma.savedPost.findMany({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
+        include: savedPostInclude,
+      })
+    : [];
 
-  return <LinksClient initialPosts={posts.map(toSavedPostDTO)} />;
+  return (
+    <LinksClient
+      initialPosts={posts.map(toSavedPostDTO)}
+      signedIn={user !== null}
+    />
+  );
 }
