@@ -89,6 +89,25 @@ export default function LoginDrawer({
               </AlertDescription>
             </Alert>
           )}
+
+          {/* The consent point. There is no separate checkbox because there is
+              nothing optional to consent to — both documents cover processing
+              the service cannot run without, and a checkbox that can only be
+              ticked is a worse disclosure than a sentence that is always read.
+              Plain anchors, not <Link>: this drawer is the last thing shown
+              before a full navigation off-origin, so a prefetching client
+              transition buys nothing here. */}
+          <p className="text-center text-xs text-muted-foreground">
+            계속하면{" "}
+            <a href="/terms" className="underline underline-offset-2">
+              이용약관
+            </a>
+            과{" "}
+            <a href="/privacy" className="underline underline-offset-2">
+              개인정보처리방침
+            </a>
+            에 동의하는 것으로 봅니다.
+          </p>
         </div>
       </DrawerContent>
     </Drawer>

@@ -256,6 +256,26 @@ export default function AppDrawer({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
+
+          {/* Small and last, but present on every screen a signed-in user can
+              reach — 개인정보처리방침 is a disclosure the law requires to be
+              kept continuously public, not shown once at sign-up. */}
+          <div className="flex items-center gap-3 px-1 pt-7 text-xs text-muted-foreground">
+            <Link
+              href="/terms"
+              onClick={onClose}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              이용약관
+            </Link>
+            <Link
+              href="/privacy"
+              onClick={onClose}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              개인정보처리방침
+            </Link>
+          </div>
         </nav>
 
         <div className="flex items-center justify-between border-t border-border px-5 py-4">
