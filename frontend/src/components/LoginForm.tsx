@@ -2,32 +2,27 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+
+/** Callback errors arrive as `?error=` slugs; anything else falls through. */
+const ERROR_MESSAGES: Record<string, string> = {
+  access_denied: "로그인을 취소했습니다.",
+  state_mismatch: "로그인 요청이 만료되었습니다. 다시 시도해 주세요.",
+  missing_code: "로그인에 실패했습니다. 다시 시도해 주세요.",
+  provider_error: "제공자에서 로그인을 처리하지 못했습니다.",
+  provider_unavailable: "현재 이 방법으로 로그인할 수 없습니다.",
+  unsupported_provider: "지원하지 않는 로그인 방식입니다.",
+  login_failed: "로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+};
 
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [pending, setPending] = useState(false);
+
+  const errorSlug = searchParams.get("error");
   const [error, setError] = useState<string | null>(
-    searchParams.get("error"),
+    errorSlug ? (ERROR_MESSAGES[errorSlug] ?? "로그인에 실패했습니다.") : null,
   );
-
-  async function signIn(provider: "google" | "kakao") {
-    setPending(true);
-    setError(null);
-
-    const supabase = createClient();
-    const { error: signInError } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-
-    if (signInError) {
-      setError(signInError.message);
-      setPending(false);
-    }
-    // On success the browser navigates away; leave `pending` set.
-  }
 
   async function signInAsTestUser() {
     setPending(true);
@@ -48,22 +43,16 @@ export default function LoginForm() {
 
   return (
     <div className="flex w-full max-w-xs flex-col gap-3">
-      <button
-        type="button"
-        onClick={() => signIn("google")}
-        disabled={pending}
-        className="rounded-lg border border-neutral-300 px-4 py-3 text-sm font-medium transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+      {/* A plain link, not a fetch: the provider handshake is a series of
+          top-level navigations, so it works with JavaScript disabled too. */}
+      <a
+        href="/api/auth/naver/start"
+        onClick={() => setPending(true)}
+        aria-disabled={pending}
+        className="rounded-lg bg-[#03C75A] px-4 py-3 text-center text-sm font-medium text-white transition hover:brightness-95"
       >
-        Google로 계속하기
-      </button>
-      <button
-        type="button"
-        onClick={() => signIn("kakao")}
-        disabled={pending}
-        className="rounded-lg bg-[#FEE500] px-4 py-3 text-sm font-medium text-black transition hover:brightness-95 disabled:opacity-50"
-      >
-        카카오로 계속하기
-      </button>
+        네이버로 계속하기
+      </a>
       <div className="my-1 flex items-center gap-3 text-xs text-neutral-400">
         <span className="h-px flex-1 bg-neutral-200 dark:bg-neutral-800" />
         개발용

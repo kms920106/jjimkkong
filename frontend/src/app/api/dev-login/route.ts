@@ -1,14 +1,19 @@
-import { NextResponse } from "next/server";
-import { DEV_SESSION_COOKIE, DEV_USER_ID } from "@/lib/dev-auth";
+import { NextResponse, type NextRequest } from "next/server";
+import { toErrorResponse } from "@/lib/api";
+import { ensureDevUser } from "@/lib/dev-auth";
+import { createSession, setSessionCookie } from "@/lib/auth/session";
 
-/** Issues the local test session. See dev-auth.ts for why this is unconditional. */
-export async function POST() {
-  const response = NextResponse.json({ ok: true });
-  response.cookies.set(DEV_SESSION_COOKIE, DEV_USER_ID, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  });
-  return response;
+/** Issues a real session for the fixed test user. See dev-auth.ts. */
+export async function POST(request: NextRequest) {
+  try {
+    const user = await ensureDevUser();
+    const cookie = await createSession(user.id, {
+      userAgent: request.headers.get("user-agent"),
+    });
+    const response = NextResponse.json({ ok: true });
+    setSessionCookie(response, cookie);
+    return response;
+  } catch (error) {
+    return toErrorResponse(error);
+  }
 }

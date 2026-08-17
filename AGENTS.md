@@ -39,14 +39,14 @@ Vercel의 Root Directory도 `frontend`다.
 frontend/src/
   app/
     (app)/          로그인 후 페이지 — 홈(붙여넣기 + 지도 + 목록), 설정
-    api/            ingest, posts, settings, dev-login/logout
-    auth/callback/  Supabase OAuth 코드 교환
-    login/
+    api/            ingest, posts, settings, dev-login
+    api/auth/       [provider]/start·callback, phone/send·verify, logout
+    login/          로그인 + login/verify(휴대폰 인증)
   components/       HomeClient(메인 플로우 전체), CaptionPrompt, map/*
   lib/
     ingest/         metadata.ts → extract.ts → geocode.ts  (파이프라인, 이 순서대로)
     map/            SDK 로더, 지도 공용 타입, 마커 조회 훅
-    supabase/       브라우저 클라이언트, 서버 클라이언트, proxy 세션 갱신
+    auth/           세션·OAuth·계정연결·SMS 인증 (아래 "인증" 절)
     auth.ts         requireUser() — 모든 라우트의 소유권 게이트
   generated/prisma/ Prisma 클라이언트 생성물 — 생성 파일, gitignore, 직접 수정 금지
   proxy.ts          Next proxy(미들웨어); 페이지 이동 전용, /api에는 절대 걸지 않음
@@ -124,11 +124,13 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 `fetch()`에 `/login`으로 가는 307을 돌려주고, 그 HTML 본문이 `res.json()`을 깨뜨린다.
 클라이언트가 기대하는 것은 401이다. 라우트 핸들러는 이미 `requireUser()`를 호출한다.
 
-**`getSession()`이 아니라 `getUser()`를 쓴다.** `getUser()`는 Supabase에 토큰을 재검증하지만
-`getSession()`은 쿠키에 들어 있는 값을 그대로 믿는다.
+**proxy의 세션 검사는 쿠키가 있는지만 본다.** Edge 런타임이라 DB도 `node:crypto`도 못 쓴다.
+이건 인가 게이트가 아니라 사용자 편의를 위한 리다이렉트이고, 실제 검증은 모든 라우트가
+부르는 `requireUser()`가 DB에 대고 한다. 위조 쿠키는 proxy를 통과해서 401을 만난다. 이
+구분을 헷갈려서 proxy에 권한 판단을 얹지 말 것.
 
-**`dev-auth.ts`는 살아 있는 인증 우회다.** OAuth 앱이 아직 없어서 프로덕션 빌드를 포함해
-무조건 활성화되어 있다. 인증되지 않은 누구든 `POST /api/dev-login`으로 고정된 dev uuid가
+**`dev-auth.ts`는 살아 있는 인증 우회다.** 네이버 로그인 검수가 끝나지 않아 프로덕션 빌드를
+포함해 무조건 활성화되어 있다. 인증되지 않은 누구든 `POST /api/dev-login`으로 고정된 dev uuid가
 될 수 있다. 이 앱을 외부에 공개하기 전에 반드시 차단하거나 제거해야 한다 — 배경 장식이
 아니라 미해결 항목으로 취급할 것.
 
@@ -143,10 +145,68 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 프로젝트 가이드는 루트인 이 파일에 쓰고, 다시 생성된 블록은 맞서 싸우지 말고 작업물과 함께
 커밋한다.
 
+## 인증
+
+Supabase Auth는 쓰지 않는다. 네이버가 Supabase의 기본 제공자 목록에 없어서, OAuth 핸드셰이크와
+세션을 전부 앱이 직접 소유한다. 코드는 [frontend/src/lib/auth/](frontend/src/lib/auth/)에 있다.
+
+```
+/api/auth/naver/start → 네이버 동의 화면 → /api/auth/naver/callback
+   → 토큰 교환 → 프로필 조회 → linkProviderIdentity()
+   → 전화번호 있음: 세션 발급 → /
+   → 전화번호 없음: pending 쿠키 → /login/verify → SMS 인증 → 세션 발급
+```
+
+**제공자 추가는 파일 하나다.** `providers/`에 `OAuthProviderConfig`를 하나 만들고
+`AuthProvider` enum과 `providers/index.ts`의 `FACTORIES`에 등록하면 끝이다. 라우트·세션·계정
+연결은 이미 공용이다. 카카오·애플이 이 자리에 들어온다. 애플은 `response_mode=form_post`가
+필요하므로 `extraAuthorizeParams`를 쓰고 callback을 POST로도 받아야 한다.
+
+**세션은 DB에 있다.** 쿠키는 `<sessionId>.<secret>`이고 DB에는 secret의 SHA-256만 있다.
+자기완결적 JWT였다면 로그아웃·탈퇴 후에도 만료까지 살아 있다 — 즉시 무효화가 필요해서
+이렇게 했다. 대조는 `timingSafeEqual`로 한다. 로그인할 때는 기존 세션을 먼저 파기한다
+(세션 고정 방지). `destroySession()`은 id만 보고 지우지 않고 secret까지 확인한다 — id는
+cuid라 추측 가능해서, 확인 없이 지우면 남을 강제 로그아웃시킬 수 있다.
+
+**pending 로그인 쿠키는 두 장이다.** 서명된 본문과 무작위 binding 값이 각각 다른 쿠키로
+나가고, 본문 안의 HMAC이 binding과 맞아야만 열린다. 본문 하나만으로 열리게 두면 공격자가
+자기 로그인으로 쿠키를 만들어 피해자 브라우저에 심고, 피해자가 자기 번호로 인증을 마치는
+순간 공격자의 신원이 피해자 계정에 붙는다.
+
+**계정 병합 키는 이메일이 아니라 전화번호다.** 제공자가 주는 이메일은 검증 여부를 보장할 수
+없고, 검증 안 된 이메일로 매칭하면 그 제공자에서 이메일만 바꿔도 남의 계정을 가져간다.
+
+**이미 있는 계정에 붙는 경우는 항상 SMS 인증을 거친다.** 신규 생성만 제공자가 준 번호로
+바로 통과시킨다. 기존 계정에 붙이는 건 그 사람의 저장된 링크를 통째로 넘기는 방향이라,
+제공자의 말이 아니라 그 기기에서 직접 증명하게 해야 한다. `ProviderProfile.phoneVerified`가
+이 구분을 들고 있다 — **새 제공자를 추가할 때 기본값은 `false`이고**, 문서로 확인한 경우에만
+`true`로 둔다. 네이버 `mobile`은 통신사 인증 값이라 `true`다.
+
+**네이버는 필수 항목도 사용자가 거부할 수 있다.** `response` 안의 `id`를 빼면 전부 optional로
+다뤄야 한다. 전화번호가 안 오면 로그인은 끝나지 않고 SMS 인증 단계로 넘어간다.
+
+**네이버 응답은 200으로도 실패한다.** `resultcode`가 `"00"`인지 따로 봐야 하고, 토큰
+엔드포인트도 200 본문에 `error`를 담아 보낸다. HTTP 상태만 믿지 말 것.
+
+**Solapi에는 OTP 전용 API가 없다.** 인증번호는 일반 SMS로 나가고, 코드 생성·만료·시도 횟수
+제한은 전부 `sms.ts`와 `PhoneVerification`이 직접 관리한다. 발신번호는 Solapi 콘솔에 사전
+등록·승인(영업일 1~3일)되어 있어야 하고, 미등록 번호로 보내면 그냥 실패한다.
+
+**네이버 로그인 키는 지역검색 키와 다른 애플리케이션이다.** `NAVER_LOGIN_CLIENT_ID`와
+`NAVER_CLIENT_ID`를 섞어 쓰면 불친절한 401이 온다.
+
 ## 데이터 모델
 
-`UserProfile`은 Supabase `auth.users`의 행을 미러링하며, 인증된 첫 요청에서 지연 생성된다
-(Prisma는 `auth` 스키마를 관리할 수 없다). 사용자가 고른 `mapProvider`를 여기에 담는다.
+`UserProfile`은 사람 하나다. 제공자별 필드는 들고 있지 않다 — 한 사람이 여러 제공자로
+로그인할 수 있기 때문이다. `phone`이 유니크이고 계정 병합의 키다. 사용자가 고른
+`mapProvider`도 여기에 담는다.
+
+`AuthIdentity`는 `UserProfile`에 붙은 소셜 로그인 하나다. `[provider, providerUserId]`에
+유니크가 걸려 있다 — 제공자 id는 그 제공자 안에서만 유일하므로 `providerUserId` 단독
+유니크는 카카오 id와 네이버 id가 충돌할 수 있다. 네이버와 카카오를 둘 다 연결한 사람은
+여기 두 행, `UserProfile` 한 행이다.
+
+`Session`은 로그인한 브라우저 하나, `PhoneVerification`은 진행 중인 SMS 인증 하나다.
 
 `SavedPost`는 `[userId, sourceUrl]`에 유니크가 걸려 있다 — 같은 링크를 다시 저장하면
 중복되지 않고 갱신된다. 재저장은 장소 집합을 덧붙이는 게 아니라 **교체**하므로, 다시
@@ -177,9 +237,12 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 
 ## 환경변수
 
-`frontend/.env.example`을 `frontend/.env`로 복사한다. 앱을 띄우려면 Supabase 값 네 개,
-`LLM_API_KEY`, 네이버 검색 키 쌍, `NEXT_PUBLIC_NAVER_MAP_CLIENT_ID`가 필요하다.
-선택: `YOUTUBE_API_KEY`(없으면 유튜브 캡션은 항상 수동 입력),
+`frontend/.env.example`을 `frontend/.env`로 복사한다. 앱을 띄우려면 `DATABASE_URL`/`DIRECT_URL`,
+`AUTH_SECRET`, `LLM_API_KEY`, 네이버 검색 키 쌍, `NEXT_PUBLIC_NAVER_MAP_CLIENT_ID`가 필요하다.
+실제 네이버 로그인에는 `NAVER_LOGIN_CLIENT_ID`/`NAVER_LOGIN_CLIENT_SECRET`이, SMS 인증에는
+`SOLAPI_API_KEY`/`SOLAPI_API_SECRET`/`SOLAPI_SENDER_PHONE`이 추가로 필요하다(없으면 테스트
+계정 로그인만 동작한다).
+선택: `AUTH_BASE_URL`(프로덕션 콜백 URL 고정), `YOUTUBE_API_KEY`(없으면 유튜브 캡션은 항상 수동 입력),
 `NEXT_PUBLIC_KAKAO_MAP_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_KEY`, `LLM_*` 오버라이드.
 
 `.env*`는 `.env.example`만 빼고 gitignore된다. 실제 키를 절대 커밋하지 말 것. 새 변수를
