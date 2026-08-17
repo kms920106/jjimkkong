@@ -44,9 +44,6 @@ enum AuthProvider {
   KAKAO
   APPLE
   GOOGLE
-  /// The local test login. Modelled as a provider so requireUser() has exactly
-  /// one code path instead of branching on a dev cookie. See lib/dev-auth.ts.
-  DEV
 }
 
 /// A person. Owns the saved posts and the app-level settings; carries no

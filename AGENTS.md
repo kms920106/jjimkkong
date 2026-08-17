@@ -39,7 +39,7 @@ Vercel의 Root Directory도 `frontend`다.
 frontend/src/
   app/
     (app)/          모든 페이지 — 홈(붙여넣기 + 지도 + 목록), 링크 목록
-    api/            ingest, posts, settings, dev-login
+    api/            ingest, posts, settings, account
     api/auth/       [provider]/start·callback, phone/send·verify, logout
     verify-phone/   휴대폰 인증 — 모든 첫 로그인이 반드시 거치는 관문
   components/       HomeClient(메인 플로우 전체), LoginDrawer, PhoneVerifyForm,
@@ -168,9 +168,15 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 비정규화한 값이다 — partial unique index가 자기 테이블 컬럼만 읽을 수 있어서 필요하고, 같은
 트랜잭션에서 함께 쓰므로 어긋날 수 없다.
 
-**`dev-auth.ts`의 `ensureDevUser()`는 탈퇴를 되돌린다.** 고정 uuid를 upsert하므로 `withdrawnAt`을
-`null`로 되돌리지 않으면 탈퇴 테스트 한 번에 모든 환경의 유일한 진입로가 막힌다. 실제 계정은
-이 경로를 타지 않는다(제공자 identity나 전화번호로 매칭되고, 둘 다 탈퇴 행을 무시한다).
+**탈퇴를 되돌리는 경로는 없다.** 로그인이 닿는 조회는 전부 `withdrawnAt: null`로 걸러지므로,
+탈퇴한 계정으로 다시 들어오면 새 `UserProfile`이 생기고 이전 데이터는 보이지 않는다.
+
+탈퇴를 되돌릴 수 있는 유일한 형태는 **이미 아는 프로필 id에 대고 직접 `upsert`/`update`를
+하는 것**이고, 지금 그런 호출부는 없다. 예전에는 있었다 — 테스트 로그인이 고정 uuid를
+upsert하면서 `withdrawnAt`을 `null`로 되돌렸고, 그게 탈퇴 테스트 한 번에 모든 환경의 유일한
+진입로가 막히는 걸 막는 장치였다. 그 로그인은 삭제됐지만 **고정 id를 upsert하는 코드를 다시
+넣으면 같은 구멍이 돌아온다.** 계정은 반드시 제공자 identity나 전화번호로 찾을 것 — 둘 다
+탈퇴 행을 건너뛴다.
 
 **탈퇴 확인은 `AlertDialog` 하나다.** 문구 입력은 없고, 라우트는 요청 본문을 아예 읽지 않는다 —
 읽지 않는 본문은 침입 경로가 될 수 없다. 실제 게이트는 `requireSameOrigin()` + 세션이고, 이
@@ -180,10 +186,11 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 **UI 문구로 "모두 삭제"라고 쓰지 말 것** — 데이터는 남는다. 사용자에게는 "다시 볼 수 없고
 재로그인 시 새 계정으로 시작한다"고만 약속한다.
 
-**`dev-auth.ts`는 살아 있는 인증 우회다.** 네이버 로그인 검수가 끝나지 않아 프로덕션 빌드를
-포함해 무조건 활성화되어 있다. 인증되지 않은 누구든 `POST /api/dev-login`으로 고정된 dev uuid가
-될 수 있다. 이 앱을 외부에 공개하기 전에 반드시 차단하거나 제거해야 한다 — 배경 장식이
-아니라 미해결 항목으로 취급할 것.
+**테스트 계정 로그인은 삭제됐다.** `lib/dev-auth.ts`, `POST /api/dev-login`, `prisma/seed.ts`,
+`AuthProvider.DEV`가 전부 사라졌다. 인증되지 않은 누구든 한 번의 POST로 고정된 uuid가 될 수
+있는 우회로였다. **다시 만들지 말 것** — "로컬에서만"이라는 의도로 들어와도 이 코드베이스에는
+그걸 강제할 환경 분기가 없었고, 실제로 프로덕션 빌드에서도 켜져 있었다. 로그인 흐름을 손으로
+확인해야 하면 네이버 로그인 키와 Solapi 키를 채워서 진짜 경로로 들어갈 것.
 
 **`src/generated/prisma/`는 생성물이다.** gitignore되어 있고 `prisma generate`가 다시 쓴다.
 대신 `prisma/schema.prisma`를 수정한다.
@@ -414,8 +421,9 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 `AUTH_SECRET`, `PHONE_ENCRYPTION_KEY`, `LLM_API_KEY`, 네이버 검색 키 쌍,
 `NEXT_PUBLIC_NAVER_MAP_CLIENT_ID`가 필요하다.
 실제 네이버 로그인에는 `NAVER_LOGIN_CLIENT_ID`/`NAVER_LOGIN_CLIENT_SECRET`이, SMS 인증에는
-`SOLAPI_API_KEY`/`SOLAPI_API_SECRET`/`SOLAPI_SENDER_PHONE`이 추가로 필요하다(없으면 테스트
-계정 로그인만 동작한다).
+`SOLAPI_API_KEY`/`SOLAPI_API_SECRET`/`SOLAPI_SENDER_PHONE`이 추가로 필요하다. 테스트 계정
+로그인이 사라졌으므로 이 키들이 없으면 **로그인할 방법이 없다** — 첫 로그인은 예외 없이 SMS
+인증을 거치기 때문이다.
 선택: `AUTH_BASE_URL`(프로덕션 콜백 URL 고정), `YOUTUBE_API_KEY`(없으면 유튜브 캡션은 항상 수동 입력),
 `NEXT_PUBLIC_KAKAO_MAP_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_KEY`, `LLM_*` 오버라이드.
 

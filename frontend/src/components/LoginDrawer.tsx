@@ -1,8 +1,5 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +9,6 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
-import { Separator } from "@/components/ui/separator";
 
 /** Callback errors arrive as `?error=` slugs; anything else falls through. */
 const ERROR_MESSAGES: Record<string, string> = {
@@ -33,10 +29,7 @@ export function loginErrorMessage(slug: string | null): string | null {
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /**
-   * Where to land after the session is issued. The OAuth leg travels through it
-   * as `?next=`; the test login reads it directly when it navigates.
-   */
+  /** Where to land after the session is issued; the OAuth leg carries it as `?next=`. */
   redirectTo: string;
   /** Message from a `?error=` slug on the callback's failure redirect. */
   initialError?: string | null;
@@ -53,43 +46,12 @@ export default function LoginDrawer({
   redirectTo,
   initialError = null,
 }: Props) {
-  const router = useRouter();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(initialError);
-
-  async function signInAsTestUser() {
-    setPending(true);
-    setError(null);
-
-    const response = await fetch("/api/dev-login", { method: "POST" });
-    if (!response.ok) {
-      setError("테스트 로그인에 실패했습니다.");
-      setPending(false);
-      return;
-    }
-
-    // Closing is explicit because `redirectTo` is usually the page the drawer
-    // was opened on: navigating there keeps this component mounted, so nothing
-    // would clear `pending` and the drawer would sit there with dead buttons
-    // over the freshly logged-in page. refresh() rebuilds the tree with the new
-    // session cookie, which is what fills the map back in.
-    setPending(false);
-    onOpenChange(false);
-    router.refresh();
-    router.push(redirectTo);
-  }
-
+  // No in-flight state to track. Every way out of this drawer is a full
+  // navigation — the provider link leaves the origin, and its failure path
+  // redirects back with `?error=`, remounting the tree either way. A `pending`
+  // flag that gated dismissal would only be able to get stuck.
   return (
-    <Drawer
-      open={open}
-      onOpenChange={(next) => {
-        // A login is mid-flight; closing here would leave the request to land
-        // on a dismissed drawer with nothing to report failure to.
-        if (!next && pending) return;
-        onOpenChange(next);
-      }}
-      showSwipeHandle
-    >
+    <Drawer open={open} onOpenChange={onOpenChange} showSwipeHandle>
       <DrawerContent className="mx-auto max-w-lg">
         <DrawerHeader className="pb-4 text-center">
           <DrawerTitle>찜꽁 시작하기</DrawerTitle>
@@ -117,30 +79,13 @@ export default function LoginDrawer({
             // Base UI warns that it is stripping native button semantics from
             // something it expected to be one.
             nativeButton={false}
-            onClick={() => setPending(true)}
-            aria-disabled={pending}
             className="h-auto bg-[#03C75A] px-4 py-3 text-white hover:bg-[#03C75A] hover:brightness-95"
           />
-          <div className="my-1 flex items-center gap-3 text-xs text-muted-foreground">
-            <Separator className="flex-1" />
-            개발용
-            <Separator className="flex-1" />
-          </div>
-          {/* Dashed border marks this as the development-only auth bypass. */}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={signInAsTestUser}
-            disabled={pending}
-            className="h-auto border-dashed px-4 py-3 text-muted-foreground"
-          >
-            테스트 계정으로 로그인
-          </Button>
 
-          {error && (
+          {initialError && (
             <Alert variant="destructive">
               <AlertDescription className="text-center">
-                {error}
+                {initialError}
               </AlertDescription>
             </Alert>
           )}

@@ -15,6 +15,7 @@ export default defineConfig({
   },
   migrations: {
     path: "prisma/migrations",
-    seed: "tsx prisma/seed.ts",
+    // No seed: the only thing ever seeded was the test-login profile, and that
+    // login is gone. Real profiles are created on first sign-in.
   },
 });
