@@ -93,6 +93,14 @@ export function sealPending(
  *
  * `bindingValue` is the companion cookie; the payload only opens when it
  * matches, so a sealed blob transplanted into another browser is inert.
+ *
+ * Not single-use. Nothing records that a pending login was consumed, so within
+ * PENDING_TTL_MS the holder of *both* cookies can present them again. That is
+ * bounded rather than prevented: a replayer can only re-link the provider
+ * account they already authenticated as, to a number they can receive SMS on.
+ * Closing it entirely means a PendingLogin row with a `consumedAt` burned in
+ * the same transaction as completeIdentityLink — do that if this cookie ever
+ * grows the power to act on an existing account.
  */
 export function openPending(
   value: string | undefined,

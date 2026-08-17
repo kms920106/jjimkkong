@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { OAuthConfigError } from "./providers/types";
+import { OAuthConfigError } from "./providers";
 
 /**
  * The callback URL sent to the provider.

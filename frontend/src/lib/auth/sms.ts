@@ -153,9 +153,38 @@ export async function verifyPhoneCode(
   if (challenge.expiresAt.getTime() <= Date.now()) {
     throw new SmsVerificationError("인증번호가 만료되었습니다. 다시 요청해 주세요.");
   }
-  if (challenge.attempts >= MAX_ATTEMPTS) {
+
+  // Spend an attempt before comparing, in the same statement that checks the
+  // cap. Reading `attempts` and then comparing would be a check-then-act race:
+  // a hundred concurrent requests would all read the same pre-increment value,
+  // all pass the cap, and all get a guess — turning a 5-guess budget into an
+  // unbounded one against a space only 10^6 wide.
+  const claimed = await prisma.phoneVerification.updateMany({
+    where: {
+      id: challenge.id,
+      consumedAt: null,
+      attempts: { lt: MAX_ATTEMPTS },
+      expiresAt: { gt: new Date() },
+    },
+    data: { attempts: { increment: 1 } },
+  });
+  if (claimed.count === 0) {
     throw new SmsVerificationError(
       "인증 시도 횟수를 초과했습니다. 인증번호를 다시 요청해 주세요.",
+      429,
+    );
+  }
+
+  // The hourly ceiling across every code sent to this number. The per-code cap
+  // above resets with each resend, so on its own it bounds guesses per code
+  // rather than per number.
+  const spent = await prisma.phoneVerification.aggregate({
+    where: { phone, createdAt: { gt: new Date(Date.now() - 1000 * 60 * 60) } },
+    _sum: { attempts: true },
+  });
+  if ((spent._sum.attempts ?? 0) > MAX_ATTEMPTS_PER_HOUR) {
+    throw new SmsVerificationError(
+      "인증 시도 횟수를 초과했습니다. 잠시 후 다시 시도해 주세요.",
       429,
     );
   }
@@ -166,11 +195,7 @@ export async function verifyPhoneCode(
     expected.length === actual.length && timingSafeEqual(expected, actual);
 
   if (!ok) {
-    const updated = await prisma.phoneVerification.update({
-      where: { id: challenge.id },
-      data: { attempts: { increment: 1 } },
-    });
-    const left = Math.max(0, MAX_ATTEMPTS - updated.attempts);
+    const left = Math.max(0, MAX_ATTEMPTS - (challenge.attempts + 1));
     throw new SmsVerificationError(
       left > 0
         ? `인증번호가 올바르지 않습니다. (${left}회 남음)`

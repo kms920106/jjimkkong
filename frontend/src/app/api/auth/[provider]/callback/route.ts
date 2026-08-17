@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getProvider, toAuthProvider } from "@/lib/auth/providers";
+import {
+  getProvider,
+  OAuthConfigError,
+  toAuthProvider,
+} from "@/lib/auth/providers";
 import { exchangeCodeForToken, fetchProviderProfile } from "@/lib/auth/oauth";
 import { linkProviderIdentity } from "@/lib/auth/link";
 import {
@@ -98,6 +102,10 @@ export async function GET(
     return response;
   } catch (error) {
     console.error(`OAuth callback failed for ${slug}:`, error);
-    return fail("login_failed");
+    // Distinguished so a missing env var does not read to the operator as a
+    // user's login failing — the two need opposite responses.
+    return fail(
+      error instanceof OAuthConfigError ? "provider_unavailable" : "login_failed",
+    );
   }
 }
