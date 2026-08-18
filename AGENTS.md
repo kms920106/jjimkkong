@@ -442,3 +442,35 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 - 이 코드베이스의 주석은 *왜*를 설명하며, 대개 어렵게 알아낸 외부 동작을 기록한 것이다.
   해당 코드를 고칠 때는 주석도 함께 고칠 것. 그러지 않으면 다음 사람이 그 주석이 막고 있던
   버그를 다시 만들어 넣는다.
+
+## 디렉터리별 AGENTS.md
+
+이 파일이 루트다. 각 디렉터리에 그곳에서 일할 때 필요한 것만 적은 AGENTS.md가 있고,
+전부 `<!-- Parent: -->` 태그로 이 파일까지 이어진다. 특정 디렉터리를 고칠 때는 여기와
+해당 파일을 같이 읽는다.
+
+| Directory | Purpose |
+|-----------|---------|
+| [frontend/](frontend/AGENTS.md) | 코드 전부. 명령·설정·검증 방법 |
+| [frontend/src/](frontend/src/AGENTS.md) | 앱 코드의 세 층(app / components / lib) |
+| [frontend/src/app/](frontend/src/app/AGENTS.md) | 라우트 트리 |
+| [frontend/src/app/(app)/](frontend/src/app/(app)/AGENTS.md) | 로그인 없이 열리는 페이지들 |
+| [frontend/src/app/api/](frontend/src/app/api/AGENTS.md) | 인가가 실제로 일어나는 유일한 층 |
+| [frontend/src/app/api/auth/](frontend/src/app/api/auth/AGENTS.md) | OAuth·SMS·로그아웃 라우트 |
+| [frontend/src/app/verify-phone/](frontend/src/app/verify-phone/AGENTS.md) | 첫 로그인의 관문 |
+| [frontend/src/components/](frontend/src/components/AGENTS.md) | 컴포넌트 |
+| [frontend/src/components/map/](frontend/src/components/map/AGENTS.md) | 지도 제공자 3종과 스위치 |
+| [frontend/src/components/ui/](frontend/src/components/ui/AGENTS.md) | shadcn/ui 프리미티브 |
+| [frontend/src/lib/](frontend/src/lib/AGENTS.md) | 도메인 로직 |
+| [frontend/src/lib/ingest/](frontend/src/lib/ingest/AGENTS.md) | 링크 → 장소 파이프라인 |
+| [frontend/src/lib/auth/](frontend/src/lib/auth/AGENTS.md) | 세션·OAuth·전화번호 암호화·SMS |
+| [frontend/src/lib/auth/providers/](frontend/src/lib/auth/providers/AGENTS.md) | 제공자 서술자 |
+| [frontend/src/lib/map/](frontend/src/lib/map/AGENTS.md) | SDK 로더와 공용 타입 |
+| [frontend/src/types/](frontend/src/types/AGENTS.md) | 전역 타입 선언 |
+| [frontend/prisma/](frontend/prisma/AGENTS.md) | 스키마와 마이그레이션 |
+| [frontend/scripts/](frontend/scripts/AGENTS.md) | 일회성 운영 스크립트 |
+| [docs/](docs/AGENTS.md) | 외부 제공자 설정 절차 |
+| [docs/oauth/](docs/oauth/AGENTS.md) | 네이버 로그인 설정과 레퍼런스 |
+
+`frontend/AGENTS.md` 위쪽의 `nextjs-agent-rules` 블록은 `next dev`가 다시 써 넣는
+자동 생성물이다. 지우지 말고 작업물과 함께 커밋한다.
