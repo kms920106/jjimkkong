@@ -140,3 +140,14 @@
     @apply font-sans;
   }
 }
+
+/* Not a Tailwind v4 built-in: hides the scrollbar track on an
+   `overflow-x-auto` row without disabling the scroll or drag gesture
+   itself — used by the /links platform tab row, which must stay
+   one-line-scrollable on a phone but drew a visible track on desktop. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

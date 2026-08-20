@@ -1,5 +1,6 @@
 import { getUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { MapProvider } from "@/generated/prisma/enums";
 import { savedPostInclude, toSavedPostDTO } from "@/lib/serialize";
 import LinksClient from "@/components/LinksClient";
 
@@ -25,6 +26,10 @@ export default async function PostsPage() {
   return (
     <LinksClient
       initialPosts={posts.map(toSavedPostDTO)}
+      // Picks which external map app a place row offers first. Signed out
+      // there is no stored preference, so it matches the default a new
+      // account starts on — the same fallback the home map uses.
+      mapProvider={user?.mapProvider ?? MapProvider.NAVER}
       signedIn={user !== null}
     />
   );

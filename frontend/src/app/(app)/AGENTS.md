@@ -58,3 +58,15 @@
 - Next.js App Router 라우트 그룹
 
 <!-- MANUAL: -->
+
+## `/links`는 `loading.tsx`가 필요하다
+
+이 페이지는 `force-dynamic`이라 세션 조회와 게시글 조회가 끝나야 HTML이 존재한다. 즉
+`<Link href="/links">`의 prefetch가 미리 만들어 둘 payload가 없다. `loading.tsx`가 없으면
+라우터가 클릭 시점에 그릴 것이 아무것도 없어서, drawer가 닫힌 뒤 서버 왕복이 끝날 때까지
+**이전 화면이 그대로 멈춰 있다** — 사용자에게는 느린 게 아니라 버튼이 안 먹은 것으로 보인다.
+
+스켈레톤의 컨테이너 클래스는 `LinksClient`의 최상위(`flex w-full flex-col gap-4 px-4 py-6`)와
+**정확히 같아야 한다.** 다르면 실제 데이터로 교체되는 순간 레이아웃이 튄다. 헤더를 공유하지 않고
+복제한 이유는 스켈레톤이 `posts`/`mapProvider`/`signedIn` 없이 렌더돼야 하기 때문이다 —
+그게 바로 아직 기다리는 중인 값들이다.

@@ -1,10 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
-import type { Platform, SavedPlaceDTO, SavedPostDTO } from "@/lib/types";
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  Copy,
+  MapPin,
+  MoreHorizontal,
+  Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
+import type {
+  MapProvider,
+  Platform,
+  SavedPlaceDTO,
+  SavedPostDTO,
+} from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -19,7 +33,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import LoginDrawer from "@/components/LoginDrawer";
 import { cn } from "@/lib/utils";
@@ -41,9 +62,11 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
 
 export default function LinksClient({
   initialPosts,
+  mapProvider,
   signedIn,
 }: {
   initialPosts: SavedPostDTO[];
+  mapProvider: MapProvider;
   signedIn: boolean;
 }) {
   const router = useRouter();
@@ -71,16 +94,16 @@ export default function LinksClient({
     filter === "ALL" ? posts : posts.filter((post) => post.platform === filter);
 
   /**
-   * The map lives on the home page now, so focusing a place is a navigation.
+   * The map lives on the home page, so focusing places is a navigation.
    * Home reads ?place= and moves the camera there on mount.
    *
-   * Deliberately unwired: the card no longer navigates on click, and the
-   * button that will call this is not built yet. Delete it with the button,
-   * not before.
+   * Comma-separated so one post's places can be framed together: a single id
+   * zooms in to read the street, several back the camera off until all of them
+   * fit. That distinction lives in the map components.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  function focusOnMap(placeId: string) {
-    router.push(`/?place=${encodeURIComponent(placeId)}`);
+  function focusOnMap(placeIds: string[]) {
+    if (placeIds.length === 0) return;
+    router.push(`/?place=${placeIds.map(encodeURIComponent).join(",")}`);
   }
 
   async function handleDelete(postId: string) {
@@ -111,7 +134,7 @@ export default function LinksClient({
         >
           <ChevronLeft aria-hidden />
         </Link>
-        <h1 className="text-base font-semibold">링크 {posts.length}개</h1>
+        <h1 className="text-base font-semibold">링크</h1>
       </header>
 
       {/* The filter drives `filter` state directly rather than TabsContent:
@@ -130,16 +153,19 @@ export default function LinksClient({
         {/* Scrolls rather than wraps: the row must stay one line on a phone,
             where four or five tabs do not fit across. TabsList is
             `inline-flex w-fit` by default, so the scroll container is the
-            list itself with `max-w-full` holding it inside the viewport. */}
+            list itself with `max-w-full` holding it inside the viewport.
+            `scrollbar-none` hides the scrollbar chrome draws on this axis —
+            the row is still touch/drag-scrollable, just without the visible
+            track that a `overflow-x-auto` div otherwise gets on desktop. */}
         <TabsList
           variant="line"
-          className="-mx-4 h-auto max-w-[calc(100%+2rem)] justify-start overflow-x-auto px-4 pb-1"
+          className="-mx-4 h-auto max-w-[calc(100%+2rem)] justify-start overflow-x-auto scrollbar-none px-4 pb-1"
         >
           {tabs.map((tab) => (
             <TabsTrigger
               key={tab.value}
               value={tab.value}
-              className="h-8 shrink-0 flex-none rounded-full border-border px-3.5 data-active:bg-primary data-active:text-primary-foreground"
+              className="h-8 shrink-0 flex-none rounded-full border-border px-3.5 group-data-[variant=line]/tabs-list:data-active:bg-primary group-data-[variant=line]/tabs-list:data-active:text-primary-foreground"
             >
               {tab.label} {counts.get(tab.value) ?? 0}
             </TabsTrigger>
@@ -176,6 +202,8 @@ export default function LinksClient({
             <PostCard
               key={post.id}
               post={post}
+              mapProvider={mapProvider}
+              onFocus={focusOnMap}
               onDelete={() => handleDelete(post.id)}
             />
           ))}
@@ -208,58 +236,100 @@ function kakaoMapUrl(place: SavedPlaceDTO): string {
   return `https://map.kakao.com/?q=${encodeURIComponent(place.name)}`;
 }
 
+function googleMapUrl(place: SavedPlaceDTO): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}`;
+}
+
 /**
- * The chip row: map links only.
+ * The external map apps, ordered so the user's own `mapProvider` comes first.
  *
- * The source post is reachable through the thumbnail, so a chip for it would
- * be a second copy of that same link — and for Instagram it says nothing about
- * where the place is, which is what this row is for.
- *
- * A post saved *from* a map provider is the exception. Its source URL points
- * at the exact place the user picked, whereas the generated search only
- * guesses from the name, so the saved URL takes that provider's slot.
- * Insertion order puts it first and the `Map` keyed by label drops the later
- * search entry.
+ * Every place used to emit a fixed 네이버맵 + 카카오맵 pair, which on a
+ * six-place post meant twelve near-identical chips competing with the place
+ * names themselves. Ordering by the stored preference lets the row show one
+ * and file the rest under the ⋯ menu, and it keeps the list honest for a
+ * GOOGLE user, whose provider had no entry here at all.
  */
-function placeLinks(
-  post: SavedPostDTO,
-  place: SavedPlaceDTO | undefined,
-): Array<{ href: string; label: string }> {
-  const byLabel = new Map<string, string>();
-  if (post.platform === "NAVER" || post.platform === "KAKAO") {
-    byLabel.set(sourceLabel(post.platform), post.sourceUrl);
-  }
-  if (place) {
-    for (const [label, href] of [
-      ["네이버맵", naverMapUrl(place)],
-      ["카카오맵", kakaoMapUrl(place)],
-    ]) {
-      if (!byLabel.has(label)) byLabel.set(label, href);
-    }
-  }
-  return [...byLabel].map(([label, href]) => ({ label, href }));
+const MAP_APPS: Record<
+  MapProvider,
+  { label: string; url: (place: SavedPlaceDTO) => string }
+> = {
+  NAVER: { label: "네이버맵", url: naverMapUrl },
+  KAKAO: { label: "카카오맵", url: kakaoMapUrl },
+  GOOGLE: { label: "구글맵", url: googleMapUrl },
+};
+
+// Derived rather than hand-listed: MAP_APPS is a Record<MapProvider, …>, so
+// the compiler forces a new provider into it — a separate literal array would
+// silently omit it and the menu would never offer that provider.
+const MAP_APP_ORDER = Object.keys(MAP_APPS) as MapProvider[];
+
+function mapAppsFor(
+  preferred: MapProvider,
+): Array<{ provider: MapProvider; label: string; url: (p: SavedPlaceDTO) => string }> {
+  return [preferred, ...MAP_APP_ORDER.filter((p) => p !== preferred)].map(
+    (provider) => ({ provider, ...MAP_APPS[provider] }),
+  );
+}
+
+/** The saved link itself, named after where it came from. */
+function sourceLabel(platform: Platform): string {
+  return FILTERS.find((f) => f.value === platform)?.label ?? "원본 링크";
+}
+
+/**
+ * The card's own title.
+ *
+ * The post is the thing the user saved — a reel called "홍대 데이트코스" with
+ * six stops in it — so its title leads even when places were extracted. Using
+ * the first place instead (as this once did) promoted one arbitrary stop to
+ * stand for the whole post and threw the post's identity away; on that reel
+ * the card read "애몽" and nothing said where the other five came from.
+ *
+ * Falls back through the first place to the raw URL, because a post whose
+ * metadata fetch came back empty still has to be identifiable.
+ */
+function postTitle(post: SavedPostDTO): string {
+  return post.title ?? post.places[0]?.name ?? post.sourceUrl;
 }
 
 function PostCard({
   post,
+  mapProvider,
+  onFocus,
   onDelete,
 }: {
   post: SavedPostDTO;
+  mapProvider: MapProvider;
+  onFocus: (placeIds: string[]) => void;
   onDelete: () => void;
 }) {
-  // A post can hold several places (one Instagram reel, several stops); the
-  // card is titled by the first one and the rest follow as their own rows.
-  const firstPlace = post.places[0];
+  const places = post.places;
+  // A single place is the whole card already, so there is nothing to reveal
+  // and the disclosure would be a control that only ever hides content the
+  // user wants. Multi-place cards start closed to keep the list scannable.
+  const collapsible = places.length > 1;
+  // The lone place of a single-place card, which the head renders in full
+  // because no body list is drawn for it. A post whose geocoding matched
+  // nothing has none, and then the head is just the post.
+  const single = places.length === 1 ? places[0] : undefined;
+  // `null` means "no explicit choice yet", so the default tracks the current
+  // place count instead of freezing whatever it was on mount. Re-saving a link
+  // *replaces* its place set, and the card is keyed by post id — so a post that
+  // went from one place to three would otherwise stay mounted with the
+  // one-place default (expanded) while claiming to be collapsible.
+  const [expanded, setExpanded] = useState<boolean | null>(null);
+  const open = expanded ?? !collapsible;
+
+  const bodyId = `post-places-${post.id}`;
 
   // Card renders a plain div, so the list item wraps it rather than replacing
   // it — a div directly under <ul> would not be valid list markup.
   return (
     <li>
-      <Card size="sm" className="w-full">
-        <CardContent className="flex gap-3">
-          {post.thumbnail && (
-            // The thumbnail is the post's own picture, so it opens the post —
-            // the card body links to the maps instead.
+      <Card size="sm" className="w-full gap-0 py-0">
+        <div className="flex items-start gap-3 p-3">
+          {post.thumbnail ? (
+            // The thumbnail is the post's own picture, so it opens the post.
             <a
               href={post.sourceUrl}
               target="_blank"
@@ -267,71 +337,325 @@ function PostCard({
               aria-label={`${sourceLabel(post.platform)}에서 원본 보기`}
               className="shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
+              {/* Not next/image: these are Instagram and YouTube CDN URLs, which
+                  would each need a remotePatterns entry and would then be
+                  proxied through the optimizer — a hop that buys nothing at
+                  64px. Kept as a plain img, but with the three attributes that
+                  actually matter for how fast the list settles:
+                  width/height reserve the box so the rows do not reflow as
+                  images arrive, lazy keeps offscreen rows off the critical
+                  path, and decoding=async keeps a slow decode from blocking
+                  paint. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={post.thumbnail}
                 alt=""
-                className="h-20 w-20 rounded-lg object-cover transition hover:opacity-80"
+                width={64}
+                height={64}
+                loading="lazy"
+                decoding="async"
+                className="h-16 w-16 rounded-lg bg-muted object-cover transition hover:opacity-80"
               />
             </a>
-          )}
-          <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-medium">
-                {firstPlace?.name ?? post.title ?? post.sourceUrl}
-              </h2>
-              {firstPlace && (
-                <p className="truncate text-xs text-muted-foreground">
-                  {firstPlace.address}
-                </p>
+          ) : null}
+
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <h2 className="line-clamp-2 text-sm font-medium">
+              {postTitle(post)}
+            </h2>
+            <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+              {/* Without a thumbnail the post has no other affordance, so the
+                  source becomes a link here instead. */}
+              {post.thumbnail ? (
+                <span>{sourceLabel(post.platform)}</span>
+              ) : (
+                <a
+                  href={post.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="underline decoration-dotted underline-offset-2"
+                >
+                  {sourceLabel(post.platform)}
+                </a>
               )}
-            </div>
-            {/* Not gated on firstPlace: a post whose geocoding matched nothing
-                still has to expose the link the user saved. */}
-            <div className="flex flex-wrap gap-1.5">
-              {placeLinks(post, firstPlace).map((link) => (
-                <PlaceLink
-                  key={link.label}
-                  href={link.href}
-                  label={link.label}
-                  describedBy={firstPlace?.name}
-                />
-              ))}
-            </div>
-            {/* Places beyond the first still need to be reachable — the card's
-                heading only covers one of them. */}
-            {post.places.length > 1 && (
-              <ul className="flex flex-col gap-1.5 border-t border-border pt-2">
-                {post.places.slice(1).map((place) => (
-                  <li
-                    key={place.id}
-                    className="flex flex-wrap items-center gap-1.5"
-                  >
-                    <span
-                      title={place.address}
-                      className="truncate text-xs font-medium"
-                    >
-                      {place.name}
-                    </span>
-                    <PlaceLink
-                      href={naverMapUrl(place)}
-                      label="네이버맵"
-                      describedBy={place.name}
-                    />
-                    <PlaceLink
-                      href={kakaoMapUrl(place)}
-                      label="카카오맵"
-                      describedBy={place.name}
-                    />
-                  </li>
-                ))}
-              </ul>
+              {post.author && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="truncate">{post.author}</span>
+                </>
+              )}
+              {/* Only for a set. "1곳" restates a card whose heading is
+                  already that one place. */}
+              {places.length > 1 && (
+                <>
+                  <span aria-hidden>·</span>
+                  <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                    {places.length}곳
+                  </Badge>
+                </>
+              )}
+            </p>
+            {/* One place: the body list does not render for it, so its
+                address rides here under the heading it is the subject of. */}
+            {single && (
+              <>
+                <p className="truncate text-xs text-muted-foreground">
+                  {single.address}
+                </p>
+                {single.memo && (
+                  <p className="truncate text-xs text-muted-foreground italic">
+                    {single.memo}
+                  </p>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => onFocus([single.id])}
+                  className="-ml-2 w-fit text-muted-foreground"
+                >
+                  <MapPin aria-hidden />
+                  지도에서 보기
+                </Button>
+              </>
+            )}
+            {/* The preview is what makes the collapsed card worth collapsing:
+                closed, it still says which places are inside. Dropped once
+                open, where the list below says it in full. */}
+            {collapsible && !open && (
+              <p className="truncate text-xs text-muted-foreground">
+                {places.map((place) => place.name).join(" · ")}
+              </p>
             )}
           </div>
-          <DeleteButton onDelete={onDelete} />
-        </CardContent>
+
+          <div className="flex shrink-0 items-center gap-0.5">
+            {single && (
+              <PlaceMenu place={single} post={post} mapProvider={mapProvider} />
+            )}
+            {collapsible && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setExpanded(!open)}
+                aria-expanded={open}
+                aria-controls={bodyId}
+                aria-label={open ? "장소 접기" : `장소 ${places.length}곳 펼치기`}
+                className="rounded-full text-muted-foreground"
+              >
+                <ChevronDown
+                  aria-hidden
+                  className={cn("transition-transform", open && "rotate-180")}
+                />
+              </Button>
+            )}
+            <DeleteButton label={postTitle(post)} onDelete={onDelete} />
+          </div>
+        </div>
+
+        {/* `> 1` rather than `> 0`: with one place the row would repeat the
+            heading and its address verbatim, so that card carries the address
+            and the actions in its head instead (위 카드 머리 참고).
+
+            Unmounted rather than hidden while closed: a six-place post carries
+            six menus and six focusable rows, and leaving them in the tree puts
+            them in the tab order and the screen reader's list behind a control
+            that says they are collapsed. */}
+        {open && places.length > 1 && (
+          <div id={bodyId} className="border-t border-border">
+            <ul>
+              {places.map((place, index) => (
+                <PlaceRow
+                  key={place.id}
+                  place={place}
+                  post={post}
+                  // Numbered because these posts are usually ordered — a
+                  // 데이트코스 is a route, and the caption's order is the one
+                  // the creator meant.
+                  index={index + 1}
+                  numbered={places.length > 1}
+                  mapProvider={mapProvider}
+                  onFocus={() => onFocus([place.id])}
+                />
+              ))}
+            </ul>
+            {places.length > 1 && (
+              <div className="border-t border-border p-2">
+                {/* Every id, not just the first: the map frames the set it
+                    is given, and the marker effect's own fitBounds covers
+                    every pin the user has saved rather than this post's. */}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onFocus(places.map((place) => place.id))}
+                  className="w-full justify-center text-muted-foreground"
+                >
+                  <MapPin aria-hidden />
+                  지도에서 {places.length}곳 모두 보기
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
     </li>
+  );
+}
+
+/**
+ * One place inside a post.
+ *
+ * The name is the button rather than a chip beside one: on a phone the row is
+ * the biggest target available and jumping to the map is the action the user
+ * wants most often. The external map apps move into the ⋯ menu so a
+ * six-place post is six rows instead of six rows plus twelve chips.
+ */
+function PlaceRow({
+  place,
+  post,
+  index,
+  numbered,
+  mapProvider,
+  onFocus,
+}: {
+  place: SavedPlaceDTO;
+  /** The menu needs it to prefer the saved permalink over a name search. */
+  post: SavedPostDTO;
+  index: number;
+  numbered: boolean;
+  mapProvider: MapProvider;
+  onFocus: () => void;
+}) {
+  return (
+    <li className="flex items-center gap-2 border-b border-border/60 px-3 py-2 last:border-b-0">
+      {numbered && (
+        <span
+          aria-hidden
+          className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium text-muted-foreground"
+        >
+          {index}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onFocus}
+        // The accessible name carries the action, because the visible text is
+        // just a place name and every row would otherwise read identically to
+        // whatever the surrounding rows say.
+        aria-label={`${place.name} 지도에서 보기`}
+        className="min-w-0 flex-1 rounded-md px-1 py-0.5 text-left transition hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <span className="block truncate text-sm font-medium">{place.name}</span>
+        <span className="block truncate text-xs text-muted-foreground">
+          {place.address}
+        </span>
+        {/* The user's own note about the place, so it outranks nothing but
+            still belongs on the row rather than behind the menu. */}
+        {place.memo && (
+          <span className="block truncate text-xs text-muted-foreground italic">
+            {place.memo}
+          </span>
+        )}
+      </button>
+      <PlaceMenu place={place} post={post} mapProvider={mapProvider} />
+    </li>
+  );
+}
+
+/**
+ * `sourceUrl` when the post came *from* a map provider, which is the one case
+ * where the saved link names an exact place rather than merely mentioning it
+ * ("지도 링크는 캡션이 아니라 장소 그 자체다"). The generated entries only
+ * search by name, so without this a NAVER/KAKAO post would offer a fuzzy guess
+ * in place of the precise permalink the user actually saved.
+ */
+function exactLinkFor(
+  post: SavedPostDTO,
+): { provider: MapProvider; href: string } | undefined {
+  if (post.platform === "NAVER") {
+    return { provider: "NAVER", href: post.sourceUrl };
+  }
+  if (post.platform === "KAKAO") {
+    return { provider: "KAKAO", href: post.sourceUrl };
+  }
+  return undefined;
+}
+
+function PlaceMenu({
+  place,
+  post,
+  mapProvider,
+}: {
+  place: SavedPlaceDTO;
+  post: SavedPostDTO;
+  mapProvider: MapProvider;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+  const apps = useMemo(() => mapAppsFor(mapProvider), [mapProvider]);
+  const exact = exactLinkFor(post);
+
+  async function copyAddress() {
+    try {
+      await navigator.clipboard.writeText(place.address);
+      setCopied(true);
+      toast.success("주소를 복사했습니다.");
+      // Reverting the icon matters because the menu stays mounted after it
+      // closes — without this the next open still shows the check. Cleared on
+      // unmount too: deleting the post takes the menu with it, and the pending
+      // timer would then fire against a card that is gone.
+      window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // navigator.clipboard only exists in a secure context, and over plain
+      // HTTP — how the app is reached by IP during phone testing — the write
+      // rejects. Naming the address lets the user select it by hand.
+      toast.error("복사할 수 없습니다. 주소를 길게 눌러 선택하세요.");
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`${place.name} 옵션`}
+            className="shrink-0 rounded-full text-muted-foreground"
+          />
+        }
+      >
+        <MoreHorizontal aria-hidden />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-44">
+        {apps.map((app) => {
+          // The saved permalink takes its own provider's slot rather than
+          // adding a row, so the menu does not offer two 네이버맵 entries that
+          // differ only in precision.
+          const href =
+            exact?.provider === app.provider ? exact.href : app.url(place);
+          return (
+            <DropdownMenuItem
+              key={app.provider}
+              render={
+                <a href={href} target="_blank" rel="noreferrer noopener" />
+              }
+            >
+              {app.label}에서 열기
+            </DropdownMenuItem>
+          );
+        })}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={copyAddress}>
+          {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+          주소 복사
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -339,7 +663,14 @@ function PostCard({
  * Deletion is not undoable — the post row and its place links are gone once
  * the request lands — so it is gated behind a confirmation.
  */
-function DeleteButton({ onDelete }: { onDelete: () => void }) {
+function DeleteButton({
+  label,
+  onDelete,
+}: {
+  /** The post this deletes, so the icon button is not one of N bare "삭제"s. */
+  label: string;
+  onDelete: () => void;
+}) {
   // Controlled because `AlertDialogAction` is a plain Button — unlike
   // `AlertDialogCancel` it is not wrapped in the primitive's Close, so
   // confirming would run the delete and leave the dialog standing. An alert
@@ -353,13 +684,13 @@ function DeleteButton({ onDelete }: { onDelete: () => void }) {
         render={
           <Button
             variant="ghost"
-            size="xs"
-            aria-label="삭제"
-            className="h-fit shrink-0 text-muted-foreground hover:text-destructive"
+            size="icon-sm"
+            aria-label={`${label} 삭제`}
+            className="rounded-full text-muted-foreground hover:text-destructive"
           />
         }
       >
-        삭제
+        <Trash2 aria-hidden />
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -382,41 +713,5 @@ function DeleteButton({ onDelete }: { onDelete: () => void }) {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
-}
-
-/** The saved link itself, named after where it came from. */
-function sourceLabel(platform: Platform): string {
-  return FILTERS.find((f) => f.value === platform)?.label ?? "원본 링크";
-}
-
-/**
- * `describedBy` names the place in the accessible name only. Every card emits
- * a "네이버맵"/"카카오맵" pair, so without it a screen reader's link list is
- * 2N identically-named entries with nothing to tell them apart.
- */
-function PlaceLink({
-  href,
-  label,
-  describedBy,
-}: {
-  href: string;
-  label: string;
-  describedBy?: string;
-}) {
-  return (
-    <Badge
-      variant="secondary"
-      render={
-        <a
-          href={href}
-          target="_blank"
-          rel="noreferrer noopener"
-          aria-label={describedBy ? `${describedBy} — ${label}` : undefined}
-        />
-      }
-    >
-      {label}
-    </Badge>
   );
 }
