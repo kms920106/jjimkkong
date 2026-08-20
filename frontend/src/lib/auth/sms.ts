@@ -19,16 +19,40 @@ const RESEND_COOLDOWN_MS = 1000 * 30;
 const HOURLY_SEND_LIMIT = 5;
 
 /**
- * Sends allowed for one pending login, across every number it tries.
+ * Sends allowed for one attempt, across every number it tries.
  *
  * The limits above are all keyed on the destination number, which bounds abuse
- * *of a number* but not abuse *by a login*. Since every first sign-in now goes
- * through the SMS challenge, this endpoint is the app's only registration path,
- * and the pending cookie is deliberately replayable for its 10-minute TTL — so
- * without a per-login budget one OAuth round trip funds a send to a fresh number
+ * *of a number* but not abuse *by one caller*. On the OAuth leg that is the whole
+ * story: the pending cookie is deliberately replayable for its 10-minute TTL, so
+ * without this budget one OAuth round trip would fund a send to a fresh number
  * every 30 seconds. Three is enough for a typo and a resend.
+ *
+ * How much this is worth depends on how the caller got its `purpose`, and the two
+ * flows differ. `login:<provider>:<nonce>` is minted inside a
+ * provider-authenticated callback, so resetting the budget costs a full OAuth
+ * consent round trip — the bound holds against a hostile caller. `phone:<nonce>`
+ * is minted by the send request itself, so discarding the cookie resets it; there
+ * the budget only catches honest clients (a stuck retry, a mistyped number) and
+ * abuse across numbers is left to the per-number ceilings and to edge rate
+ * limiting. See the docstring on PHONE_CHALLENGE_COOKIE.
  */
 const MAX_SENDS_PER_PENDING = 3;
+
+/**
+ * Sends allowed from one caller per hour, across every number they try.
+ *
+ * The last axis, and the only one keyed on something the caller cannot discard.
+ * `purpose` bounds an attempt but a phone-only sign-in mints its own, and the
+ * per-number ceilings cannot see across numbers by construction — so without
+ * this, an unauthenticated caller can walk a list of numbers at one SMS each and
+ * the ceiling is the Solapi balance.
+ *
+ * Set at the same 5/hour as the per-number limit: a real person verifies one
+ * number, maybe two after a typo. The cost of it being wrong is a shared-address
+ * user waiting an hour, which is why it is not lower — offices and mobile
+ * carriers put many people behind one address.
+ */
+const MAX_SENDS_PER_SENDER_HOUR = 5;
 
 /** Raised for every user-correctable failure; carries the message shown to them. */
 export class SmsVerificationError extends Error {
@@ -86,6 +110,7 @@ function generateCode(): string {
 export async function startPhoneVerification(
   phone: LocalMobile,
   purpose: string,
+  senderKey: string | null = null,
 ): Promise<void> {
   const now = new Date();
   // Every per-number query below is an equality match, so the deterministic hash
@@ -94,11 +119,34 @@ export async function startPhoneVerification(
   const phoneHash = blindIndex(phone);
 
   // Checked before the per-number limits: this one bounds how many *different*
-  // numbers a single pending login can reach, which is the axis the per-number
-  // limits cannot see. `purpose` is `login:<provider>:<nonce>` with a fresh nonce
-  // per OAuth round trip, so counting rows for it counts this login's sends —
-  // including the ones already retired by the sweep below, which is why it counts
-  // rows rather than live ones.
+  // numbers a single attempt can reach, which is the axis the per-number limits
+  // cannot see. `purpose` is `login:<provider>:<nonce>` for the OAuth leg and
+  // `phone:<nonce>` for phone-only sign-in, both with a fresh nonce per attempt,
+  // so counting rows for it counts that attempt's sends — including the ones
+  // already retired by the sweep below, which is why it counts rows rather than
+  // live ones. Only the OAuth nonce is expensive to remint; see the constant.
+  // Checked first, because it is the only limit a hostile caller cannot reset. The
+  // two below are still worth having — they bound a number's exposure and catch an
+  // honest client's retry loop — but neither can see one caller fanning out.
+  //
+  // Skipped when the address is unknown rather than failing closed: the platform
+  // not supplying a header must not make signing in impossible, and a caller who
+  // can suppress it is not thereby granted more than the per-number ceilings.
+  if (senderKey) {
+    const perSender = await prisma.phoneVerification.count({
+      where: {
+        senderKey,
+        createdAt: { gt: new Date(now.getTime() - 1000 * 60 * 60) },
+      },
+    });
+    if (perSender >= MAX_SENDS_PER_SENDER_HOUR) {
+      throw new SmsVerificationError(
+        "인증번호 요청 횟수를 초과했습니다. 잠시 후 다시 시도해 주세요.",
+        429,
+      );
+    }
+  }
+
   const perPending = await prisma.phoneVerification.count({ where: { purpose } });
   if (perPending >= MAX_SENDS_PER_PENDING) {
     throw new SmsVerificationError(
@@ -148,11 +196,20 @@ export async function startPhoneVerification(
 
   const code = generateCode();
 
-  // Retire any still-live challenge for this number first, so exactly one code
-  // is redeemable at a time. Otherwise old unconsumed rows linger until expiry
-  // and each carries its own untouched attempt budget.
+  // Retire any still-live challenge for this number *within this purpose*, so
+  // exactly one code per attempt is redeemable. Otherwise old unconsumed rows
+  // linger until expiry and each carries its own untouched attempt budget.
+  //
+  // Scoped to `purpose` rather than the number alone. Sweeping every live row for
+  // the number was equivalent while one number could only ever have one attempt
+  // in flight — every challenge belonged to the single OAuth login that minted
+  // it. Phone-only sign-in broke that: a user who starts /verify-phone, receives
+  // a code, then opens the login drawer and requests a phone-only code for the
+  // same number would have the first code silently retired, and verifyPhoneCode
+  // would answer "request one first" about a code sitting in their SMS inbox.
+  // One redeemable code per attempt is what the invariant above actually needs.
   await prisma.phoneVerification.updateMany({
-    where: { phoneHash, consumedAt: null },
+    where: { phoneHash, purpose, consumedAt: null },
     data: { consumedAt: now },
   });
 
@@ -163,6 +220,7 @@ export async function startPhoneVerification(
     data: {
       phoneHash,
       purpose,
+      senderKey,
       codeHash: hashCode(phone, purpose, code),
       expiresAt: new Date(now.getTime() + CODE_TTL_MS),
     },
@@ -188,7 +246,7 @@ export async function verifyPhoneCode(
   phone: LocalMobile,
   purpose: string,
   code: string,
-): Promise<void> {
+): Promise<string> {
   const phoneHash = blindIndex(phone);
 
   const challenge = await prisma.phoneVerification.findFirst({
@@ -197,7 +255,25 @@ export async function verifyPhoneCode(
   });
 
   if (!challenge) {
-    throw new SmsVerificationError("인증번호를 먼저 요청해 주세요.");
+    // Nothing redeemable — but "never requested" and "already redeemed" are
+    // different situations and telling them apart is what stops the confusing
+    // case. A user whose code was accepted, and who then edits the field and
+    // submits again (the step after verify can reject, leaving the code form on
+    // screen), was being told to request a code they had already used
+    // successfully. The row is filtered out of the lookup above by
+    // `consumedAt: null`, so it has to be looked for separately.
+    //
+    // Scoped to this purpose, so it says nothing about codes from other attempts.
+    const spentRecently = await prisma.phoneVerification.findFirst({
+      where: { phoneHash, purpose, consumedAt: { not: null } },
+      orderBy: { consumedAt: "desc" },
+      select: { id: true },
+    });
+    throw new SmsVerificationError(
+      spentRecently
+        ? "이미 인증이 완료된 번호입니다. 다음 단계를 진행해 주세요."
+        : "인증번호를 먼저 요청해 주세요.",
+    );
   }
   if (challenge.expiresAt.getTime() <= Date.now()) {
     throw new SmsVerificationError("인증번호가 만료되었습니다. 다시 요청해 주세요.");
@@ -252,12 +328,20 @@ export async function verifyPhoneCode(
     );
   }
 
-  // Consumed rather than deleted, so a double-submit of the same form finds a
-  // used row and fails cleanly instead of falling into "request one first".
+  // Consumed rather than deleted, so the row survives to be found. It is *not*
+  // visible to the lookup at the top of this function, which filters
+  // `consumedAt: null` — that is why the no-challenge branch there looks for a
+  // consumed row separately before choosing its message. Deleting instead would
+  // make an already-redeemed code indistinguishable from one never sent.
   await prisma.phoneVerification.update({
     where: { id: challenge.id },
     data: { consumedAt: new Date() },
   });
+
+  // Returned so a caller that hands the proof onward to a later request — the
+  // password flows do — can bind it to this exact row and spend it once. See
+  // `spentAt` in the schema.
+  return challenge.id;
 }
 
 /**

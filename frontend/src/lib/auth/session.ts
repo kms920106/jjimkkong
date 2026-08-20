@@ -121,3 +121,18 @@ export function setSessionCookie(response: NextResponse, cookie: SessionCookie):
 export function clearSessionCookie(response: NextResponse): void {
   response.cookies.set(SESSION_COOKIE, "", cookieOptions(0));
 }
+
+/**
+ * Revokes every session belonging to one account.
+ *
+ * Used by the password reset, and the reason sessions live in the database at all:
+ * a reset is usually a response to "someone else may be in my account", and it is
+ * worth nothing if the other party's session keeps working. A self-contained token
+ * could not be withdrawn like this.
+ *
+ * Called before the new session is created, so the caller's fresh cookie is not
+ * caught by it.
+ */
+export async function destroyAllSessionsForUser(userId: string): Promise<void> {
+  await prisma.session.deleteMany({ where: { userId } });
+}

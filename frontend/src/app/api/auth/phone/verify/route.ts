@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { toErrorResponse } from "@/lib/api";
+import { requireSameOrigin, toErrorResponse } from "@/lib/api";
 import { completeIdentityLink } from "@/lib/auth/link";
 import { normalizeKoreanMobile } from "@/lib/auth/phone";
 import {
@@ -32,6 +32,8 @@ const BodySchema = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
+    requireSameOrigin(request);
+
     const pending = openPending(
       request.cookies.get(PENDING_COOKIE)?.value,
       request.cookies.get(PENDING_BINDING_COOKIE)?.value,

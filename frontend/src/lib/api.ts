@@ -4,6 +4,9 @@ import { UnauthorizedError } from "@/lib/auth";
 import { UnsupportedUrlError } from "@/lib/ingest/metadata";
 import { LlmRateLimitedError } from "@/lib/ingest/extract";
 import { SmsDeliveryError, SmsVerificationError } from "@/lib/auth/sms";
+import { PasswordPolicyError } from "@/lib/auth/password";
+import { PhoneAlreadyRegisteredError } from "@/lib/auth/link";
+import { PasswordAttemptError } from "@/lib/auth/password-attempts";
 import { OAuthConfigError, OAuthFlowError } from "@/lib/auth/providers";
 
 /** Thrown when a mutating request arrives from another origin. */
@@ -49,6 +52,22 @@ export function toErrorResponse(error: unknown): NextResponse {
   // are all user-correctable but map onto different codes.
   if (error instanceof SmsVerificationError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  // 409, not 400: the request is well formed and the caller proved the number —
+  // what conflicts is the account that already exists on it. The message tells the
+  // user the two ways forward (sign in, or reset), so the signup form can show it
+  // verbatim.
+  if (error instanceof PhoneAlreadyRegisteredError) {
+    return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  // Length rules only; the message names the limit the user missed.
+  if (error instanceof PasswordPolicyError) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  // Its own 429, and separate from the SMS limiter: password attempts send no
+  // message, so they are budgeted on a different axis.
+  if (error instanceof PasswordAttemptError) {
+    return NextResponse.json({ error: error.message }, { status: 429 });
   }
   if (error instanceof SmsDeliveryError) {
     // 503, not 500: the provider is down or misconfigured, and retrying later

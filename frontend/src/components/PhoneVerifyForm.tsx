@@ -2,26 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { errorMessage } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type Step = "phone" | "code";
-
-/** Reads the API's Korean error message, falling back when the body is not JSON. */
-async function errorMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  try {
-    const body = await response.json();
-    return typeof body?.error === "string" ? body.error : fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 /**
  * The second half of a social login. The number is what accounts are matched
@@ -52,14 +40,10 @@ export default function PhoneVerifyForm({
   const [phone, setPhone] = useState(initialPhone);
   const [code, setCode] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   async function sendCode(event: React.FormEvent) {
     event.preventDefault();
     setPending(true);
-    setError(null);
-    setNotice(null);
 
     try {
       const response = await fetch("/api/auth/phone/send", {
@@ -69,15 +53,15 @@ export default function PhoneVerifyForm({
       });
 
       if (!response.ok) {
-        setError(await errorMessage(response, "인증번호를 보내지 못했습니다."));
+        toast.error(await errorMessage(response, "인증번호를 보내지 못했습니다."));
         return;
       }
 
       const body = await response.json();
-      setNotice(`${body.phone}로 인증번호를 보냈습니다.`);
+      toast.success(`${body.phone}로 인증번호를 보냈습니다.`);
       setStep("code");
     } catch {
-      setError("네트워크 오류가 발생했습니다.");
+      toast.error("네트워크 오류가 발생했습니다.");
     } finally {
       setPending(false);
     }
@@ -86,7 +70,6 @@ export default function PhoneVerifyForm({
   async function verifyCode(event: React.FormEvent) {
     event.preventDefault();
     setPending(true);
-    setError(null);
 
     try {
       const response = await fetch("/api/auth/phone/verify", {
@@ -96,7 +79,7 @@ export default function PhoneVerifyForm({
       });
 
       if (!response.ok) {
-        setError(await errorMessage(response, "인증에 실패했습니다."));
+        toast.error(await errorMessage(response, "인증에 실패했습니다."));
         // Only the failure paths clear `pending`. The success path navigates
         // away, and re-enabling the button during that navigation would let a
         // second submit fire against an already-consumed verification.
@@ -110,7 +93,7 @@ export default function PhoneVerifyForm({
       router.refresh();
       router.push(redirectTo);
     } catch {
-      setError("네트워크 오류가 발생했습니다.");
+      toast.error("네트워크 오류가 발생했습니다.");
       setPending(false);
     }
   }
@@ -177,25 +160,12 @@ export default function PhoneVerifyForm({
             onClick={() => {
               setStep("phone");
               setCode("");
-              setError(null);
-              setNotice(null);
             }}
             className="text-xs text-muted-foreground hover:text-foreground"
           >
             번호 다시 입력하기
           </Button>
         </form>
-      )}
-
-      {notice && (
-        <Alert>
-          <AlertDescription className="text-center">{notice}</AlertDescription>
-        </Alert>
-      )}
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription className="text-center">{error}</AlertDescription>
-        </Alert>
       )}
     </div>
   );

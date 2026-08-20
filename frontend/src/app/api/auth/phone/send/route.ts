@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { toErrorResponse } from "@/lib/api";
+import { requireSameOrigin, toErrorResponse } from "@/lib/api";
 import { normalizeKoreanMobile, maskKoreanMobile } from "@/lib/auth/phone";
 import {
   openPending,
@@ -8,6 +8,7 @@ import {
   PENDING_COOKIE,
   pendingPurpose,
 } from "@/lib/auth/pending";
+import { senderKeyOf } from "@/lib/auth/sender-key";
 import { startPhoneVerification, SmsVerificationError } from "@/lib/auth/sms";
 
 const BodySchema = z.object({ phone: z.string().min(1) });
@@ -20,6 +21,8 @@ const BodySchema = z.object({ phone: z.string().min(1) });
  */
 export async function POST(request: NextRequest) {
   try {
+    requireSameOrigin(request);
+
     const pending = openPending(
       request.cookies.get(PENDING_COOKIE)?.value,
       request.cookies.get(PENDING_BINDING_COOKIE)?.value,
@@ -37,7 +40,14 @@ export async function POST(request: NextRequest) {
       throw new SmsVerificationError("휴대폰 번호 형식이 올바르지 않습니다.");
     }
 
-    await startPhoneVerification(phone, pendingPurpose(pending));
+    // Same per-caller budget as the phone-only route. The per-number ceilings are
+    // shared between the two paths, so leaving this one unkeyed would leave an
+    // equivalent way to spend them — one OAuth round trip, then a fan-out.
+    await startPhoneVerification(
+      phone,
+      pendingPurpose(pending),
+      senderKeyOf(request),
+    );
 
     return NextResponse.json({ sent: true, phone: maskKoreanMobile(phone) });
   } catch (error) {

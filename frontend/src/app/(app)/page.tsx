@@ -37,12 +37,16 @@ export default async function HomePage() {
                 email: user.email,
                 phoneMasked: maskedPhoneOf(user),
                 mapProvider: user.mapProvider,
+                // The flag, never the verifier — it only picks the wording of the
+                // settings row.
+                hasPassword: user.passwordHash !== null,
               }
             : {
                 nickname: null,
                 email: null,
                 phoneMasked: null,
                 mapProvider: MapProvider.NAVER,
+                hasPassword: false,
               }
         }
         signedIn={user !== null}

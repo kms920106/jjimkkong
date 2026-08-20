@@ -86,6 +86,20 @@ model UserProfile {
   /// is either a number that cannot be recovered or one that cannot be matched.
   phoneEnc    String?
   phoneVerifiedAt DateTime?
+  /// scrypt verifier for the password login, `s1.<salt>.<derived>` (base64url).
+  /// Null is a normal, common state: an account that signs in through a provider
+  /// or through the SMS challenge alone has no password, and never needs one.
+  ///
+  /// Deliberately on the profile rather than keyed to the phone number. The number
+  /// is the merge key, so hanging a credential off it would carry the password
+  /// into whatever account the number later merges into — and a recycled mobile
+  /// number would hand the previous owner's password to the new one. The person
+  /// owns the password, not the number.
+  ///
+  /// Only ever written after the number has been proven by SMS. Without that
+  /// order, anyone could claim a stranger's number by setting a password on it.
+  /// Never compared with `===` — see verifyPassword() in lib/auth/password.ts.
+  passwordHash String?
   /// Set when the user withdraws; null for a live account. The row and every
   /// SavedPost under it are kept — withdrawal is a status change, not a delete.
   /// A withdrawn profile is never returned by requireUser(), never matched as a
@@ -188,6 +202,18 @@ model PhoneVerification {
   /// path and the verify path each already hold the plaintext, because the user
   /// submitted it in the same request.
   phoneHash  String
+  /// Who asked for this code, as an opaque HMAC of the caller's IP. The per-number
+  /// limits cannot see one caller walking a list of numbers, and the per-attempt
+  /// budget keyed on `purpose` cannot either — a phone-only sign-in mints its own
+  /// `purpose`, so discarding the cookie resets it. This is the one key on the row
+  /// the caller does not choose.
+  ///
+  /// Hashed rather than stored raw: an IP is personal data, this table already
+  /// holds a blind index of the phone number instead of the number itself, and
+  /// nothing needs to read the address back — every query is an equality count.
+  /// Null for rows written before the column existed, and for callers whose
+  /// address the platform did not supply.
+  senderKey  String?
   codeHash   String
   /// Which sign-in this challenge belongs to, so a code minted for one pending
   /// login cannot be redeemed by another. Also the key for the per-login send
@@ -196,15 +222,47 @@ model PhoneVerification {
   purpose    String
   attempts   Int      @default(0)
   consumedAt DateTime?
+  /// Set when the proof from this row has been spent on a password write.
+  ///
+  /// `consumedAt` alone is not enough. It marks the code as redeemed, but the
+  /// redemption hands back a signed cookie that the password step reads on a
+  /// *later* request — so a caller who keeps a copy of that cookie could set a
+  /// password repeatedly for the rest of its ten-minute life. The password routes
+  /// claim this column in a conditional update, which is what makes one SMS proof
+  /// buy exactly one password write.
+  spentAt    DateTime?
   expiresAt  DateTime
   createdAt  DateTime @default(now())
 
   @@index([phoneHash, createdAt])
+  /// Backs the per-caller send budget, counted on every send.
+  @@index([senderKey, createdAt])
   @@index([expiresAt])
   /// Backs the per-login send budget, which counts rows for one `purpose` on
   /// every send. Without it that count is a sequential scan on the one table
   /// that grows with every login attempt.
   @@index([purpose])
+}
+
+/// One password sign-in attempt, for the brute-force budget in
+/// lib/auth/password-attempts.ts.
+///
+/// A table rather than a counter column because the budget is a sliding window over
+/// a caller, not a total per account — and it deliberately does not reference
+/// UserProfile: attempts for numbers that have no account must be counted too, or
+/// an attacker gets a free unlimited probe of which numbers are registered.
+///
+/// Rows are only ever counted, never read back. `senderKey` is the same HMAC-of-
+/// address used by PhoneVerification, so an address is never stored in the clear.
+model PasswordAttempt {
+  id        String   @id @default(cuid())
+  senderKey String
+  createdAt DateTime @default(now())
+
+  /// Backs the windowed count, which runs on every password sign-in attempt.
+  @@index([senderKey, createdAt])
+  /// For sweeping old rows; nothing depends on them after the window passes.
+  @@index([createdAt])
 }
 
 model SavedPost {

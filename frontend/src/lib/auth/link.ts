@@ -1,6 +1,6 @@
 import type { AuthProvider, UserProfile } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { sealPhone } from "./phone-crypto";
+import { blindIndex, sealPhone } from "./phone-crypto";
 import type { LocalMobile } from "./phone";
 import type { ProviderProfile } from "./providers";
 
@@ -171,4 +171,115 @@ async function backfillProfile(
 
   if (Object.keys(data).length === 0) return user;
   return prisma.userProfile.update({ where: { id: user.id }, data });
+}
+
+/**
+ * Signup was attempted on a number that already has a password.
+ *
+ * Distinct from every other signup failure because it is the one the user can act
+ * on: the answer is to sign in, or to reset the password if they have forgotten it.
+ *
+ * It does disclose that the number is registered *with a password*, but only to a
+ * caller who has just proven ownership of that number by SMS. That is not an
+ * enumeration oracle — walking the number space would cost one delivered message
+ * and one correct code per number, and the code only reaches the number's actual
+ * holder. The send and verify steps stay uniform; this is the first point where
+ * the flow knows the caller owns the number.
+ */
+export class PhoneAlreadyRegisteredError extends Error {
+  constructor() {
+    super("이미 가입된 휴대폰 번호입니다.");
+    this.name = "PhoneAlreadyRegisteredError";
+  }
+}
+
+/**
+ * Creates or claims the account for a phone-only signup, setting its password.
+ *
+ * `phone` must already have been proven by SMS — the caller is a password route
+ * standing behind a verified challenge. `passwordHash` is a finished verifier from
+ * lib/auth/password.ts; this function never sees a plaintext password.
+ *
+ * Reuses the live account for the number when one exists, which is the same owner
+ * lookup attachIdentity() and the password login route perform, so a person who
+ * signed in with Naver first and now sets a password stays one profile.
+ *
+ * But it only *claims* an account that has no password yet. An account that
+ * already has one is a completed signup, and overwriting it would make this route
+ * a second password-reset endpoint — one without the reset flow's session
+ * revocation, so the previous holder's sessions would survive the change. Number
+ * recycling is the concrete case: a carrier reassigns a number, and the new holder
+ * proves it by SMS and inherits the previous holder's account. Throwing here keeps
+ * "set a password for the first time" and "replace an existing password" as the
+ * separate operations they are — the latter is replacePhonePassword(), behind the
+ * reset intent.
+ */
+export async function upsertPhonePassword(
+  phone: LocalMobile,
+  passwordHash: string,
+): Promise<UserProfile> {
+  const sealed = sealPhone(phone);
+
+  return prisma.$transaction(async (tx) => {
+    // Live rows only, matching the partial unique index. A withdrawn profile
+    // holding this number is invisible, so a returning user gets a fresh account
+    // rather than their withdrawn one back.
+    const owner = await tx.userProfile.findFirst({
+      where: { phoneHash: sealed.hash, withdrawnAt: null },
+    });
+
+    if (!owner) {
+      return tx.userProfile.create({
+        data: {
+          phoneHash: sealed.hash,
+          phoneEnc: sealed.enc,
+          phoneVerifiedAt: new Date(),
+          passwordHash,
+        },
+      });
+    }
+
+    // Checked inside the transaction, alongside the owner lookup that found it:
+    // two concurrent signups on one number must not both read "no password" and
+    // both write one.
+    if (owner.passwordHash) throw new PhoneAlreadyRegisteredError();
+
+    return tx.userProfile.update({
+      where: { id: owner.id },
+      data: {
+        passwordHash,
+        // Filled in for an account that predates the column; never refreshed for
+        // one that already has it, matching the other two paths.
+        ...(owner.phoneVerifiedAt ? {} : { phoneVerifiedAt: new Date() }),
+      },
+    });
+  });
+}
+
+/**
+ * Replaces the password on an existing account, for the reset flow.
+ *
+ * Separate from upsertPhonePassword because reset must not create anything: a
+ * reset request for a number with no account has to fail, and folding the two
+ * together would silently turn "I forgot my password" into "sign me up". Returns
+ * null when there is no live account, which the route reports as the same generic
+ * failure it uses for every other reason.
+ */
+export async function replacePhonePassword(
+  phone: LocalMobile,
+  passwordHash: string,
+): Promise<UserProfile | null> {
+  const hash = blindIndex(phone);
+
+  return prisma.$transaction(async (tx) => {
+    const owner = await tx.userProfile.findFirst({
+      where: { phoneHash: hash, withdrawnAt: null },
+    });
+    if (!owner) return null;
+
+    return tx.userProfile.update({
+      where: { id: owner.id },
+      data: { passwordHash },
+    });
+  });
 }

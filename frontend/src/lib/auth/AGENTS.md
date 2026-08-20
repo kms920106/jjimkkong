@@ -25,6 +25,12 @@ LoginDrawer → /api/auth/naver/start → 네이버 동의 → /api/auth/naver/c
 | `phone-crypto.ts` | `sealPhone()`/`blindIndex()`/`decryptPhone()` — HMAC 블라인드 인덱스 + AES-256-GCM |
 | `sms.ts` | `startPhoneVerification()`/`verifyPhoneCode()` — 코드 생성·만료·시도 제한, Solapi 발송 |
 | `urls.ts` | `baseUrl()`/`callbackUrl()` — `AUTH_BASE_URL`로 프로덕션 콜백 고정 |
+| `password.ts` | scrypt 해싱·검증. `s1.<salt>.<derived>`, `burnPasswordComparison()` |
+| `password-policy.ts` | 길이 상수만. `node:crypto`를 안 물어서 클라이언트에서 import 가능 |
+| `password-attempts.ts` | 비밀번호 시도 예산 2축(caller / account) + 윈도우 밖 행 스윕 |
+| `phone-login.ts` | challenge 쿠키 2장. `intent`·`verifiedPhone`·`verificationId`를 나른다 |
+| `phone-challenge-flow.ts` | 가입·재설정 공용 SMS 단계, `spendProvenPhone()` (1회용 소비) |
+| `sender-key.ts` | IP의 HMAC. 발신자별 예산의 키 (leftmost XFF — 위조 가능, 주석 참고) |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -35,8 +41,13 @@ LoginDrawer → /api/auth/naver/start → 네이버 동의 → /api/auth/naver/c
 
 ### Working In This Directory
 
-**첫 로그인은 예외 없이 SMS 인증을 거친다.** 신규 가입도 기존 계정 병합도 같다.
-세션이 바로 나오는 경로는 **이미 연결된 `AuthIdentity`가 있는 재방문 하나뿐**이다.
+**제공자 로그인의 첫 로그인은 예외 없이 SMS 인증을 거친다.** 신규 가입도 기존 계정 병합도 같다.
+제공자 경로에서 세션이 바로 나오는 곳은 **이미 연결된 `AuthIdentity`가 있는 재방문 하나뿐**이다.
+
+**단, 이제 SMS 없이 세션이 나오는 경로가 하나 더 있다: `POST /api/auth/phone/login`**
+(휴대폰번호 + 비밀번호). 번호는 가입 때 SMS로 한 번 증명했고 비밀번호가 그 증명을 이어받는다 —
+매 로그인마다 문자를 보내면 로그인마다 비용이 들고 사용자는 문자를 기다려야 한다. 자세한 규칙은
+루트 AGENTS.md의 비밀번호 절을 볼 것.
 예전엔 제공자가 "통신사 인증했다"고 말한 번호면 통과시켰고, 그 필드
 (`ProviderProfile.phoneVerified`)는 **삭제됐다** — 제공자가 주는 번호는 그 계정 주인이
 언젠가 등록해 둔 값일 뿐, 지금 로그인하는 사람이 그 번호로 문자를 받을 수 있다는 증명이

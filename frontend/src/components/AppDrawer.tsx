@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import PasswordSettingForm from "@/components/PasswordSettingForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,6 +59,9 @@ export default function AppDrawer({
   const provider = pendingProvider ?? profile.mapProvider;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Collapsed by default: it is a multi-step SMS flow, and unfolding it only when
+  // asked keeps the settings list scannable.
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   // Separate from `error`, which renders inside the settings nav — a failed
@@ -230,6 +234,28 @@ export default function AppDrawer({
               <ChevronRight className="h-4 w-4" />
             </span>
           </Link>
+
+          <h2 className="px-1 pt-7 pb-2 text-xs font-semibold text-muted-foreground">
+            보안
+          </h2>
+          {passwordOpen ? (
+            <PasswordSettingForm
+              hasPassword={profile.hasPassword}
+              phoneMasked={profile.phoneMasked}
+              onDone={() => setPasswordOpen(false)}
+            />
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => setPasswordOpen(true)}
+              className="h-auto justify-between px-4 py-3"
+            >
+              <span className="text-sm font-medium">
+                {profile.hasPassword ? "비밀번호 변경" : "비밀번호 설정"}
+              </span>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          )}
 
           <h2 className="px-1 pt-7 pb-2 text-xs font-semibold text-muted-foreground">
             지도

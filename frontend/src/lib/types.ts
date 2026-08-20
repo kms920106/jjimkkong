@@ -68,6 +68,12 @@ export type ProfileDTO = {
    */
   phoneMasked: string | null;
   mapProvider: MapProvider;
+  /**
+   * Whether a password is set, not the password or its hash — the verifier must
+   * never leave the server. Only used to word the settings row ("설정" for a first
+   * password, "변경" for a replacement); both paths do exactly the same thing.
+   */
+  hasPassword: boolean;
 };
 
 /**

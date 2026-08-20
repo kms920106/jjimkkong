@@ -1,5 +1,9 @@
 "use client";
 
+import { useState } from "react";
+
+import PhonePasswordLoginForm from "@/components/PhonePasswordLoginForm";
+import PhoneSignupForm from "@/components/PhoneSignupForm";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +30,12 @@ export function loginErrorMessage(slug: string | null): string | null {
   return ERROR_MESSAGES[slug] ?? "로그인에 실패했습니다.";
 }
 
+/**
+ * Which phone flow the drawer is showing. `reset` shares the signup form's
+ * component — the steps are identical and only the copy and route prefix differ.
+ */
+type DrawerMode = "login" | "signup" | "reset";
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -36,9 +46,16 @@ type Props = {
 };
 
 /**
- * Provider choice only. A social login that comes back without a phone number
- * continues on /verify-phone, which is a page because it has to refuse to render
- * when there is no pending login to verify against.
+ * The two ways in: a provider, or a phone number on its own.
+ *
+ * The provider leg only chooses a provider here. It leaves the origin, and a
+ * social login that comes back continues on /verify-phone — a page rather than a
+ * step in this drawer, because it has to be able to refuse to render when there
+ * is no pending login to verify against.
+ *
+ * The phone leg runs to completion inside the drawer instead. It has no prior
+ * credential to check, so there is nothing to refuse and no reason to take the
+ * user off the page they were on, which is what this drawer exists to avoid.
  */
 export default function LoginDrawer({
   open,
@@ -46,68 +63,112 @@ export default function LoginDrawer({
   redirectTo,
   initialError = null,
 }: Props) {
-  // No in-flight state to track. Every way out of this drawer is a full
-  // navigation — the provider link leaves the origin, and its failure path
-  // redirects back with `?error=`, remounting the tree either way. A `pending`
-  // flag that gated dismissal would only be able to get stuck.
+  // The provider leg tracks no in-flight state: every way out of it is a full
+  // navigation — the link leaves the origin, and its failure path redirects back
+  // with `?error=`, remounting the tree either way. A `pending` flag gating
+  // dismissal could only get stuck.
+  //
+  // This one flag exists because the phone leg does *not* remount: a `?error=`
+  // message from an earlier provider attempt would otherwise stay pinned beside a
+  // phone form that has since raised its own error, showing two unrelated
+  // failures as if they were one.
+  //
+  // Seeding state from a prop is only safe because `initialError` is a mount-time
+  // constant by contract: HomeClient reads the slug once into its own
+  // useState initializer and renders this drawer unconditionally, so the prop has
+  // no later value to track. Make that upstream value reactive — re-reading
+  // searchParams on navigation, say — and this silently starts showing a stale
+  // message.
+  const [providerError, setProviderError] = useState(initialError);
+
+  // Which phone flow is on screen. Reset is reachable only from the login form's
+  // "forgot password" link, so it is a mode rather than a top-level tab.
+  const [mode, setMode] = useState<DrawerMode>("login");
+
+  // The drawer's content stays mounted between opens (Base UI keeps it in the
+  // tree for the close animation), so `mode` would otherwise still be "reset"
+  // the next time this drawer opens after a password reset. Every open should
+  // land back on the entry screen — reset during render (not an effect) on the
+  // false→true edge, following React's "adjust state while rendering" pattern.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && mode !== "login") setMode("login");
+  }
+
   return (
     <Drawer open={open} onOpenChange={onOpenChange} showSwipeHandle>
       <DrawerContent className="mx-auto max-w-lg">
         <DrawerHeader className="pb-4 text-center">
-          <DrawerTitle>찜꽁 시작하기</DrawerTitle>
+          <DrawerTitle>
+            {mode === "reset" ? "비밀번호 재설정" : "로그인"}
+          </DrawerTitle>
           <DrawerDescription>
-            로그인하면 링크를 저장하고 지도에 남길 수 있습니다.
+            {mode === "reset"
+              ? "휴대폰 인증 후 새 비밀번호를 설정합니다."
+              : "링크를 저장하고 지도에서 다시 찾아보세요."}
           </DrawerDescription>
         </DrawerHeader>
 
         <div className="flex flex-col gap-3 overflow-y-auto px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
-          {/* A plain link, not a fetch: the provider handshake is a series of
-              top-level navigations, so it works with JavaScript disabled too.
-              `render` keeps the anchor as the rendered element; #03C75A is
-              Naver's mandated brand color, so it stays hardcoded. The return
-              path rides along as a query param so the callback can send the
-              user back where they started. */}
-          <Button
-            render={
-              <a
-                href={`/api/auth/naver/start?next=${encodeURIComponent(redirectTo)}`}
-              >
-                네이버로 계속하기
-              </a>
-            }
-            // The rendered element is an anchor, not a <button>; without this
-            // Base UI warns that it is stripping native button semantics from
-            // something it expected to be one.
-            nativeButton={false}
-            className="h-auto bg-[#03C75A] px-4 py-3 text-white hover:bg-[#03C75A] hover:brightness-95"
-          />
+          {/* The phone flows sit above the provider button because they are the
+              paths that stay on this page: their inputs are the only thing here
+              the user can act on without leaving, so they lead.
 
-          {initialError && (
+              Login and signup are separate choices rather than one adaptive form.
+              Deciding automatically would mean answering "does this number have an
+              account?" over HTTP before the caller has proven anything, and that
+              answer is a membership oracle for any number — so the user states
+              their intent instead, and every server response stays uniform. */}
+          {mode === "login" ? (
+            <PhonePasswordLoginForm
+              redirectTo={redirectTo}
+              onError={() => setProviderError(null)}
+              onSuccess={() => onOpenChange(false)}
+              onForgotPassword={() => setMode("reset")}
+            />
+          ) : (
+            <PhoneSignupForm
+              // Keyed on the mode so switching signup↔reset fully remounts instead
+              // of reconciling. Same component and position otherwise, so React
+              // would keep the previous flow's step and inputs — carrying a signup
+              // challenge into a reset form, whose submit can only 401. The map
+              // providers are keyed for exactly this reason.
+              key={mode}
+              mode={mode}
+              redirectTo={redirectTo}
+              onError={() => setProviderError(null)}
+              onSuccess={() => onOpenChange(false)}
+            />
+          )}
+
+          {/* The way back. Reset is reached from the login form's own link rather
+              than from here, because it is a detour within signing in, not a third
+              thing a visitor picks off the top level. */}
+          <Button
+            type="button"
+            variant="link"
+            onClick={() => setMode(mode === "login" ? "signup" : "login")}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            {mode === "login"
+              ? "휴대폰 번호로 가입하기"
+              : "이미 계정이 있어요 · 로그인"}
+          </Button>
+
+          {/* Naver 진입점은 임시로 숨김. 콜백·세션 로직은 그대로 두어 되돌리기 쉽게 한다. */}
+
+          {/* Below its button, not above the form: this message belongs to the
+              provider leg, and pinning it to the top would hang a Naver failure
+              over a phone form that has nothing to do with it. */}
+          {providerError && (
             <Alert variant="destructive">
               <AlertDescription className="text-center">
-                {initialError}
+                {providerError}
               </AlertDescription>
             </Alert>
           )}
 
-          {/* The consent point. There is no separate checkbox because there is
-              nothing optional to consent to — both documents cover processing
-              the service cannot run without, and a checkbox that can only be
-              ticked is a worse disclosure than a sentence that is always read.
-              Plain anchors, not <Link>: this drawer is the last thing shown
-              before a full navigation off-origin, so a prefetching client
-              transition buys nothing here. */}
-          <p className="text-center text-xs text-muted-foreground">
-            계속하면{" "}
-            <a href="/terms" className="underline underline-offset-2">
-              이용약관
-            </a>
-            과{" "}
-            <a href="/privacy" className="underline underline-offset-2">
-              개인정보처리방침
-            </a>
-            에 동의하는 것으로 봅니다.
-          </p>
         </div>
       </DrawerContent>
     </Drawer>
