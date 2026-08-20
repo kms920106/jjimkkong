@@ -1,6 +1,5 @@
 import { cookies } from "next/headers";
-import { prisma } from "@/lib/prisma";
-import { resolveSession, SESSION_COOKIE } from "@/lib/auth/session";
+import { resolveSessionWithUser, SESSION_COOKIE } from "@/lib/auth/session";
 import type { UserProfile } from "@/generated/prisma/client";
 
 /**
@@ -32,15 +31,14 @@ export class UnauthorizedError extends Error {
  */
 export async function requireUser(): Promise<UserProfile> {
   const store = await cookies();
-  const session = await resolveSession(store.get(SESSION_COOKIE)?.value);
-  if (!session) throw new UnauthorizedError();
+  // One query, not two: the profile comes back joined onto the session, and it
+  // is already filtered by `withdrawnAt` there. Splitting this back into a
+  // findUnique plus a findFirst costs an extra serial round trip on every
+  // authenticated render.
+  const session = await resolveSessionWithUser(store.get(SESSION_COOKIE)?.value);
+  if (!session?.user) throw new UnauthorizedError();
 
-  const user = await prisma.userProfile.findFirst({
-    where: { id: session.userId, withdrawnAt: null },
-  });
-  if (!user) throw new UnauthorizedError();
-
-  return user;
+  return session.user;
 }
 
 /** Like requireUser(), but returns null instead of throwing. */

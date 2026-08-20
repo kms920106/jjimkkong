@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import type { UserProfile } from "@/generated/prisma/client";
 
 export const SESSION_COOKIE = "jjimkkong-session";
 
@@ -70,6 +71,31 @@ export async function createSession(
 export async function resolveSession(
   cookieValue: string | undefined,
 ): Promise<{ userId: string; sessionId: string } | null> {
+  const resolved = await resolveSessionWithUser(cookieValue);
+  if (!resolved) return null;
+  return { userId: resolved.userId, sessionId: resolved.sessionId };
+}
+
+/**
+ * resolveSession plus the owning profile, fetched in the same query.
+ *
+ * Exists because the caller almost always needs the profile immediately after
+ * (requireUser did session.findUnique then userProfile.findFirst), and those two
+ * are a strict chain on a foreign key — the second cannot start until the first
+ * returns. Against a pooled Supabase connection from a Vercel function that is
+ * two serial round trips where one join does the same work, which is the
+ * difference the /links page render was paying twice over.
+ *
+ * `user` is null for a withdrawn account as well as a missing one: the relation
+ * is filtered by `withdrawnAt` here so callers cannot forget it. Withdrawal
+ * keeps the row, so an unfiltered join would hand back a working session for a
+ * withdrawn account — see requireUser.
+ */
+export async function resolveSessionWithUser(
+  cookieValue: string | undefined,
+): Promise<
+  { userId: string; sessionId: string; user: UserProfile | null } | null
+> {
   if (!cookieValue) return null;
 
   const separator = cookieValue.indexOf(COOKIE_SEPARATOR);
@@ -78,7 +104,10 @@ export async function resolveSession(
   const secret = cookieValue.slice(separator + 1);
   if (!secret) return null;
 
-  const session = await prisma.session.findUnique({ where: { id: sessionId } });
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    include: { user: true },
+  });
   if (!session) return null;
 
   if (session.expiresAt.getTime() <= Date.now()) {
@@ -94,7 +123,13 @@ export async function resolveSession(
     return null;
   }
 
-  return { userId: session.userId, sessionId: session.id };
+  return {
+    userId: session.userId,
+    sessionId: session.id,
+    // The join cannot express `withdrawnAt: null`, so it is applied here to
+    // keep the one place that decides it.
+    user: session.user.withdrawnAt === null ? session.user : null,
+  };
 }
 
 /**
