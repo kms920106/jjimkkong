@@ -31,7 +31,15 @@ export function toSavedPostDTO(post: SavedPostWithPlaces): SavedPostDTO {
   };
 }
 
-/** The include clause both callers must use for toSavedPostDTO to typecheck. */
+/**
+ * The include clause both callers must use for toSavedPostDTO to typecheck.
+ *
+ * `orderBy: position` is not cosmetic: `/links` numbers a post's places as a
+ * route, and without it the rows come back in whatever order the planner picks
+ * — typically the composite primary key, i.e. by random cuid. The write path
+ * sorts by name for lock ordering, so insertion order is not the caption's
+ * order either.
+ */
 export const savedPostInclude = {
-  places: { include: { place: true } },
+  places: { include: { place: true }, orderBy: { position: "asc" } },
 } as const;

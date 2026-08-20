@@ -302,7 +302,14 @@ model Place {
 model SavedPostPlace {
   postId  String
   placeId String
-  memo    String?
+  /// The place's index in the source post, so a list of stops reads back in
+  /// the order the creator wrote them. The write loop sorts by name to keep
+  /// lock acquisition deterministic across concurrent transactions, which
+  /// would otherwise be the order the rows are read in — and `/links` numbers
+  /// these rows, so an alphabetical or planner-chosen order would present an
+  /// arbitrary sequence as a route.
+  position Int     @default(0)
+  memo     String?
 
   post  SavedPost @relation(fields: [postId], references: [id], onDelete: Cascade)
   place Place     @relation(fields: [placeId], references: [id], onDelete: Cascade)
