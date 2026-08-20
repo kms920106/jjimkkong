@@ -60,7 +60,18 @@ declare namespace kakao.maps {
       level: number,
       options?: { animate?: boolean; anchor?: LatLng },
     ): void;
-    setBounds(bounds: LatLngBounds): void;
+    /**
+     * The padding arguments are optional in the SDK; without them the
+     * bounds sit flush against the viewport edge and markers on the
+     * boundary render half off-screen.
+     */
+    setBounds(
+      bounds: LatLngBounds,
+      paddingTop?: number,
+      paddingRight?: number,
+      paddingBottom?: number,
+      paddingLeft?: number,
+    ): void;
   }
   class Marker {
     constructor(options: { position: LatLng; title?: string });

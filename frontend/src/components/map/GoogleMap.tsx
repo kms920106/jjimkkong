@@ -26,6 +26,15 @@ export default function GoogleMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRefs = useRef<google.maps.Marker[]>([]);
   const findMarker = useMarkerLookup(markers);
+  // Whether a focus request is outstanding, read by the marker effect so it
+  // yields the camera. Held in a ref, and updated from an effect rather than
+  // during render, so the marker effect can consult it without taking
+  // `focusRequest` as a dependency — depending on it would tear down and
+  // rebuild every pin on each focus.
+  const focusPendingRef = useRef(focusRequest != null);
+  useEffect(() => {
+    focusPendingRef.current = focusRequest != null;
+  }, [focusRequest]);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,6 +100,14 @@ export default function GoogleMap({
       bounds.extend(position);
     }
 
+    // Skipped when a focus request is pending: on arrival from /links both
+    // effects run in the same commit, and this one frames *every* saved pin
+    // while the focus effect frames the ones the post named. Both are deferred
+    // inside the SDK, so letting both run makes the winner a race — and the
+    // loser is the one the user actually asked for. The ref keeps this out of
+    // the deps, so a later focus never rebuilds the markers.
+    if (focusPendingRef.current) return;
+
     if (markers.length === 1) {
       map.setCenter({ lat: markers[0].lat, lng: markers[0].lng });
       map.setZoom(15);
@@ -103,8 +120,24 @@ export default function GoogleMap({
   // tear down and rebuild every pin.
   useEffect(() => {
     if (!map || !focusRequest) return;
-    const target = findMarker(focusRequest.placeId);
-    if (!target) return;
+    const targets = focusRequest.placeIds
+      .map(findMarker)
+      .filter((item): item is MapMarker => item !== undefined);
+    if (targets.length === 0) return;
+
+    // Several places at once: frame them instead of zooming in on one. Panning
+    // to the first and zooming to street level would hide the rest, which is
+    // the opposite of what asking for the set means.
+    if (targets.length > 1) {
+      const bounds = new window.google.maps.LatLngBounds();
+      for (const item of targets) {
+        bounds.extend({ lat: item.lat, lng: item.lng });
+      }
+      map.fitBounds(bounds, 48);
+      return;
+    }
+
+    const target = targets[0];
 
     // Zoom first, then pan. panTo only animates when the move is smaller than
     // the viewport, so a cross-country jump at overview zoom would crawl and

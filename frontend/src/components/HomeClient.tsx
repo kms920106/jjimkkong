@@ -45,10 +45,13 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   // /links sends the user back here with ?place=<id> to move the camera.
   // Seeding the initial state from it (rather than setting it in an effect)
   // gets the pin centred on the very first paint, with no visible jump.
+  // Comma-separated, because /links can ask for a whole post's places at once
+  // ("이 게시글의 6곳 보기") and not just one pin.
   const requestedPlace = searchParams.get("place");
-  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(() =>
-    requestedPlace ? { placeId: requestedPlace, nonce: 0 } : null,
-  );
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(() => {
+    const ids = (requestedPlace ?? "").split(",").filter(Boolean);
+    return ids.length > 0 ? { placeIds: ids, nonce: 0 } : null;
+  });
 
   // A failed OAuth attempt comes back here as ?auth=login&error=<slug>. It is
   // read once into initial state and then stripped from the URL below, so a
@@ -62,7 +65,10 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   );
 
   const requestFocus = useCallback((placeId: string) => {
-    setFocusRequest((prev) => ({ placeId, nonce: (prev?.nonce ?? 0) + 1 }));
+    setFocusRequest((prev) => ({
+      placeIds: [placeId],
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
   }, []);
 
   // Strip the consumed params so a refresh or a back-navigation does not yank
