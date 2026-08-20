@@ -225,7 +225,20 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
 
   return (
     // The map fills the viewport; every other control floats above it.
-    <div className="fixed inset-0">
+    //
+    // h-dvh rather than inset-0: on iOS Safari a fixed box resolves its bottom
+    // against the *large* viewport, the one that assumes the toolbars are
+    // retracted. The toolbars are usually not retracted, so `bottom-0` sits a
+    // couple hundred px below the last visible row and anything anchored to it
+    // — the + button — is drawn underneath the browser chrome. The dynamic
+    // viewport unit tracks the height actually on screen instead.
+    //
+    // Only the vertical axis needed changing, hence w-full and not w-screen:
+    // 100vw includes the classic scrollbar gutter, so it renders 15px wider
+    // than inset-0 wherever the scrollbar takes layout space, pushing the
+    // right-hand control under it. On a fixed box width:100% resolves against
+    // the same containing block inset-0 used.
+    <div className="fixed top-0 left-0 h-dvh w-full">
       <MapView
         provider={profile.mapProvider}
         markers={markers}
@@ -261,6 +274,11 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           setSheetOpen(true);
         }}
         aria-label="링크 추가"
+        // No env(safe-area-inset-*) here: the app never sets viewport-fit=cover,
+        // so every inset resolves to 0 and the calc would be decoration. The
+        // same is true of the insets already written into UrlSheet and
+        // LoginDrawer — turning cover mode on activates all of them at once and
+        // needs a pass on a notched device, so it is not bundled into this fix.
         className="absolute right-5 bottom-6 z-30 h-11 w-11 rounded-full shadow-lg"
       >
         <Plus className="h-7 w-7" />
