@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { errorMessage } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -124,9 +125,9 @@ export default function PhoneVerifyForm({
             placeholder="01012345678"
             className="h-auto px-3 py-2.5 text-sm"
           />
-          <Button type="submit" disabled={pending} className="h-auto px-4 py-3">
+          <SubmitButton type="submit" disabled={pending}>
             {pending ? "보내는 중…" : "인증번호 받기"}
-          </Button>
+          </SubmitButton>
         </form>
       ) : (
         <form onSubmit={verifyCode} className="flex flex-col gap-3">
@@ -147,13 +148,9 @@ export default function PhoneVerifyForm({
             placeholder="000000"
             className="h-auto px-3 py-2.5 text-center text-lg tracking-[0.4em] md:text-lg"
           />
-          <Button
-            type="submit"
-            disabled={pending || code.length !== 6}
-            className="h-auto px-4 py-3"
-          >
+          <SubmitButton type="submit" disabled={pending || code.length !== 6}>
             {pending ? "확인 중…" : "인증하고 시작하기"}
-          </Button>
+          </SubmitButton>
           <Button
             type="button"
             variant="link"

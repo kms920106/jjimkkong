@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { errorMessage } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -103,13 +104,12 @@ export default function PhonePasswordLoginForm({
         className="h-auto px-3 py-2.5 text-sm"
       />
 
-      <Button
+      <SubmitButton
         type="submit"
         disabled={pending || phone.length !== 11 || password.length === 0}
-        className="h-auto px-4 py-3"
       >
         {pending ? "로그인 중…" : "로그인"}
-      </Button>
+      </SubmitButton>
 
       <Button
         type="button"

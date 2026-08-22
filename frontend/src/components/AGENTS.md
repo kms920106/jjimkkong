@@ -163,13 +163,16 @@ drawer의 이점을 쓰지 못한다. 도착하자마자 닫아야 하는 패널
 **비밀번호가 없는 계정(`hasPassword: false`)은 첫 화면을 건너뛴다.** 증명할 것이 없는 화면을
 먼저 보여줄 이유가 없다.
 
-**제출 버튼은 `Button`이 아니라 평범한 `<button>`이다.** 이 화면의 affordance 전체가 버튼의 두
-상태(미완성=연한 로즈 / 제출 가능=진한 crimson)인데, `Button`의 "준비 안 됨"은 `opacity-50`이라
-근검정 primary 위에서 회색으로 읽힌다. 디자인의 로즈는 흐려진 색이 아니라 **다른 색**이라서
-variant를 만들면 fill·radius·height·width에 disabled 처리까지 전부 덮어써야 하고, 그 시점에
-variant는 이 문자열에 간접층만 더한 것이다. crimson을 리터럴로 쓴 이유는 테마에 토큰이 없기
-때문이다 — `--primary`는 근검정이고 `--destructive`는 에러 빨강이라 재사용하면 앞으로의 파괴적
-동작 리스타일이 이 버튼까지 끌고 간다.
+**제출 버튼은 `ui/submit-button.tsx`의 `SubmitButton`이다.** 폼 하단의 전폭 주요 액션은
+앱 전체가 같은 모양이어야 하고, 그 모양은 `Button`의 variant로 표현되지 않는다 — `size`는
+높이와 padding만 정하고 width는 못 정해서 `w-full`이 호출부마다 반복되다 갈라졌다. 한때는
+이 화면만 손으로 만든 crimson `<button>`(연한 로즈=미완성 / 진한 crimson=제출 가능)이었는데,
+같은 affordance가 앱 안에서 세 가지 모양으로 그려지는 값을 치렀다. **되돌리지 말 것.**
+
+"준비 안 됨"은 이제 `Button`의 `opacity-50`이다. 두 개의 *다른 색*으로 표현하면 하나의
+disabled 상태가 아니라 두 번째 브랜드처럼 읽히고, 앱의 다른 어디도 그렇게 하지 않는다.
+`size` variant로 만들지 않은 이유는 `submit-button.tsx`의 주석에 있다 — variant면 폼 제출에
+`size="lg"`를 넘겨 다시 작은 모양으로 되돌릴 수 있다.
 
 `onDone`과 뒤로가기는 둘 다 홈이 아니라 `/settings`로 간다. 이 화면에 닿는 경로가 거기뿐이다.
 

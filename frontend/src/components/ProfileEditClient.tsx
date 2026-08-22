@@ -7,9 +7,10 @@ import { Camera, ChevronLeft, X } from "lucide-react";
 import { displayName } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { cn } from "@/lib/utils";
 
 type Initial = {
@@ -301,13 +302,9 @@ export default function ProfileEditClient({
         </Alert>
       )}
 
-      <Button
-        onClick={() => void save()}
-        disabled={!signedIn || saving}
-        className="h-12 w-full text-base"
-      >
+      <SubmitButton onClick={() => void save()} disabled={!signedIn || saving}>
         {saving ? "저장 중…" : "완료"}
-      </Button>
+      </SubmitButton>
     </div>
   );
 }

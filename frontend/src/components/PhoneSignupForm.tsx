@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { errorMessage } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -177,13 +178,9 @@ export default function PhoneSignupForm({
             placeholder="01012345678"
             className="h-auto px-3 py-2.5 text-sm"
           />
-          <Button
-            type="submit"
-            disabled={pending || phone.length !== 11}
-            className="h-auto px-4 py-3"
-          >
+          <SubmitButton type="submit" disabled={pending || phone.length !== 11}>
             {pending ? "보내는 중…" : "인증번호 받기"}
-          </Button>
+          </SubmitButton>
         </form>
       )}
 
@@ -206,13 +203,9 @@ export default function PhoneSignupForm({
             placeholder="000000"
             className="h-auto px-3 py-2.5 text-center text-lg tracking-[0.4em] md:text-lg"
           />
-          <Button
-            type="submit"
-            disabled={pending || code.length !== 6}
-            className="h-auto px-4 py-3"
-          >
+          <SubmitButton type="submit" disabled={pending || code.length !== 6}>
             {pending ? "확인 중…" : "인증번호 확인"}
-          </Button>
+          </SubmitButton>
           <Button
             type="button"
             variant="link"
@@ -287,7 +280,7 @@ export default function PhoneSignupForm({
             </label>
           )}
 
-          <Button
+          <SubmitButton
             type="submit"
             // Length is checked here only to disable the button early; the server
             // enforces the policy and returns its own Korean message.
@@ -296,10 +289,9 @@ export default function PhoneSignupForm({
               password.length < MIN_PASSWORD_LENGTH ||
               (mode === "signup" && !agreedToTerms)
             }
-            className="h-auto px-4 py-3"
           >
             {pending ? "설정 중…" : copy.submit}
-          </Button>
+          </SubmitButton>
         </form>
       )}
     </div>

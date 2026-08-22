@@ -42,14 +42,15 @@ export default function Loading() {
         </p>
 
         {/* Shapes the form's first screen: one label, one field, one submit.
-            Heights and radii mirror PasswordSettingForm's FIELD/SUBMIT so the
-            real form lands without shifting anything. */}
+            The field mirrors PasswordSettingForm's FIELD; the submit mirrors
+            SubmitButton (h-12, rounded-lg) so the real form lands without
+            shifting anything. */}
         <div className="flex flex-col gap-6" aria-hidden>
           <div className="flex flex-col gap-2">
             <div className="h-4 w-20 animate-pulse rounded bg-muted" />
             <div className="h-[54px] w-full animate-pulse rounded-[4px] bg-muted" />
           </div>
-          <div className="h-[56px] w-full animate-pulse rounded-[4px] bg-muted" />
+          <div className="h-12 w-full animate-pulse rounded-lg bg-muted" />
         </div>
       </div>
     </div>

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { errorMessage } from "@/lib/api-client";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/password-policy";
 
 /**
@@ -21,29 +22,6 @@ type Step = "current" | "next";
  * rather than example text.
  */
 const FIELD = "h-auto rounded-[4px] border-input px-4 py-4 text-sm";
-
-/**
- * The design's submit button, and the reason it is a plain <button> rather than
- * our `Button`.
- *
- * Its two states are the whole affordance of these screens: muted rose while the
- * form is incomplete, saturated crimson the moment it can be submitted. `Button`
- * expresses "not ready" as `disabled:opacity-50` over the primary colour, which
- * on this near-black primary reads as grey — the design's rose is a different
- * colour, not a faded one, so a variant would have to override the disabled
- * treatment as well as the fill, radius, height and width. At that point the
- * variant is this string with extra indirection.
- *
- * The crimson is literal because the theme has no token for it: `--primary` is
- * near-black and `--destructive` is the error red, which this is not — it is the
- * brand's affirmative colour and reusing the error token would make every future
- * destructive restyle move this button too.
- */
-const SUBMIT =
-  "w-full rounded-[4px] py-4 text-base font-medium text-white transition-colors " +
-  "bg-[#D98D8D] enabled:bg-[#C8001E] enabled:hover:bg-[#AE001A] " +
-  "disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 " +
-  "focus-visible:outline-[#C8001E]";
 
 /**
  * Setting or changing the password on the signed-in account.
@@ -160,13 +138,12 @@ export default function PasswordSettingForm({
             className={FIELD}
           />
         </div>
-        <button
+        <SubmitButton
           type="submit"
           disabled={pending || currentPassword.length === 0}
-          className={SUBMIT}
         >
           확인
-        </button>
+        </SubmitButton>
       </form>
     );
   }
@@ -210,17 +187,16 @@ export default function PasswordSettingForm({
           error text, so the button's own state is the only thing telling the user
           the form is not yet complete. The mismatch case still needs the check in
           save(), since two different long-enough values pass this test. */}
-      <button
+      <SubmitButton
         type="submit"
         disabled={
           pending ||
           password.length < MIN_PASSWORD_LENGTH ||
           passwordConfirm.length === 0
         }
-        className={SUBMIT}
       >
         확인
-      </button>
+      </SubmitButton>
     </form>
   );
 }

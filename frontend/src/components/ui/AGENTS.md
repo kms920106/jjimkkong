@@ -12,6 +12,7 @@ shadcn/ui가 생성한 프리미티브. `@base-ui/react` 위에 Tailwind 클래�
 |------|-------------|
 | `drawer.tsx`, `sheet.tsx`, `dialog.tsx`, `alert-dialog.tsx` | 오버레이 4종. 로그인·설정·붙여넣기·탈퇴 확인이 각각 쓴다 |
 | `button.tsx`, `input.tsx`, `label.tsx`, `textarea.tsx`, `radio-group.tsx` | 폼 요소 |
+| `submit-button.tsx` | 폼 하단의 전폭 주요 액션. **생성물 아님** — 손으로 추가했다 |
 | `card.tsx`, `badge.tsx`, `alert.tsx`, `separator.tsx`, `avatar.tsx`, `skeleton.tsx` | 표시 요소 |
 | `tabs.tsx` | `/links`의 플랫폼 탭 |
 | `scroll-area.tsx` | 스크롤 컨테이너 |
@@ -36,6 +37,11 @@ shadcn/ui가 생성한 프리미티브. `@base-ui/react` 위에 Tailwind 클래�
 
 **드러난 문자열은 여전히 한국어여야 한다** — 생성물이라도 사용자에게 보이는 기본 라벨
 (닫기, 취소 등)이 있으면 번역한다.
+
+**`submit-button.tsx`도 손으로 넣은 것이다**(생성물 아님). shadcn에 대응 프리미티브가
+없고, `Button`의 variant로도 표현되지 않는다 — `size`가 width를 정하지 못해서 `w-full`이
+호출부마다 반복되다 갈라졌다. metric이 아니라 역할로 이름을 붙인 이유는 그 파일 주석에 있다.
+`shadcn add`가 이 디렉터리를 덮어써도 이 파일은 지우지 말 것.
 
 **`SheetContent`의 `showOverlay`는 손으로 넣은 것이다**(생성물 아님, `shadcn add`가
 덮어쓰면 다시 넣어야 한다). 비모달 시트에 필요하다 — Root의 `modal={false}`는 backdrop을
