@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, ExternalLink, MapPin, Navigation, X } from "lucide-react";
+import { Check, Copy, ExternalLink, MapPin, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -11,11 +11,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import {
-  directionsUrl,
-  hrefForApp,
-  mapAppsFor,
-} from "@/lib/map/externalLinks";
+import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
 import type { MapProvider, Platform, SavedPlaceDTO } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -73,7 +69,6 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
   // been copied — the key is load-bearing, not a rendering nicety.
 
   const apps = useMemo(() => mapAppsFor(mapProvider), [mapProvider]);
-  const primaryApp = apps[0];
   // Only a map-provider post carries an exact permalink, and only for its own
   // provider. Everything else searches by name.
   const exactSource = sources.find(
@@ -150,49 +145,40 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
           </Button>
         </SheetHeader>
 
-        <p className="flex items-start gap-1.5 text-sm text-muted-foreground">
+        <div className="flex items-start gap-1.5 text-sm text-muted-foreground">
           <MapPin aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0">{place.address}</span>
-        </p>
-
-        {/* The action row of the screenshots: 길찾기 · 지도앱에서 열기 ·
-            주소 복사. Scrolls on a narrow phone rather than wrapping into a
-            second line that pushes the source list below the fold. */}
-        <div className="-mx-5 mt-4 flex gap-2 overflow-x-auto scrollbar-none px-5">
-          <a
-            href={directionsUrl(place, mapProvider)}
-            target="_blank"
-            rel="noreferrer noopener"
-            className={cn(
-              buttonVariants({ size: "sm" }),
-              "shrink-0 rounded-full",
-            )}
-          >
-            <Navigation aria-hidden />
-            길찾기
-          </a>
-          <a
-            href={hrefForApp(primaryApp, place, exactSource)}
-            target="_blank"
-            rel="noreferrer noopener"
-            className={cn(
-              buttonVariants({ variant: "outline", size: "sm" }),
-              "shrink-0 rounded-full",
-            )}
-          >
-            <ExternalLink aria-hidden />
-            {primaryApp.label}
-          </a>
+          <span className="min-w-0 flex-1">{place.address}</span>
           <Button
             type="button"
-            variant="outline"
-            size="sm"
+            variant="ghost"
+            size="icon-sm"
             onClick={copyAddress}
-            className="shrink-0 rounded-full"
+            aria-label="주소 복사"
+            className="-mt-1 -mr-1 shrink-0 rounded-full text-muted-foreground"
           >
             {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-            주소 복사
           </Button>
+        </div>
+
+        {/* 지도앱에서 열기: 네이버맵 · 카카오맵 · 구글맵을 전부 나열한다.
+            Scrolls on a narrow phone rather than wrapping into a second line
+            that pushes the source list below the fold. */}
+        <div className="-mx-5 mt-3 flex gap-2 overflow-x-auto scrollbar-none px-5">
+          {apps.map((app) => (
+            <a
+              key={app.provider}
+              href={hrefForApp(app, place, exactSource)}
+              target="_blank"
+              rel="noreferrer noopener"
+              className={cn(
+                buttonVariants({ variant: "outline", size: "sm" }),
+                "shrink-0 rounded-full",
+              )}
+            >
+              <ExternalLink aria-hidden />
+              {app.label}
+            </a>
+          ))}
         </div>
 
         {/* What this app knows that a map app does not: which of the user's
