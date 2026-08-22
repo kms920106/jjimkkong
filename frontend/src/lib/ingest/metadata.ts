@@ -6,7 +6,20 @@ export type PostMetadata = {
   platform: Platform;
   title: string | null;
   caption: string | null;
+  /**
+   * The URL to render. For Instagram this is a blob URL once
+   * {@link import("@/lib/post-thumbnail").backupThumbnail} has run, because the
+   * platform URL it started as expires; for every other platform it stays the
+   * platform CDN URL.
+   */
   thumbnail: string | null;
+  /**
+   * The original CDN URL, set only where `thumbnail` was replaced by a backup.
+   * Non-null therefore means "this thumbnail was backed up" — a more honest
+   * predicate than string-matching the blob host, and the condition the
+   * backfill script uses to stay idempotent.
+   */
+  thumbnailSource: string | null;
   author: string | null;
   /** True when the caption could not be fetched and the user must paste it. */
   needsManualCaption: boolean;
@@ -183,6 +196,9 @@ async function fetchYouTube(
     title: null,
     caption: null,
     thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    // YouTube thumbnail URLs are unsigned and never expire, so nothing is
+    // backed up and this stays null.
+    thumbnailSource: null,
     author: null,
     needsManualCaption: false,
   };
@@ -496,6 +512,9 @@ async function fetchInstagram(sourceUrl: string): Promise<PostMetadata> {
     title: null,
     caption: null,
     thumbnail: null,
+    // Filled in by backupThumbnail() in the ingest route, not here — this
+    // module does no storage work.
+    thumbnailSource: null,
     author: null,
     needsManualCaption: true,
   };
@@ -590,6 +609,8 @@ async function fetchMapPlace(
     title: null,
     caption: null,
     thumbnail: null,
+    // Both vendors serve unsigned og:image URLs, so there is nothing to back up.
+    thumbnailSource: null,
     author: null,
     // A map link never needs one: it names a place outright, so there is no
     // prose for the user to supply.
@@ -649,6 +670,7 @@ export function describePost(rawUrl: string): PostMetadata {
     title: null,
     caption: null,
     thumbnail: null,
+    thumbnailSource: null,
     author: null,
     // Nothing was fetched, so on its own this post still needs a caption. The
     // caller supplying one overrides this alongside `caption`.

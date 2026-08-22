@@ -272,6 +272,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
             title: result.post.title,
             caption: result.post.caption,
             thumbnail: result.post.thumbnail,
+            thumbnailSource: result.post.thumbnailSource,
             author: result.post.author,
           },
           // Only the search terms are sent; the server re-geocodes so a
@@ -317,6 +318,12 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         // The manual-caption retry skips the metadata fetch for a source
         // already known to be blocking, so its title/thumbnail/author come
         // back null. Saving those would wipe what the first pass found.
+        //
+        // For title and author this is the only guard there is. The thumbnail
+        // is also defended server-side (POST /api/posts leaves the column
+        // alone when null, because it may point at a blob we own), so keeping
+        // it here is belt-and-braces — dropping it would just make the
+        // expression asymmetric for no gain.
         await save(
           captionNeeded
             ? {
@@ -326,6 +333,9 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
                   title: result.post.title ?? captionNeeded.post.title,
                   thumbnail:
                     result.post.thumbnail ?? captionNeeded.post.thumbnail,
+                  thumbnailSource:
+                    result.post.thumbnailSource ??
+                    captionNeeded.post.thumbnailSource,
                   author: result.post.author ?? captionNeeded.post.author,
                 },
               }

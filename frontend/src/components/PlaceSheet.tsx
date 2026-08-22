@@ -11,6 +11,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { PostThumbnail } from "@/components/PostThumbnail";
 import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
 import type { MapProvider, Platform, SavedPlaceDTO } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -194,20 +195,21 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
                   rel="noreferrer noopener"
                   className="block aspect-square overflow-hidden rounded-xl bg-muted transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 >
-                  {source.thumbnail ? (
-                    // Plain img for the same reason as the /links cards: these
-                    // are Instagram and YouTube CDN URLs, and routing a
-                    // thumbnail through the optimizer buys nothing while
-                    // costing a remotePatterns entry per host.
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={source.thumbnail}
-                      alt={source.title ?? source.sourceUrl}
-                      loading="lazy"
-                      decoding="async"
-                      className="size-full object-cover"
-                    />
-                  ) : null}
+                  {/* No fallback node: the anchor already carries bg-muted,
+                      so a thumbnail that cannot load leaves an empty tile.
+                      What matters is that it leaves *that* rather than a
+                      broken-image icon captioned with the raw source URL,
+                      which is what the alt text below renders as. */}
+                  {/* Keyed on the URL because the <li> is keyed on postId and
+                      keeps its mount across a re-fetch — a post whose
+                      thumbnail changed would otherwise stay in the failed
+                      state from its previous URL. */}
+                  <PostThumbnail
+                    key={source.thumbnail}
+                    src={source.thumbnail}
+                    alt={source.title ?? source.sourceUrl}
+                    className="size-full object-cover"
+                  />
                 </a>
               </li>
             ))}

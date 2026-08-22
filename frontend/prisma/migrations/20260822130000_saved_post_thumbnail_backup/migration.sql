@@ -1,0 +1,29 @@
+-- Instagram thumbnail backup.
+--
+-- `scontent-*.cdninstagram.com` URLs are time-limited signed URLs — the `oh`,
+-- `oe` and `_nc_ohc` query parameters are a signature and its expiry. The
+-- ingest pipeline read one out of og:image and stored the string, so a
+-- thumbnail that rendered on the day it was saved comes back
+-- `403 URL signature expired` days later and every card in /links shows a
+-- broken image. The fix copies the bytes onto our own blob store at ingest
+-- time; re-fetching the original URL later cannot re-sign it.
+--
+-- `thumbnail` keeps its meaning — still "the absolute URL to render". Only
+-- Instagram rows now have that value point at our blob. Reusing the column
+-- rather than adding a second one preserves the property that the four render
+-- sites read one column with no fallback expression; a `thumbnailBlobUrl ??
+-- thumbnail` in each of them would break one screen at a time the first time
+-- somebody forgot it.
+--
+-- `thumbnailSource` is the original CDN URL, non-null only where a backup
+-- succeeded — which makes it the predicate for "this row is backed up". The
+-- backfill script tests it rather than string-matching the blob host, or the
+-- check would silently misjudge every row if that host ever changed. The
+-- original is kept even once expired because an expired URL is still a record
+-- of where the image came from: without it, re-running the backup would mean
+-- re-scraping the post page and exposing us to Instagram's rate limiting.
+--
+-- No index. The backfill scans this once; no runtime query filters on it.
+-- (The companion index on `thumbnail` lives in the next migration, added once
+-- the blob delete gained its reference count.)
+ALTER TABLE "SavedPost" ADD COLUMN "thumbnailSource" TEXT;

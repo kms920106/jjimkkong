@@ -1,6 +1,19 @@
 import { BlobError, del, put } from "@vercel/blob";
+import {
+  IMAGE_EXTENSIONS,
+  IMAGE_SNIFF_BYTES,
+  sniffImageType,
+} from "@/lib/image-bytes";
 
-/** Thrown when an upload is the wrong type or too large. Becomes a 400. */
+/**
+ * Thrown when an upload is the wrong type or too large. Becomes a 400.
+ *
+ * Throwing at all is what separates this module from lib/post-thumbnail.ts,
+ * which stores images on the same CDN and never throws. A profile picture
+ * upload *is* the action the user asked for, so a failure has to be told to
+ * them. A thumbnail backup is work they never requested, so a failure there
+ * falls back silently instead of failing the save around it.
+ */
 export class ProfileImageError extends Error {
   constructor(message: string) {
     super(message);
@@ -9,57 +22,17 @@ export class ProfileImageError extends Error {
 }
 
 /**
- * Formats every phone browser can produce from a camera roll or a capture, each
- * with the extension the stored blob gets and the byte signature that proves
- * the file really is that format.
+ * The MIME type `file`'s bytes actually are, per the shared allowlist.
  *
- * An allowlist rather than an `image/*` prefix check, because `image/svg+xml`
- * matches that prefix while being a script carrier: Blob serves what it is told
- * to serve, so an SVG here would be an XSS on the blob origin the moment anyone
- * opened the picture directly.
- *
- * But the allowlist alone is not enough — see sniff() below. `file.type` comes
- * from the multipart part header, which the caller writes, so checking it only
- * proves the caller typed one of these strings.
- *
- * HEIC/HEIF are absent deliberately. iOS Safari decodes them, so downscale() in
- * the client re-encodes those to WEBP before they ever arrive; a browser that
- * cannot decode HEIC would send the original through, and then cannot render it
- * back either — the user would get a successful save and an empty avatar.
- */
-const ALLOWED_TYPES = new Map<string, { extension: string; signature: number[] }>([
-  // SOI marker. The third byte varies by encoder, so only two are fixed.
-  ["image/jpeg", { extension: "jpg", signature: [0xff, 0xd8, 0xff] }],
-  ["image/png", { extension: "png", signature: [0x89, 0x50, 0x4e, 0x47] }],
-  // RIFF container: bytes 0-3 are "RIFF" and 8-11 are "WEBP", with the length
-  // in between — so this signature is checked in two pieces.
-  ["image/webp", { extension: "webp", signature: [0x52, 0x49, 0x46, 0x46] }],
-  ["image/gif", { extension: "gif", signature: [0x47, 0x49, 0x46, 0x38] }],
-]);
-
-/**
- * Reads the leading bytes and returns the MIME type they actually are.
- *
- * The declared `file.type` is attacker controlled — it is a header the caller
- * wrote — so validating it and then pinning it as the stored `contentType`
- * would let anyone host arbitrary bytes on the blob origin under a type of
- * their choosing. This makes the bytes decide, and the caller's claim only has
- * to agree.
+ * Only the read is local to this module; the signature table and the matching
+ * live in lib/image-bytes.ts because post thumbnails ask the same question of
+ * bytes that never arrive as a `File`.
  */
 async function sniff(file: File): Promise<string | null> {
-  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
-
-  for (const [type, { signature }] of ALLOWED_TYPES) {
-    if (signature.some((byte, index) => head[index] !== byte)) continue;
-    // The RIFF magic alone also covers WAV and AVI, so the subformat at byte 8
-    // has to match too or an audio file would pass as an image.
-    if (type === "image/webp") {
-      const webp = [0x57, 0x45, 0x42, 0x50];
-      if (webp.some((byte, index) => head[8 + index] !== byte)) continue;
-    }
-    return type;
-  }
-  return null;
+  const head = new Uint8Array(
+    await file.slice(0, IMAGE_SNIFF_BYTES).arrayBuffer(),
+  );
+  return sniffImageType(head);
 }
 
 /**
@@ -103,7 +76,7 @@ export async function putProfileImage(
       "JPG, PNG, WEBP, GIF 이미지만 올릴 수 있습니다.",
     );
   }
-  const { extension } = ALLOWED_TYPES.get(sniffed)!;
+  const extension = IMAGE_EXTENSIONS.get(sniffed)!;
 
   try {
     // `contentType` comes from the sniff, not from the request, so what Blob

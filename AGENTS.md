@@ -74,6 +74,10 @@ npm run db:studio
 
 # 일회성: 평문으로 남은 전화번호를 암호화한다. 아래 "전화번호 암호화 마이그레이션" 참고.
 npx tsx --env-file=.env scripts/backfill-phone-encryption.ts
+
+# 일회성: 백업 도입 전에 저장된 인스타그램 썸네일을 Blob으로 복구한다.
+# 아래 "인스타그램 썸네일은 만료된다" 참고. --delay-ms / --limit 옵션이 있다.
+npx tsx --env-file=.env scripts/backfill-thumbnail-backup.ts
 ```
 
 테스트 스위트는 없다. 검증은 `npm run lint` + `npm run build` + 브라우저에서 직접 플로우를
@@ -101,6 +105,10 @@ npx tsx --env-file=.env scripts/backfill-phone-encryption.ts
 
 인스타그램 실패는 구체적인 `FailureReason`과 함께 로깅한다. 조직적 차단, 셀렉터 파손,
 타임아웃은 각각 정반대의 대응이 필요하므로 하나의 경고로 뭉뚱그리지 말 것.
+
+**1.5. `post-thumbnail.ts` — 인스타그램 썸네일을 Blob으로 복사한다**
+아래 "인스타그램 썸네일은 만료된다"를 참고. 인스타그램에만 적용되고, 실패하면 조용히
+원본 URL을 쓴다.
 
 **2. `extract.ts` — LLM이 캡션에서 장소 이름을 뽑아낸다**
 OpenAI 호환 `/chat/completions` 엔드포인트면 무엇이든 동작하고, 기본값은 Gemini 호환
@@ -225,6 +233,70 @@ HEIC를 남겨 둔다(아이폰 사진 대부분이 HEIC라 빼면 선택이 막
 **공개된 blob CDN URL**이다. 앱에서 닿을 수 없게 되는 것과 URL을 아는 사람이 못 받는 것은
 다르고, 얼굴 사진이 영구히 열려 있는 것은 탈퇴가 약속한 바가 아니다. 트랜잭션이 커밋된 뒤
 best effort로 지우고 컬럼은 `null`로 만든다.
+
+**인스타그램 썸네일은 만료된다.** `scontent-*.cdninstagram.com` URL은 서명 URL이고
+`oh`/`oe`/`_nc_ohc`가 서명과 만료 시각이다. 저장한 날에는 보이던 썸네일이 며칠 뒤
+`403 URL signature expired`가 되어 `/links`의 카드가 전부 깨진다. **원본 URL을 다시
+fetch해도 재서명되지 않으므로** 인제스트 시점에 바이트를 Vercel Blob으로 복사하는 것이
+유일한 해결이다. 코드는
+[frontend/src/lib/post-thumbnail.ts](frontend/src/lib/post-thumbnail.ts)에 있다.
+
+유튜브(`i.ytimg.com`)와 지도 og:image는 서명이 없어 영구적이다. **백업은 인스타그램에만
+한다** — 나머지는 없는 문제에 저장공간과 전송량을 쓰는 것이다.
+
+**백업은 `/api/posts`가 아니라 `/api/ingest`에서 한다. 이유는 SSRF다.** posts에서 하면
+서버가 `body.post.thumbnail`, 즉 **클라이언트가 준 임의의 URL을 fetch**하게 된다. 이 저장소가
+lat/lng을 받지 않고 서버에서 재지오코딩하는 것과 똑같은 원칙에 걸린다. ingest 시점에는 서버가
+방금 자기가 인스타그램 HTML에서 파싱한 URL만 fetch한다. og:image 값도 결국 인스타가 준
+문자열이므로 호스트 allowlist와 `redirect: "manual"`은 여전히 필요하다 — 3xx를 따라가면
+allowlist가 첫 홉에만 걸린 셈이 된다.
+
+**`thumbnail`은 "렌더할 URL", `thumbnailSource`는 "백업됐다는 술어"다.** 별도 blob 컬럼을
+만들지 않은 이유는 렌더 지점이 넷이라서다 — `thumbnailBlobUrl ?? thumbnail` 폴백을 네 곳에
+쓰게 되고, 한 곳만 빠뜨리면 **그 화면만** 깨진다. `thumbnailSource IS NOT NULL`로 백업 여부를
+판정할 것. blob 호스트 문자열 매칭으로 바꾸지 말 것 — 호스트가 바뀌면 전부 오판한다.
+만료된 원본 URL도 지우지 않는다: 재백업 때 게시글을 다시 스크레이핑(=인스타 차단에 노출)하지
+않고 출처를 아는 유일한 값이다.
+
+**`post-thumbnail.ts`는 절대 throw하지 않는다.** `profile-image.ts`와 정반대 계약이고 그게
+두 파일이 따로 있는 이유다. 프로필 사진 업로드는 사용자가 요청한 동작 자체이므로 400으로
+말해 주는 게 맞다. 썸네일 백업은 요청한 적 없는 부수 작업이다. `BLOB_READ_WRITE_TOKEN`이
+없다는 이유로(로컬 개발의 정상 상태) 링크 저장이 실패하면 배포 설정 하나가 제품을 멈춘다.
+**만료될 URL로 저장하는 것이 저장하지 못하는 것보다 언제나 낫다.** `lib/api.ts`에 이 경로의
+에러 클래스를 추가하지 말 것.
+
+**재저장은 썸네일이 null이면 컬럼을 건드리지 않는다.** 다른 필드는 `?? null`로 덮어쓰지만
+이것만 조건부다 — 인스타가 차단 중일 때의 재인제스트는 `thumbnail: null`을 들고 오고,
+덮어쓰면 여전히 유효한 blob을 잃고 그 blob은 미참조로 남는다. 사용자가 썸네일을 *지우는*
+경로는 없으므로 null을 "지워라"로 읽지 말 것.
+
+**썸네일 blob을 지우기 전에 참조 수를 센다. 이게 blob의 소유권 검사다.**
+`thumbnail`은 요청 본문으로 오고, **썸네일 blob URL은 공개다** — `SavedPostDTO`에 실려 나가고
+`GET /api/places/[id]/sources`는 인증 없이 모든 사용자의 게시글을 돌려준다. 그래서 로그인한
+누구든 **남의 썸네일 URL을 자기 게시글에 저장할 수 있다.** 정상적인 첫 저장의 blob은 방금
+인제스트가 만들어 아직 어떤 행에도 없으므로, 저장 시점에는 "이미 참조된 것"과 "남의 것"이
+구별되지 않는다. 그래서 저장 경로에서 거부하지 않고 **삭제 직전에** 다른 행이 그 URL을
+참조하는지 세고 0일 때만 지운다. 남의 blob은 주인의 행이 여전히 참조하므로 삭제되지 않는다.
+
+`isOwnThumbnailBlob()`은 이 검사의 **절반일 뿐이다.** "우리 스토어의 썸네일인가"만 답하고
+"이 사용자의 것인가"는 답하지 못한다. **이것만 보고 지우지 말 것.** 호스트는 실제 서빙 형태인
+`<store>.public.blob.vercel-storage.com`으로 좁혀야 한다 — `.blob.vercel-storage.com`까지
+넓히면 다른 Vercel 고객의 스토어도 우리 것으로 오판한다. 경로 prefix(`/post-thumbnail/`)도
+필요하다: 같은 스토어에 프로필 사진이 `/profile/`로 들어 있어서, 잘못 지우면 아바타가 사라진다.
+
+이 참조 카운트가 매 저장·삭제마다 돌기 때문에 `SavedPost.thumbnail`에 인덱스가 있다.
+장식이 아니다 — 빼면 저장할 때마다 풀스캔이다.
+
+대체·삭제 시 **지울 URL은 `profile-image`와 같이 트랜잭션 안에서 읽어** 커밋 후에 지운다.
+저장 경로에는 남은 경합이 하나 있다: 새 링크를 동시에 두 번 저장하면 둘 다 `previous`를
+null로 읽어 한쪽이 자기가 대체한 blob을 모른 채 넘어가 **blob 하나가 누수된다.** 닫으려면
+`SELECT … FOR UPDATE`나 serializable이 필요하고, 대가는 이미지 하나의 저장공간이라 감수했다.
+
+**탈퇴 시 썸네일 blob은 지우지 않는다.** 프로필 사진은 지운다. 판단이 다른 이유는 프로필
+사진이 **본인의 얼굴**이고 탈퇴가 약속하는 것이 "나를 더 이상 찾을 수 없게 한다"라는 것이기
+때문이다. 게시글 썸네일은 인스타그램이 이미 전 세계에 공개한 남의 게시물 이미지의 사본이고
+사용자에 대해 아무것도 말하지 않는다. 게다가 탈퇴는 소프트 삭제라서 `SavedPost` 행 자체가
+남는다 — 행을 남기고 이미지만 지우면 복원 가능성만 잃고 프라이버시는 얻지 못한다.
 
 **`src/generated/prisma/`는 생성물이다.** gitignore되어 있고 `prisma generate`가 다시 쓴다.
 대신 `prisma/schema.prisma`를 수정한다.
@@ -549,6 +621,10 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 
 `Session`은 로그인한 브라우저 하나, `PhoneVerification`은 진행 중인 SMS 인증 하나다.
 
+`SavedPost.thumbnail`은 **항상 렌더 가능한 URL**이다. 인스타그램 행은 우리 Blob을,
+나머지는 플랫폼 CDN을 가리킨다. `thumbnailSource`는 백업 전 원본이고 백업된 행에서만
+non-null이다 — 위 "인스타그램 썸네일은 만료된다" 참고.
+
 `SavedPost`는 `[userId, sourceUrl]`에 유니크가 걸려 있다 — 같은 링크를 다시 저장하면
 중복되지 않고 갱신된다. 재저장은 장소 집합을 덧붙이는 게 아니라 **교체**하므로, 다시
 인제스트했을 때 장소가 줄어들어도 고아 행이 남지 않는다.
@@ -598,11 +674,23 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 인증을 거치기 때문이다.
 선택: `AUTH_BASE_URL`(프로덕션 콜백 URL 고정), `YOUTUBE_API_KEY`(없으면 유튜브 캡션은 항상 수동 입력),
 `NEXT_PUBLIC_KAKAO_MAP_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_KEY`, `LLM_*` 오버라이드,
-`BLOB_READ_WRITE_TOKEN`(프로필 사진 업로드. 없으면 `/profile`의 닉네임·상태메세지 저장은 되고
-사진 업로드만 실패한다).
+`BLOB_READ_WRITE_TOKEN`(프로필 사진 업로드 + 인스타그램 썸네일 백업. 없으면 `/profile`의
+닉네임·상태메세지 저장은 되고 사진 업로드만 실패하며, 링크 저장은 성공하지만 썸네일이
+만료될 인스타 URL로 저장된다 — 로컬 개발의 정상 상태다).
 
 `.env*`는 `.env.example`만 빼고 gitignore된다. 실제 키를 절대 커밋하지 말 것. 새 변수를
 추가할 때는 발급처를 적은 주석과 함께 `.env.example`에도 넣는다.
+
+## Playwright 테스트 계정
+
+**Playwright로 로그인이 필요한 플로우를 테스트할 때는 `.env`의 `PLAYWRIGHT_TEST_PHONE` /
+`PLAYWRIGHT_TEST_PASSWORD`로 로그인한다.** 이 계정은 `/verify-phone`을 이미 거쳐 SMS로
+증명된 실제 계정이고, 휴대폰+비밀번호 로그인 화면(위 "인증" 절의 세 번째 로그인 경로)으로
+들어간다. 매번 새 번호로 SMS 인증을 다시 태울 필요가 없다.
+
+**테스트 계정 로그인을 우회하는 새 코드(고정 uuid upsert, `AuthProvider.DEV` 같은 것)를
+만들지 말 것** — 위 "테스트 계정 로그인은 삭제됐다" 절 그대로다. 이 계정은 진짜 로그인
+경로로만 들어간다.
 
 ## 컨벤션
 

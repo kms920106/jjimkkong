@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { PostThumbnail } from "@/components/PostThumbnail";
 import type { IngestedPost } from "@/lib/types";
 
 type Props = {
@@ -49,16 +50,16 @@ export default function CaptionPrompt({
         showCloseButton={false}
       >
         <DialogHeader className="flex-row items-start gap-3 border-b p-4">
-          {post.thumbnail && (
-            // Remote thumbnails come from arbitrary CDNs; next/image would
-            // need every host allowlisted in next.config.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={post.thumbnail}
-              alt=""
-              className="h-16 w-16 shrink-0 rounded-lg object-cover"
-            />
-          )}
+          {/* Nothing stands in for a thumbnail that fails to load: this
+              dialog shows which post is being saved, and the title and author
+              beside it already do that. */}
+          {/* No key={src} here, unlike the /links cards: this dialog unmounts
+              between posts, so the failure state cannot go stale. */}
+          <PostThumbnail
+            src={post.thumbnail}
+            alt=""
+            className="h-16 w-16 shrink-0 rounded-lg object-cover"
+          />
           {/* The visible header is the post being saved, not a heading. The
               primitive still requires a title, so it is screen-reader only. */}
           <DialogTitle className="sr-only">캡션 직접 입력</DialogTitle>

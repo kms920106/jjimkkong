@@ -19,6 +19,7 @@ import type {
   SavedPlaceDTO,
   SavedPostDTO,
 } from "@/lib/types";
+import { PostThumbnail } from "@/components/PostThumbnail";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -360,6 +361,13 @@ function PostCard({
         <div className="flex items-start gap-3 p-3">
           {post.thumbnail ? (
             // The thumbnail is the post's own picture, so it opens the post.
+            //
+            // The link wraps PostThumbnail rather than living inside it, which
+            // is what keeps "the thumbnail slot always opens the source" true
+            // even when the image 403s: the fallback box renders in the same
+            // anchor. That in turn leaves the platform-label branch below
+            // untouched — it still keys off whether a thumbnail exists at all,
+            // not whether it loaded.
             <a
               href={post.sourceUrl}
               target="_blank"
@@ -367,24 +375,21 @@ function PostCard({
               aria-label={`${sourceLabel(post.platform)}에서 원본 보기`}
               className="shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
-              {/* Not next/image: these are Instagram and YouTube CDN URLs, which
-                  would each need a remotePatterns entry and would then be
-                  proxied through the optimizer — a hop that buys nothing at
-                  64px. Kept as a plain img, but with the three attributes that
-                  actually matter for how fast the list settles:
-                  width/height reserve the box so the rows do not reflow as
-                  images arrive, lazy keeps offscreen rows off the critical
-                  path, and decoding=async keeps a slow decode from blocking
-                  paint. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <PostThumbnail
+                key={post.thumbnail}
                 src={post.thumbnail}
                 alt=""
                 width={64}
                 height={64}
-                loading="lazy"
-                decoding="async"
                 className="h-16 w-16 rounded-lg bg-muted object-cover transition hover:opacity-80"
+                fallback={
+                  <span
+                    aria-hidden
+                    className="flex h-16 w-16 items-center justify-center rounded-lg bg-muted text-[10px] text-muted-foreground transition hover:opacity-80"
+                  >
+                    {sourceLabel(post.platform)}
+                  </span>
+                }
               />
             </a>
           ) : null}

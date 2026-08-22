@@ -1,0 +1,17 @@
+-- Index on SavedPost.thumbnail.
+--
+-- A security control, not a performance tweak. Before deleting a thumbnail blob,
+-- both POST /api/posts and DELETE /api/posts/[id] count how many rows still
+-- reference that URL, and only delete at zero.
+--
+-- That count is the ownership check for the blob. `thumbnail` arrives in the
+-- request body on save, and blob URLs are public — they go out in SavedPostDTO,
+-- and GET /api/places/[id]/sources serves every user's posts without
+-- authentication. So a signed-in caller can point their own post at somebody
+-- else's thumbnail and then re-save or delete it to take that image down.
+-- Checking the URL's shape cannot tell that apart from a legitimate replacement;
+-- asking whether anything still renders it can.
+--
+-- The count therefore runs on every save and every delete, and without this
+-- index each one is a sequential scan of SavedPost.
+CREATE INDEX "SavedPost_thumbnail_idx" ON "SavedPost" ("thumbnail");

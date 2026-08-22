@@ -17,7 +17,9 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
 | `types.ts` | 클라이언트와 공유하는 DTO(`SavedPostDTO`, `IngestResponse`, `ProfileDTO` 등) |
 | `serialize.ts` | Prisma 행 → DTO 변환과 `savedPostInclude` |
 | `legal.ts` | 약관·개인정보처리방침이 읽는 운영자 정보와 시행일 |
-| `profile-image.ts` | 프로필 사진 Vercel Blob 업로드·삭제. 매직바이트 판정 + allowlist + `MAX_UPLOAD_BYTES`, `ProfileImageError` |
+| `profile-image.ts` | 프로필 사진 Vercel Blob 업로드·삭제. `file.type` 일치 검사 + `MAX_UPLOAD_BYTES`, `ProfileImageError`. **실패하면 throw한다** |
+| `post-thumbnail.ts` | 인스타그램 썸네일을 Blob으로 백업. `backupThumbnail()` / `deleteThumbnailBlob()`. **절대 throw하지 않는다** — 실패 시 원본 URL로 폴백 |
+| `image-bytes.ts` | 매직바이트 → MIME 판정과 allowlist. 위 두 모듈이 공유 (SVG 제외 = blob 오리진 XSS) |
 | `utils.ts` | `cn()` — shadcn의 clsx + tailwind-merge |
 
 ## Subdirectories

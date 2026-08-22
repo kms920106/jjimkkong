@@ -35,6 +35,12 @@ export type SavedPostDTO = {
   sourceUrl: string;
   platform: Platform;
   title: string | null;
+  /**
+   * Always a URL that can be rendered as-is: our own blob for Instagram, whose
+   * CDN URLs are signed and expire, and the platform CDN for everyone else.
+   * `thumbnailSource` is deliberately not exposed — nothing in the browser
+   * needs the pre-backup URL, and it is the one that goes stale.
+   */
   thumbnail: string | null;
   author: string | null;
   createdAt: string;
@@ -48,6 +54,12 @@ export type IngestedPost = {
   title: string | null;
   caption: string | null;
   thumbnail: string | null;
+  /**
+   * Round-tripped to POST /api/posts so the row records which thumbnails are
+   * backed-up blobs of ours — that is what lets a later save or delete know
+   * there is a blob to clean up.
+   */
+  thumbnailSource: string | null;
   author: string | null;
 };
 

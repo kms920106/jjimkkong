@@ -284,7 +284,16 @@ model SavedPost {
   platform  Platform
   title     String?
   caption   String?  @db.Text
+  /// The URL to render. Instagram rows hold a backed-up Vercel Blob URL because
+  /// the platform URL they arrive as is a signed URL that expires; every other
+  /// platform keeps its own CDN URL here.
   thumbnail String?
+  /// The original CDN URL, set only on rows whose thumbnail was backed up — so
+  /// `thumbnailSource IS NOT NULL` is the predicate for "this row is backed up",
+  /// which is what the backfill script tests to stay idempotent. Kept even once
+  /// expired: it is the only record of where the image came from, and without it
+  /// a re-backup would have to re-scrape the post page.
+  thumbnailSource String?
   author    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -294,6 +303,11 @@ model SavedPost {
 
   @@unique([userId, sourceUrl])
   @@index([userId, createdAt])
+  /// Not for reads. Before deleting a thumbnail blob, the save and delete routes
+  /// count how many rows still reference that URL — the check that stops a
+  /// caller from pointing their own post at someone else's public blob URL and
+  /// deleting it. That count runs on every save and delete.
+  @@index([thumbnail])
 }
 
 model Place {
