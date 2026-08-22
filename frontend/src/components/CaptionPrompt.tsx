@@ -18,6 +18,8 @@ import type { IngestedPost } from "@/lib/types";
 type Props = {
   post: IngestedPost;
   busy: boolean;
+  /** Stage text for the button while busy; see UrlSheet's identical prop. */
+  busyLabel: string;
   /** Rendered inside the prompt, which covers the page-level error banner. */
   error: string | null;
   onCancel: () => void;
@@ -32,6 +34,7 @@ type Props = {
 export default function CaptionPrompt({
   post,
   busy,
+  busyLabel,
   error,
   onCancel,
   onSubmit,
@@ -110,7 +113,7 @@ export default function CaptionPrompt({
             disabled={busy || !caption.trim()}
             className="h-auto flex-1 px-4 py-2.5"
           >
-            {busy ? "저장 중…" : "저장"}
+            {busy ? busyLabel : "저장"}
           </Button>
         </DialogFooter>
       </DialogContent>

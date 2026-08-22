@@ -84,6 +84,36 @@ export type IngestResponse = {
   needsManualCaption: boolean;
 };
 
+/**
+ * The stage POST /api/ingest is currently working on.
+ *
+ * Reported because the whole pipeline is one button press but takes tens of
+ * seconds on a long Instagram caption — metadata fetch, then the model, then
+ * one Naver lookup per place. A single "읽는 중…" for all of it reads as a
+ * hang, and the user's only recourse is to press the button again.
+ *
+ * `geocoding` carries counts because it is the one stage whose length depends
+ * on the post rather than the network: a date-course reel names five or six
+ * places and the user can watch them resolve.
+ */
+export type IngestStage =
+  | { stage: "fetching" }
+  | { stage: "extracting" }
+  | { stage: "geocoding"; done: number; total: number };
+
+/**
+ * One line of the NDJSON body POST /api/ingest streams.
+ *
+ * `error` exists because a stream commits its status line with the first byte,
+ * so a failure after that point cannot be a 4xx. The message is the same one
+ * `describeError()` would have put in a non-streamed body, and `status` is
+ * carried so the client can still tell a 429 from a 500 if it needs to.
+ */
+export type IngestEvent =
+  | ({ type: "progress" } & IngestStage)
+  | { type: "result"; result: IngestResponse }
+  | { type: "error"; status: number; error: string };
+
 /** The subset of UserProfile the client shell renders. */
 export type ProfileDTO = {
   nickname: string | null;

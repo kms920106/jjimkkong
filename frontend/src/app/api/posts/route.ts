@@ -9,7 +9,9 @@ import { geocodeCandidates } from "@/lib/ingest/geocode";
 import { deleteThumbnailBlob, isOwnThumbnailBlob } from "@/lib/post-thumbnail";
 import { Platform } from "@/generated/prisma/enums";
 
-// Re-geocoding each confirmed place server-side costs one Naver call apiece.
+// Re-geocoding each confirmed place server-side costs one Naver call apiece,
+// though POST /api/ingest has usually just warmed the cache for these same
+// names — the lookup is cached, never the decision to re-derive it here.
 export const maxDuration = 60;
 
 const httpUrl = z.string().refine((value) => {

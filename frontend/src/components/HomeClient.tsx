@@ -12,7 +12,9 @@ import LoginDrawer, { loginErrorMessage } from "@/components/LoginDrawer";
 import UrlSheet from "@/components/UrlSheet";
 import PlaceSheet, { type PlaceDetail } from "@/components/PlaceSheet";
 import type {
+  IngestEvent,
   IngestResponse,
+  IngestStage,
   PlaceSourceDTO,
   ProfileDTO,
   SavedPostDTO,
@@ -33,9 +35,40 @@ async function readError(res: Response, fallback: string): Promise<string> {
   return body?.error ?? fallback;
 }
 
+/**
+ * What the save button says while the pipeline runs.
+ *
+ * Named for what the user is waiting on rather than for the implementation —
+ * "장소 찾는 중" not "LLM 추출 중". The geocoding count is shown only when
+ * there is more than one place: "1/1" reads as machinery, and a single place
+ * resolves fast enough that the number never settles anywhere legible.
+ *
+ * `idle` is what the button says when no stage is in flight, and the two
+ * callers need different words for it: the URL sheet has not read anything yet
+ * ("읽는 중…"), while the caption prompt is submitting a caption the user just
+ * pasted ("저장 중…"). It covers the first moments of a request and the save
+ * step after ingest, neither of which reports progress.
+ */
+function stageLabel(stage: IngestStage | null, idle: string): string {
+  if (!stage) return idle;
+  switch (stage.stage) {
+    case "fetching":
+      return "링크 읽는 중…";
+    case "extracting":
+      return "장소 찾는 중…";
+    case "geocoding":
+      return stage.total > 1
+        ? `지도에서 확인 중… (${stage.done}/${stage.total})`
+        : "지도에서 확인 중…";
+  }
+}
+
 export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   const [posts, setPosts] = useState(initialPosts);
   const [ingesting, setIngesting] = useState(false);
+  // Which pipeline stage the in-flight ingest is on, for the save button's
+  // label. Null while idle; the stream sets it before each stage begins.
+  const [stage, setStage] = useState<IngestStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -238,11 +271,59 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         ),
       });
 
+      // Only the pre-stream failures (401, malformed body) still arrive as a
+      // status. Anything that goes wrong once the pipeline is running comes
+      // back as an `error` event, because the status line is already sent.
       if (!res.ok) {
         throw new Error(await readError(res, "링크를 읽지 못했습니다."));
       }
+      if (!res.body) throw new Error("링크를 읽지 못했습니다.");
 
-      return (await res.json()) as IngestResponse;
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      let result: IngestResponse | null = null;
+
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (value) buffer += value;
+
+          // A chunk boundary can fall mid-line, so only whole lines are
+          // parsed; the remainder stays buffered for the next read.
+          let newline: number;
+          while ((newline = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            if (!line) continue;
+
+            const event = JSON.parse(line) as IngestEvent;
+            if (event.type === "progress") {
+              setStage(event);
+            } else if (event.type === "error") {
+              throw new Error(event.error);
+            } else {
+              result = event.result;
+            }
+          }
+
+          if (done) break;
+        }
+      } finally {
+        // Releases the lock whether the loop finished, threw, or the caller
+        // gave up — without this an aborted ingest leaves the body locked.
+        reader.releaseLock();
+      }
+
+      // The stream ended without a result and without an error event, which
+      // means it was cut off — a dropped connection or a function timeout.
+      // Silently returning nothing here would look like a post with no places.
+      if (!result) {
+        throw new Error(
+          "링크를 읽는 중 연결이 끊겼습니다. 잠시 후 다시 시도해 주세요.",
+        );
+      }
+
+      return result;
     },
     [],
   );
@@ -302,9 +383,15 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   const ingestAndSave = useCallback(
     async (targetUrl: string, manualCaption?: string) => {
       setIngesting(true);
+      setStage(null);
       setError(null);
       try {
         const result = await ingest(targetUrl, manualCaption);
+        // Cleared as soon as ingest is done, because the save that follows
+        // reports no progress of its own: POST /api/posts re-geocodes every
+        // place and can run for seconds, and leaving the last geocoding label
+        // up would tell the user we are still doing something we finished.
+        setStage(null);
 
         // Without a caption there is nothing to extract places from, so ask
         // for it instead of failing the save. The sheet steps aside so the
@@ -353,6 +440,9 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         if (!sheetOpen && !captionNeeded) toast.error(message);
       } finally {
         setIngesting(false);
+        // Cleared here rather than on success only, so a failed attempt does
+        // not leave the button labelled with the stage it died on.
+        setStage(null);
       }
     },
     [captionNeeded, ingest, save, sheetOpen],
@@ -467,6 +557,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
       {sheetOpen && (
         <UrlSheet
           busy={ingesting}
+          busyLabel={stageLabel(stage, "읽는 중…")}
           error={error}
           onClose={() => setSheetOpen(false)}
           onSubmit={(targetUrl) => void ingestAndSave(targetUrl)}
@@ -477,6 +568,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         <CaptionPrompt
           post={captionNeeded.post}
           busy={ingesting}
+          busyLabel={stageLabel(stage, "저장 중…")}
           // Rendered inline here, which is why the toast effect above stays
           // quiet while this prompt is open.
           error={error}

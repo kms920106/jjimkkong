@@ -115,3 +115,9 @@ export async function POST(request: NextRequest) {
 
 **사진 삭제 대상 URL은 항상 그 행에서 읽어 온 값이다.** 요청 본문의 URL로 `del()`을 부르면
 남의 blob을 지우는 경로가 된다.
+
+**`POST /api/ingest`만 스트리밍(NDJSON)이다.** 나머지 라우트는 전부 한 번에 답한다.
+스트리밍 라우트에서는 첫 바이트와 함께 status가 확정되므로 **그 뒤의 실패를 `toErrorResponse()`로
+돌려줄 수 없다** — `describeError()`로 같은 문구·status를 얻어 `error` 이벤트로 본문에 실어
+보낸다. 인증(`requireUser()`)과 Zod 검증은 스트림을 열기 전에 두어 401/400이 진짜 status로
+남게 한다. 자세한 내용은 루트 AGENTS.md의 "`POST /api/ingest`는 NDJSON을 스트리밍한다" 참고.

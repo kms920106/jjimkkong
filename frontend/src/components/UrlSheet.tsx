@@ -20,13 +20,25 @@ function subscribeToNothing(): () => void {
 
 type Props = {
   busy: boolean;
+  /**
+   * What to show on the button while busy. Passed in rather than derived here
+   * because the stage it names arrives from the ingest stream, which the
+   * parent reads — this component only renders it.
+   */
+  busyLabel: string;
   error: string | null;
   onClose: () => void;
   onSubmit: (url: string) => void;
 };
 
 /** Mounted only while open, so mounting is the "sheet opened" event. */
-export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
+export default function UrlSheet({
+  busy,
+  busyLabel,
+  error,
+  onClose,
+  onSubmit,
+}: Props) {
   const [url, setUrl] = useState("");
   const [pasting, setPasting] = useState(false);
   // navigator.clipboard only exists in a secure context. Over plain HTTP —
@@ -175,7 +187,7 @@ export default function UrlSheet({ busy, error, onClose, onSubmit }: Props) {
             disabled={busy || !url.trim()}
             className="h-auto w-full rounded-xl px-5 py-3"
           >
-            {busy ? "읽는 중…" : "저장"}
+            {busy ? busyLabel : "저장"}
           </Button>
         </form>
       </SheetContent>
