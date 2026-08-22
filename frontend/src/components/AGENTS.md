@@ -15,6 +15,7 @@ React 컴포넌트. 제품의 상호작용이 사실상 `HomeClient` 하나에 �
 | `UrlSheet.tsx` | 링크 붙여넣기 시트 |
 | `PlaceSheet.tsx` | 마커를 누르면 열리는 장소 카드. 비모달 하단 시트 |
 | `CaptionPrompt.tsx` | 캡션을 못 가져왔을 때(`needsManualCaption`) 사용자가 직접 붙여넣는 다이얼로그 |
+| `IngestProgressBar.tsx` | 인제스트 진행 바. `UrlSheet`·`CaptionPrompt` 상단에 붙는 2px 바. 되감기 방지 래치를 들고 있고, 저장 단계에는 쓰이지 않는다 |
 | `PostThumbnail.tsx` | 게시글 썸네일 하나 + `onError` 폴백. 만료된 인스타 URL(403)이 깨진 아이콘으로 보이지 않게 한다. `key={src}`로 마운트해 실패 상태를 리셋한다 |
 | `LoginDrawer.tsx` | 제공자 선택. 보던 화면을 떠나지 않아야 하는 진입점이라 drawer |
 | `PhoneVerifyForm.tsx` | 번호 입력 → 코드 입력 2단계(`Step`). `/verify-phone` 페이지가 렌더 |

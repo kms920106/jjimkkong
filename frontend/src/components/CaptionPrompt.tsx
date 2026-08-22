@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import IngestProgressBar from "@/components/IngestProgressBar";
 import { PostThumbnail } from "@/components/PostThumbnail";
 import type { IngestedPost } from "@/lib/types";
 
@@ -20,8 +20,8 @@ type Props = {
   busy: boolean;
   /** Stage text for the button while busy; see UrlSheet's identical prop. */
   busyLabel: string;
-  /** Rendered inside the prompt, which covers the page-level error banner. */
-  error: string | null;
+  /** 0–100 for the bar across the top; see UrlSheet's identical prop. */
+  progress: number | null;
   onCancel: () => void;
   /** Re-runs the ingest-and-save flow with a caption the user pasted by hand. */
   onSubmit: (caption: string) => Promise<void>;
@@ -35,7 +35,7 @@ export default function CaptionPrompt({
   post,
   busy,
   busyLabel,
-  error,
+  progress,
   onCancel,
   onSubmit,
 }: Props) {
@@ -52,6 +52,11 @@ export default function CaptionPrompt({
         className="max-w-lg gap-0 p-0 sm:max-w-lg"
         showCloseButton={false}
       >
+        {/* Above the header rather than inside it: the dialog is p-0, so the
+            bar already sits flush to the surface's edge and reads as part of
+            its frame. Corners follow the dialog's own rounding. */}
+        <IngestProgressBar value={progress} className="rounded-t-xl" />
+
         <DialogHeader className="flex-row items-start gap-3 border-b p-4">
           {/* Nothing stands in for a thumbnail that fails to load: this
               dialog shows which post is being saved, and the title and author
@@ -90,11 +95,6 @@ export default function CaptionPrompt({
             placeholder="게시글 캡션을 붙여넣으세요"
             className="w-full resize-y p-3 text-sm"
           />
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
         </div>
 
         <DialogFooter className="mx-0 mb-0 flex-row gap-2 rounded-b-xl border-t p-4 sm:justify-stretch">

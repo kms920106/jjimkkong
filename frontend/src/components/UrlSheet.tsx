@@ -3,9 +3,9 @@
 import { XIcon } from "lucide-react";
 import { useRef, useState, useSyncExternalStore } from "react";
 
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import IngestProgressBar from "@/components/IngestProgressBar";
 import {
   Sheet,
   SheetContent,
@@ -26,7 +26,12 @@ type Props = {
    * parent reads — this component only renders it.
    */
   busyLabel: string;
-  error: string | null;
+  /**
+   * 0–100 for the bar across the top, or null when nothing is in flight.
+   * Computed by the parent for the same reason `busyLabel` is: the stages it
+   * is derived from arrive on the ingest stream, which only the parent reads.
+   */
+  progress: number | null;
   onClose: () => void;
   onSubmit: (url: string) => void;
 };
@@ -35,7 +40,7 @@ type Props = {
 export default function UrlSheet({
   busy,
   busyLabel,
-  error,
+  progress,
   onClose,
   onSubmit,
 }: Props) {
@@ -113,6 +118,17 @@ export default function UrlSheet({
         initialFocus={inputRef}
         showCloseButton={false}
       >
+        {/* Pulled out to the sheet's own edges with negative margins: the
+            content sits inside p-5, but a progress bar reads as part of the
+            surface's frame rather than of its contents, and an inset one
+            looks like a stray divider. Corners match the sheet's own lip —
+            the sheet clips vertical overflow but not horizontal, so a square
+            edge here would poke past the rounding rather than be trimmed. */}
+        <IngestProgressBar
+          value={progress}
+          className="-mx-5 -mt-5 mb-4 rounded-t-2xl"
+        />
+
         {/* The built-in close button is suppressed above in favour of this
             one, which takes `disabled={busy}` — the built-in has no way to
             refuse a close while the ingest request is still in flight. */}
@@ -176,11 +192,6 @@ export default function UrlSheet({
             <p className="text-xs text-muted-foreground">
               입력창을 길게 눌러 &lsquo;붙여넣기&rsquo;를 선택하세요.
             </p>
-          )}
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
           )}
           <Button
             type="submit"

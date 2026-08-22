@@ -71,6 +71,49 @@ function stageLabel(stage: IngestStage | null, idle: string): string {
   }
 }
 
+/**
+ * How full the sheet's progress bar is, 0–100, for the stage the stream
+ * reports. The scale is the Base UI progress primitive's, not a fraction.
+ *
+ * The weights are not guesses at wall-clock time — nothing here can predict a
+ * model call — they are the ordering the user perceives, spaced so the bar
+ * always has somewhere left to go. What makes the bar worth drawing at all is
+ * `geocoding`: it is both the longest stage and the only one that streams a
+ * real `done/total`, so the largest slice is the one carrying true progress.
+ *
+ * It deliberately never reaches 100. The stream's last event is the final
+ * geocode, but the request is not over then — `POST /api/posts` still has to
+ * run, and a bar sitting full while the button still says 저장 중 would be
+ * claiming something finished that has not. The bar disappearing with the
+ * sheet is what signals completion.
+ *
+ * `null` while idle, which is also how `IngestProgressBar` knows to drop its
+ * no-going-backwards latch so a retry can start from empty again.
+ *
+ * Gated on `busy` rather than on `stage` alone, and the two are not the same:
+ * `stage` is null for the whole window between pressing 저장 and the stream's
+ * first event — the very moment the bar most needs to be on screen — and it is
+ * cleared again while `POST /api/posts` runs on the caption-prompt path. Both
+ * of those are still a wait, so they render an empty bar rather than no bar.
+ */
+function stageProgress(
+  stage: IngestStage | null,
+  busy: boolean,
+): number | null {
+  if (!busy) return null;
+  if (!stage) return 0;
+  switch (stage.stage) {
+    case "fetching":
+      return 15;
+    case "extracting":
+      return 40;
+    case "geocoding":
+      // total is 0 when the extraction found nothing to look up; the run is
+      // about to end in an error, and 0/0 would be NaN in the width.
+      return stage.total > 0 ? 40 + 50 * (stage.done / stage.total) : 40;
+  }
+}
+
 export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   const [posts, setPosts] = useState(initialPosts);
   const [ingesting, setIngesting] = useState(false);
@@ -101,7 +144,6 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
    * *every* pending pin, so the second link's pins vanished before it landed.
    */
   const saveGenerationRef = useRef(0);
-  const [error, setError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   // Only set when the caption could not be fetched; saving needs the user to
@@ -291,7 +333,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     if (!res.ok) {
       // Silently keeping a stale list would make the user re-save the post
       // they just saved.
-      setError(await readError(res, "목록을 새로 불러오지 못했습니다."));
+      toast.error(await readError(res, "목록을 새로 불러오지 못했습니다."));
       return null;
     }
     const body = (await res.json()) as { posts: SavedPostDTO[] };
@@ -448,7 +490,6 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     ) => {
       setIngesting(true);
       setStage(null);
-      setError(null);
       try {
         const result = await ingest(targetUrl, manualCaption);
         // Cleared as soon as ingest is done, because the save that follows
@@ -589,13 +630,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
       } catch (cause) {
         const message =
           cause instanceof Error ? cause.message : "저장하지 못했습니다.";
-        setError(message);
-        // Fired here rather than from an effect on `error`: two failures in a
-        // row carry the same message, React bails out of the identical state
-        // update, and an effect would never re-run — the second attempt would
-        // report nothing at all. The overlays below render `error` inline, so
-        // the toast is only for a failure with nothing else on screen.
-        if (!sheetOpen && !captionNeeded) toast.error(message);
+        toast.error(message);
       } finally {
         // Both already cleared on the path that closes the sheet early; this
         // covers the ingest failures and the caption detour, which leave the
@@ -606,7 +641,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         setStage(null);
       }
     },
-    [captionNeeded, ingest, save, sheetOpen],
+    [captionNeeded, ingest, save],
   );
 
   // Synced in an effect rather than assigned during render: the ref exists
@@ -663,7 +698,6 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
             setLoginOpen(true);
             return;
           }
-          setError(null);
           setSheetOpen(true);
         }}
         aria-label="링크 추가"
@@ -726,7 +760,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         <UrlSheet
           busy={ingesting}
           busyLabel={stageLabel(stage, "읽는 중…")}
-          error={error}
+          progress={stageProgress(stage, ingesting)}
           onClose={() => setSheetOpen(false)}
           onSubmit={(targetUrl) => void ingestAndSave(targetUrl)}
         />
@@ -737,13 +771,8 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           post={captionNeeded.post}
           busy={ingesting}
           busyLabel={stageLabel(stage, "저장 중…")}
-          // Rendered inline here, which is why the toast effect above stays
-          // quiet while this prompt is open.
-          error={error}
-          onCancel={() => {
-            setCaptionNeeded(null);
-            setError(null);
-          }}
+          progress={stageProgress(stage, ingesting)}
+          onCancel={() => setCaptionNeeded(null)}
           onSubmit={(caption) =>
             ingestAndSave(captionNeeded.post.sourceUrl, caption)
           }
