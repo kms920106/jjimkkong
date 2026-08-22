@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Menu, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import LoginDrawer, { loginErrorMessage } from "@/components/LoginDrawer";
 import UrlSheet from "@/components/UrlSheet";
 import PlaceSheet, { type PlaceDetail } from "@/components/PlaceSheet";
 import type {
+  IngestedPost,
   IngestEvent,
   IngestResponse,
   IngestStage,
@@ -27,6 +28,13 @@ type Props = {
   profile: ProfileDTO;
   signedIn: boolean;
 };
+
+/**
+ * Marks a pin that exists only until POST /api/posts answers. Prefixed so it
+ * can never equal a real Place cuid — `markers` keys on id, so a collision
+ * would let a pending pin shadow a saved one.
+ */
+const PENDING_MARKER_PREFIX = "pending:";
 
 async function readError(res: Response, fallback: string): Promise<string> {
   const body = (await res.json().catch(() => null)) as {
@@ -69,6 +77,30 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   // Which pipeline stage the in-flight ingest is on, for the save button's
   // label. Null while idle; the stream sets it before each stage begins.
   const [stage, setStage] = useState<IngestStage | null>(null);
+  /**
+   * Pins drawn before POST /api/posts has answered, so the sheet can close the
+   * moment the user presses save instead of holding them through a second
+   * round of geocoding.
+   *
+   * Safe to render from the ingest response even though the app never trusts
+   * client coordinates elsewhere: these are display-only and are discarded the
+   * instant `refreshPosts()` returns the server's own rows. Nothing derived
+   * from them is ever sent back — `save()` still posts names and hints only.
+   *
+   * Ids are prefixed so they cannot collide with a real Place cuid, which
+   * matters because `markers` keys on id and a collision would let a pending
+   * pin hide a saved one.
+   */
+  const [pendingMarkers, setPendingMarkers] = useState<MapMarker[]>([]);
+  /**
+   * Identifies the save each pending pin belongs to.
+   *
+   * Needed because the fast-closing sheet makes concurrent saves easy — the
+   * user can reopen the form and paste a second link while the first POST is
+   * still running. Without ownership, whichever save finished first cleared
+   * *every* pending pin, so the second link's pins vanished before it landed.
+   */
+  const saveGenerationRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -183,8 +215,14 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         });
       }
     }
+    // Appended after the saved rows, and deliberately not deduped against
+    // them: a place the user already had stays keyed by its real id, so the
+    // pending copy sits on top of it until the refresh drops it. Two pins at
+    // one coordinate for a second or two is invisible; suppressing it would
+    // need the name/address match the server has not made yet.
+    for (const marker of pendingMarkers) byId.set(marker.id, marker);
     return [...byId.values()];
-  }, [posts]);
+  }, [posts, pendingMarkers]);
 
   /**
    * Every saved place with the posts that named it, keyed by place id — what
@@ -247,16 +285,18 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     return { place: ownPlaceDetail.place, sources: [...bySourceUrl.values()] };
   }, [ownPlaceDetail, communalSources]);
 
-  const refreshPosts = useCallback(async () => {
+  /** Returns the refreshed list, or null when the refresh itself failed. */
+  const refreshPosts = useCallback(async (): Promise<SavedPostDTO[] | null> => {
     const res = await fetch("/api/posts");
     if (!res.ok) {
       // Silently keeping a stale list would make the user re-save the post
       // they just saved.
       setError(await readError(res, "목록을 새로 불러오지 못했습니다."));
-      return;
+      return null;
     }
     const body = (await res.json()) as { posts: SavedPostDTO[] };
     setPosts(body.posts);
+    return body.posts;
   }, []);
 
   const ingest = useCallback(
@@ -328,20 +368,14 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     [],
   );
 
-  /** Saves every geocoded candidate; the user no longer picks a subset. */
+  /**
+   * Writes the post. The caller has already established there is at least one
+   * matched place and has closed the sheet, so this only reports transport and
+   * server failures — its rejection is what rolls the pending pins back.
+   */
   const save = useCallback(
     async (result: IngestResponse) => {
       const places = result.candidates.filter((candidate) => candidate.matched);
-
-      if (places.length === 0) {
-        // A failed lookup is not the same as a place that isn't on the map;
-        // saying "not found" would send the user off to fix a correct link.
-        throw new Error(
-          result.candidates.some((candidate) => candidate.lookupFailed)
-            ? "장소 검색에 일시적으로 실패했습니다. 잠시 후 다시 시도해 주세요."
-            : "이 게시글에서 지도에 표시할 장소를 찾지 못했습니다.",
-        );
-      }
 
       const res = await fetch("/api/posts", {
         method: "POST",
@@ -369,19 +403,49 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         throw new Error(await readError(res, "저장하지 못했습니다."));
       }
 
-      setCaptionNeeded(null);
-      setSheetOpen(false);
-      await refreshPosts();
+      const { id } = (await res.json()) as { id: string };
+      // Returned so the caller can count what the row actually holds. The
+      // server re-geocodes, so its matched set can be smaller than the one
+      // ingest reported — reporting the ingest count would recreate the
+      // silence this toast exists to end, one round later.
+      return { id, posts: await refreshPosts() };
     },
     [refreshPosts],
   );
 
   /**
+   * Lets the failure toast's 다시 시도 re-run the whole flow. A ref rather than
+   * naming `ingestAndSave` directly, because the callback would then have to
+   * list itself as its own dependency.
+   */
+  const ingestAndSaveRef = useRef<
+    ((
+      url: string,
+      manualCaption?: string,
+      fallbackPost?: IngestedPost,
+    ) => Promise<void>) | null
+  >(null);
+
+  /**
    * Ingest and save are one user action now: a link either lands on the map or
    * reports why it could not, with the caption prompt as the only detour.
+   *
+   * Once ingest has resolved at least one place the user stops waiting — the
+   * sheet closes, the pins go up, and the save finishes underneath.
    */
   const ingestAndSave = useCallback(
-    async (targetUrl: string, manualCaption?: string) => {
+    async (
+      targetUrl: string,
+      manualCaption?: string,
+      /**
+       * Metadata to fall back on when the re-ingest returns nulls, used by the
+       * failure toast's retry. `captionNeeded` normally carries this, but it is
+       * cleared the moment the sheet closes — so a retry would otherwise post
+       * `title: null`/`author: null` and wipe what the first pass found, which
+       * POST /api/posts guards for the thumbnail only.
+       */
+      fallbackPost?: IngestedPost,
+    ) => {
       setIngesting(true);
       setStage(null);
       setError(null);
@@ -411,23 +475,117 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         // alone when null, because it may point at a blob we own), so keeping
         // it here is belt-and-braces — dropping it would just make the
         // expression asymmetric for no gain.
-        await save(
-          captionNeeded
-            ? {
-                ...result,
-                post: {
-                  ...result.post,
-                  title: result.post.title ?? captionNeeded.post.title,
-                  thumbnail:
-                    result.post.thumbnail ?? captionNeeded.post.thumbnail,
-                  thumbnailSource:
-                    result.post.thumbnailSource ??
-                    captionNeeded.post.thumbnailSource,
-                  author: result.post.author ?? captionNeeded.post.author,
-                },
-              }
-            : result,
+        // `fallbackPost` is the retry's copy of the same values; both are
+        // checked because the first attempt has `captionNeeded` and the retry
+        // has only what it was handed.
+        const previous = captionNeeded?.post ?? fallbackPost;
+        const merged = previous
+          ? {
+              ...result,
+              post: {
+                ...result.post,
+                title: result.post.title ?? previous.title,
+                thumbnail: result.post.thumbnail ?? previous.thumbnail,
+                thumbnailSource:
+                  result.post.thumbnailSource ?? previous.thumbnailSource,
+                author: result.post.author ?? previous.author,
+              },
+            }
+          : result;
+
+        // Nothing to save and nothing to draw — report it against the still
+        // open sheet rather than closing onto an empty map. Thrown so the
+        // catch below is the single place that renders a failure.
+        const matched = merged.candidates.filter(
+          (candidate) => candidate.matched,
         );
+        if (matched.length === 0) {
+          // A failed lookup is not the same as a place that isn't on the map;
+          // saying "not found" would send the user off to fix a correct link.
+          throw new Error(
+            merged.candidates.some((candidate) => candidate.lookupFailed)
+              ? "장소 검색에 일시적으로 실패했습니다. 잠시 후 다시 시도해 주세요."
+              : "이 게시글에서 지도에 표시할 장소를 찾지 못했습니다.",
+          );
+        }
+
+        // From here the user is done waiting. The sheet closes, the pins the
+        // ingest already resolved go straight onto the map, and POST
+        // /api/posts finishes underneath — it re-geocodes every place, so it
+        // is seconds of work whose outcome the user cannot act on anyway.
+        //
+        // Coordinates are used for display only; `save()` still sends names
+        // and hints, so the "never trust client coordinates" rule is intact.
+        const generation = ++saveGenerationRef.current;
+        const optimistic = matched.map((candidate, index) => ({
+          id: `${PENDING_MARKER_PREFIX}${generation}:${merged.post.sourceUrl}#${index}`,
+          name: candidate.name,
+          lat: candidate.lat,
+          lng: candidate.lng,
+        }));
+
+        setCaptionNeeded(null);
+        setSheetOpen(false);
+        // Appended rather than replacing, so a save still in flight keeps its
+        // pins while this one draws its own.
+        setPendingMarkers((prev) => [...prev, ...optimistic]);
+        setIngesting(false);
+        setStage(null);
+
+        /** Drops only this save's pins, leaving any concurrent save's alone. */
+        const clearOwnMarkers = () =>
+          setPendingMarkers((prev) =>
+            prev.filter(
+              (marker) =>
+                !marker.id.startsWith(`${PENDING_MARKER_PREFIX}${generation}:`),
+            ),
+          );
+
+        try {
+          const { id, posts: refreshed } = await save(merged);
+          // Dropped only after refreshPosts() inside save() has returned, so
+          // the real rows are already in `posts` — clearing any earlier would
+          // blink the pins off the map and back on.
+          clearOwnMarkers();
+
+          // Counted from the saved row, not from the ingest result. The server
+          // re-geocodes every name and keeps only what it could match, and a
+          // lookup that succeeded during ingest can fail on that second round
+          // (failures are deliberately not cached) — so the ingest count would
+          // sometimes promise more than the row holds. Falls back to the
+          // ingest count only when the refresh itself failed, which already
+          // reported its own error.
+          const saved = refreshed?.find((post) => post.id === id);
+          const savedCount = saved?.places.length ?? matched.length;
+          const missing = merged.candidates.length - savedCount;
+          toast.success(
+            missing > 0
+              ? `${savedCount}곳을 저장했어요. ${missing}곳은 지도에서 찾지 못했어요.`
+              : `${savedCount}곳을 지도에 저장했어요.`,
+          );
+        } catch (cause) {
+          // The pins came back off the map, so the toast is the only thing
+          // left saying what happened — and it carries the retry, since the
+          // sheet the user would have retried from is already closed.
+          clearOwnMarkers();
+          const message =
+            cause instanceof Error ? cause.message : "저장하지 못했습니다.";
+          toast.error(message, {
+            action: {
+              label: "다시 시도",
+              // merged.post, not result.post: the retry re-ingests and gets
+              // nulls back on the manual-caption path, so it needs the values
+              // this attempt had already recovered.
+              onClick: () =>
+                void ingestAndSaveRef.current?.(
+                  targetUrl,
+                  manualCaption,
+                  merged.post,
+                ),
+            },
+          });
+        }
+        return;
       } catch (cause) {
         const message =
           cause instanceof Error ? cause.message : "저장하지 못했습니다.";
@@ -439,6 +597,9 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         // the toast is only for a failure with nothing else on screen.
         if (!sheetOpen && !captionNeeded) toast.error(message);
       } finally {
+        // Both already cleared on the path that closes the sheet early; this
+        // covers the ingest failures and the caption detour, which leave the
+        // sheet up.
         setIngesting(false);
         // Cleared here rather than on success only, so a failed attempt does
         // not leave the button labelled with the stage it died on.
@@ -447,6 +608,13 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     },
     [captionNeeded, ingest, save, sheetOpen],
   );
+
+  // Synced in an effect rather than assigned during render: the ref exists
+  // only so the failure toast's retry can call back into the latest version of
+  // this callback without the callback depending on itself.
+  useEffect(() => {
+    ingestAndSaveRef.current = ingestAndSave;
+  }, [ingestAndSave]);
 
   return (
     // The map fills the viewport; every other control floats above it.

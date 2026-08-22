@@ -87,27 +87,37 @@ export default function NaverMap({
 
   useEffect(() => {
     if (!map) return;
+    // `map` being set is not enough. An unauthorized key still loads the
+    // script and lets `new Map()` succeed, leaving the namespace half-built —
+    // so every `naver.maps.*` read below can throw "Cannot read properties of
+    // null" and take the whole page down with it, which the unmount path above
+    // already guards against for the same reason. This effect re-runs on every
+    // marker change, and saving a link now changes the set twice (a pending pin
+    // added, then replaced by the saved row), so a broken key turned an
+    // invisible map into a crashed page.
+    const maps = window.naver?.maps;
+    if (!maps) return;
 
     for (const marker of markerRefs.current) {
-      window.naver.maps.Event.clearInstanceListeners(marker);
+      maps.Event.clearInstanceListeners(marker);
       marker.setMap(null);
     }
     markerRefs.current = [];
 
     if (markers.length === 0) return;
 
-    const first = new window.naver.maps.LatLng(markers[0].lat, markers[0].lng);
-    const bounds = new window.naver.maps.LatLngBounds(first, first);
+    const first = new maps.LatLng(markers[0].lat, markers[0].lng);
+    const bounds = new maps.LatLngBounds(first, first);
 
     for (const item of markers) {
-      const position = new window.naver.maps.LatLng(item.lat, item.lng);
-      const marker = new window.naver.maps.Marker({
+      const position = new maps.LatLng(item.lat, item.lng);
+      const marker = new maps.Marker({
         position,
         map,
         title: item.name,
       });
       if (onMarkerClick) {
-        window.naver.maps.Event.addListener(marker, "click", () =>
+        maps.Event.addListener(marker, "click", () =>
           onMarkerClick(item.id),
         );
       }
@@ -135,6 +145,13 @@ export default function NaverMap({
   // tear down and rebuild every pin.
   useEffect(() => {
     if (!map || !focusRequest) return;
+    // Same guard as the marker effect, and reachable the same way: `map` is
+    // set even under an unauthorized key, and /?place=<id> from /links seeds
+    // `focusRequest` in initial state — so this effect runs on the very first
+    // commit and would throw before the marker effect's guard ever mattered.
+    const maps = window.naver?.maps;
+    if (!maps) return;
+
     const targets = focusRequest.placeIds
       .map(findMarker)
       .filter((item): item is MapMarker => item !== undefined);
@@ -144,19 +161,19 @@ export default function NaverMap({
     // to the first and zooming to street level would hide the rest, which is
     // the opposite of what asking for the set means.
     if (targets.length > 1) {
-      const bounds = new window.naver.maps.LatLngBounds(
-        new window.naver.maps.LatLng(targets[0].lat, targets[0].lng),
-        new window.naver.maps.LatLng(targets[0].lat, targets[0].lng),
+      const bounds = new maps.LatLngBounds(
+        new maps.LatLng(targets[0].lat, targets[0].lng),
+        new maps.LatLng(targets[0].lat, targets[0].lng),
       );
       for (const item of targets) {
-        bounds.extend(new window.naver.maps.LatLng(item.lat, item.lng));
+        bounds.extend(new maps.LatLng(item.lat, item.lng));
       }
       map.fitBounds(bounds);
       return;
     }
 
     const target = targets[0];
-    const position = new window.naver.maps.LatLng(target.lat, target.lng);
+    const position = new maps.LatLng(target.lat, target.lng);
 
     // Zoom first, then pan. panTo only animates over short distances, so a
     // cross-country jump at overview zoom would crawl and only then close in.

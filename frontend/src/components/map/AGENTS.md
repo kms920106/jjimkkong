@@ -81,3 +81,15 @@
 - 네이버 지도 / 카카오맵 / Google Maps JavaScript SDK
 
 <!-- MANUAL: -->
+
+**`map`이 set됐다는 것만으로 SDK를 쓸 수 있다고 보지 말 것.** 권한 없는 키도 스크립트를
+200으로 주고 `new naver.maps.Map()`까지 성공하므로 `map`은 채워지는데 네임스페이스는 반쪽이다.
+그래서 **마커 effect와 포커스 effect 둘 다** `window.naver?.maps`를 먼저 확인하고 없으면 바로
+빠진다. 예전에는 이 검사가 unmount 경로에만 있었고, 마커 집합이 바뀔 때마다 도는 effect에는
+없어서 낙관적 핀 도입(저장 한 번에 마커가 두 번 바뀐다) 직후
+`Cannot read properties of null (reading 'Event')`로 **페이지 전체가 죽었다.**
+지도가 안 보이는 것과 앱이 죽는 것은 다르다.
+
+포커스 effect도 같은 이유로 위험하다 — `/?place=<id>`로 들어오면 `focusRequest`가 초기 상태에
+채워져 **첫 커밋에 바로 돈다.** 즉 마커 effect의 가드가 소용없는 시점에 먼저 터진다. 새 effect를
+추가할 때도 `if (!map)`만으로는 부족하다는 것을 기억할 것.
