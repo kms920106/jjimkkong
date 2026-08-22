@@ -121,9 +121,20 @@ npx tsx --env-file=.env scripts/backfill-thumbnail-backup.ts
 
 **2. `extract.ts` — LLM이 캡션에서 장소 이름을 뽑아낸다**
 OpenAI 호환 `/chat/completions` 엔드포인트면 무엇이든 동작하고, 기본값은 Gemini 호환
-레이어를 가리킨다. `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`만 바꾸면 **코드 수정 없이**
-제공자를 교체할 수 있다 — 이 성질을 깨뜨리지 말 것. 5xx와 타임아웃은 재시도하고 429는
-재시도하지 않는다(`LlmRateLimitedError` → 429와 할당량 안내 메시지로 표면화). 응답은
+레이어를 가리킨다. `LLM_API_KEY` / `LLM_BASE_URL` 둘과 `lib/ingest/llm-model.ts`의
+`ACTIVE_LLM_TIER` 한 줄만 바꾸면 제공자를 교체할 수 있다 — 특정 제공자의 응답 형식이나
+헤더를 하드코딩하지 말 것.
+
+**모델을 고르는 자리는 `lib/ingest/llm-model.ts` 하나다.** 등급 사다리
+(`flash-lite` / `flash` / `pro`)와 지금 쓰는 등급이 거기 있다. **환경변수가 아니라 상수인
+이유는 모델이 튜닝 값이기 때문이다** — 이 저장소의 튜닝 값(`CONCURRENCY`,
+`MAX_ATTEMPTS`, SMS rate limit 일곱, `SESSION_TTL_MS` …)은 전부 TS에 있고 env에는 시크릿과
+배포별 URL만 둔다. 되돌리지 말 것: 오타가 컴파일 에러 대신 런타임 404가 되고,
+module-load 시점에 잡힌 값이 워밍된 서버리스 인스턴스에서 배포 뒤에도 계속 나가는 문제가
+함께 돌아온다. 5xx와 타임아웃은 재시도하고 429는
+재시도하지 않는다(`LlmRateLimitedError` → 429와 할당량 안내 메시지로 표면화). 그 외 4xx와
+재시도를 소진한 5xx는 `LlmRequestError` → 503이다 — 우리 쪽 문제이므로 제공자 본문은
+로그에만 남긴다. 응답은
 `strict` json_schema를 걸었더라도 Zod로 다시 검증한다. 제공자를 갈아끼우면 `response_format`을
 무시할 수 있기 때문이다.
 

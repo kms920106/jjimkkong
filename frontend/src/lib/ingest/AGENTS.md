@@ -15,7 +15,7 @@ metadata.ts → extract.ts → geocode.ts
 | File | Description |
 |------|-------------|
 | `metadata.ts` | `classifyUrl()`·`canonicalize()`·`fetchMetadata()`. 인스타/유튜브/지도 링크만 받고 나머지는 `UnsupportedUrlError` |
-| `extract.ts` | `extractPlaces()` — OpenAI 호환 `/chat/completions`로 캡션에서 장소 이름 추출. `LlmRateLimitedError` |
+| `extract.ts` | `extractPlaces()` — OpenAI 호환 `/chat/completions`로 캡션에서 장소 이름 추출. `LlmRateLimitedError`·`LlmRequestError` |
 | `geocode.ts` | `geocodeCandidates()` — 네이버 지역검색으로 이름 → 좌표 |
 
 ## For AI Agents
@@ -42,11 +42,33 @@ watch/shorts, 네이버·카카오 지도 장소 링크(단축 `naver.me`/`kko.t
 `embed/captioned/`를 크롤러 UA로 먼저 시도하고, 실패하면 `og:description`으로 간다 —
 거기 캡션이 통째로 있고 앞의 인게이지먼트 껍데기는 `parseOgCaption()`이 벗긴다.
 
+**모델 이름은 `extract.ts`에 없다 — [`llm-model.ts`](llm-model.ts) 한 곳이다.**
+등급 사다리(`flash-lite`/`flash`/`pro`)와 지금 쓰는 등급(`ACTIVE_LLM_TIER`)이 거기 있고,
+`extract.ts`는 `LLM_MODEL` 상수를 import만 한다.
+
+**환경변수로 되돌리지 말 것.** 모델은 시크릿도 배포별 값도 아닌 **튜닝 값**이고, 이
+저장소의 튜닝 값은 전부 TS에 있다(`geocode.ts`의 `CONCURRENCY`, 여기 `MAX_ATTEMPTS`,
+`sms.ts`의 rate limit 일곱 …). env로 옮기면 둘을 잃는다: `LlmTier` 타입이 잡아 주던
+오타가 원시 id로 통과해 **런타임 404**가 되고, `process.env`를 모듈 스코프 `const`로
+잡으면 워밍된 서버리스 인스턴스가 배포 뒤에도 옛 모델을 계속 쓴다. 상수는 배포가 곧
+변경이라 그 틈이 없다.
+
 **`extract.ts`의 제공자 교체 가능성을 깨뜨리지 말 것.** OpenAI 호환
-`/chat/completions`면 무엇이든 동작하고, `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`만
-바꾸면 코드 수정 없이 제공자가 바뀐다. `strict` json_schema를 걸어도 **응답은 Zod로
+`/chat/completions`면 무엇이든 동작하고, `LLM_API_KEY`/`LLM_BASE_URL`과
+`ACTIVE_LLM_TIER`만 바꾸면 제공자가 바뀐다. `strict` json_schema를 걸어도 **응답은 Zod로
 다시 검증한다** — 갈아끼운 제공자가 `response_format`을 무시할 수 있기 때문이다.
 5xx·타임아웃은 재시도, 429는 재시도하지 않고 `LlmRateLimitedError`로 표면화한다.
+그 외 4xx와 재시도를 소진한 5xx는 `LlmRequestError` → 503이고, 제공자가 돌려준 본문은
+서버 로그에만 남는다(모델명과 우리 payload가 그대로 들어 있다).
+
+**`extra_body`를 payload에 넣지 말 것 — 무시되지 않고 400으로 거절된다.** `extra_body`는
+OpenAI **Python SDK**의 관례이고, SDK가 그 래퍼를 벗겨 내용물을 본문 최상위로 병합해 준다.
+이 모듈은 raw `fetch`로 JSON을 직접 만들므로 그대로 와이어에 나가고, Gemini는 요청 전체를
+`400 INVALID_ARGUMENT`로 거절한다 — 실제로 이 키 하나가 모든 인제스트를 죽인 적이 있다.
+최상위 `google` 키도 마찬가지다. thinking 억제가 필요해 보여도 실측 이득이 없었고
+(`gemini-flash-lite-latest` 기준 ~1.1s로 동일), 정말 필요하면 `reasoning_effort`를 쓰되
+`"none"`은 400이라 `"low"`/`"minimal"`만 쓸 수 있으며 제공자 공통이 아니므로 반드시
+설정으로 감싸야 한다.
 
 **`geocode.ts`는 동시성 3의 제한된 병렬이다.** 네이버는 한 client id에서 몰아치는 요청을
 거부하므로 `Promise.all`로 넓히지 말 것. 반대로 완전 순차로 되돌리지도 말 것 — 장소 5개면

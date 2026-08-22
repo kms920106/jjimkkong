@@ -125,8 +125,9 @@ LLM이 캡션에서 "방문 가능한 장소"만 골라낸다.
 
 **제공자 교체 가능성이 이 모듈의 설계 제약이다.** OpenAI 호환
 `/chat/completions` 엔드포인트면 무엇이든 동작하고, `LLM_API_KEY` /
-`LLM_BASE_URL` / `LLM_MODEL`만 바꾸면 **코드 수정 없이** 제공자가 바뀐다.
-이 성질을 깨뜨리지 말 것. 그 결과로 붙은 방어가 몇 개 있다:
+`LLM_BASE_URL` 둘과 `llm-model.ts`의 `ACTIVE_LLM_TIER` 한 줄만 바꾸면 제공자가
+바뀐다. 이 성질을 깨뜨리지 말 것 — 특정 제공자의 응답 형식이나 헤더를 하드코딩하지
+않는다는 뜻이다. 그 결과로 붙은 방어가 몇 개 있다:
 
 - **`strict` json_schema를 걸어도 Zod로 다시 검증한다.** 갈아끼운 제공자가
   `response_format`을 무시할 수 있기 때문이다.
@@ -137,6 +138,54 @@ LLM이 캡션에서 "방문 가능한 장소"만 골라낸다.
   무의미하다. `LlmRateLimitedError`가 429와 할당량 안내 문구로 표면화된다.
 
 **같은 장소가 캡션에 두 번 나와도 한 번만 나온다** (이름 소문자 기준 dedupe).
+
+### 기본 제공자와 무료 할당량
+
+`LLM_BASE_URL`을 `.env`에 지정하지 않으면 코드 기본값 — Google Gemini의 OpenAI 호환
+레이어(`extract.ts`의 `DEFAULT_BASE_URL`) — 가 쓰인다. 모델은 애초에 `.env`에서 오지
+않는다.
+
+**모델을 고르는 자리는 [`llm-model.ts`](../../frontend/src/lib/ingest/llm-model.ts)
+하나다.** `extract.ts`에는 모델 이름이 없고 `LLM_MODEL` 상수를 import만 한다. 등급
+사다리와 지금 쓰는 등급(`ACTIVE_LLM_TIER`)이 전부 그 모듈에 있다.
+
+**모델이 환경변수가 아닌 이유는 그것이 튜닝 값이기 때문이다.** 이 저장소의 튜닝 값은
+전부 TS에 있다 — `geocode.ts`의 `CONCURRENCY`, `extract.ts`의 `MAX_ATTEMPTS`,
+`sms.ts`의 rate limit 일곱, `session.ts`의 `SESSION_TTL_MS`까지 마흔 개 남짓이고 하나도
+env로 읽지 않는다. env에 두는 것은 커밋할 수 없는 것(시크릿)과 배포마다 다른 것(URL)
+뿐이다. `LLM_MODEL`만 그 규칙의 예외였고, 이제 아니다.
+
+env를 떠나면서 둘을 얻었다. 등급 이름에 `LlmTier` 타입이 붙으므로 **오타가 컴파일
+에러**가 된다(문자열이었을 때는 원시 id로 통과해 런타임 404였다). 그리고 `process.env`를
+모듈 스코프 `const`로 잡을 때 생기던 함정 — 워밍된 서버리스 인스턴스가 배포 뒤에도 옛
+값을 계속 서빙하는 것 — 이 사라졌다. 상수는 배포가 곧 변경이라 그 틈이 없다.
+
+값이 **등급 이름**인 것은 그대로다: `flash-lite`(현재) / `flash` / `pro`. 등급을 올리는
+일이 곧 바꾸는 대상이지 모델 id가 아니기 때문이다 — 원시 id를 타이핑해서 등급을
+표현하면 Google이 새 키에 닫아 버린 버전을 골라 조용한 404를 부른다.
+
+`pro`는 **무료 키로는 못 쓴다.** 별칭 자체는 존재하지만(없는 이름은 404가 온다) 무료
+AI Studio 등급은 Pro에 요청을 0개 준다 — `limit: 0`과 함께 429다. 즉 이 칸은 할당량이
+차기를 기다려서 열리는 게 아니라 결제를 붙여야 열린다(2026-08-22 실측, 당시
+`gemini-3.1-pro`로 해석됐다).
+
+`deep-think`는 사다리에 없다. OpenAI 호환 별칭이 공개돼 있지 않고, strict schema 아래
+캡션에서 이름을 뽑는 이 작업에 연구급 추론이 쓸 데가 없다.
+
+Gemini 모델은 무겁고 비싼 순으로 대략 **Deep Think > Pro > Flash > Flash-Lite**
+네 등급으로 나뉜다. 기본값이 가장 가벼운 Flash-Lite인 이유는 **이 작업이 추론이 아니라
+추출**이기 때문이다 — strict json_schema를 걸고 같은 캡션을 넣으면 Flash와 같은 장소를
+돌려준다. 무료(AI Studio) 등급에는 모델별로 **분당 요청 수(RPM)**와 **일일 요청 수(RPD)**
+상한이 걸려 있고 Flash 쪽이 먼저 소진되므로, Flash에서 시작하면 새 클론이 곧바로
+"오늘의 무료 추출 한도를 다 썼습니다" 토스트(`LlmRateLimitedError` → 429)를 보게 된다. 정확한 최신 수치는 Google이 수시로 조정하므로
+[Gemini API 요금제 페이지](https://ai.google.dev/gemini-api/docs/pricing)에서
+확인한다.
+
+**한 등급 올리는 것은 한 줄 수정이다.** `llm-model.ts`의 `ACTIVE_LLM_TIER`를
+`"flash"`로 바꾸고 커밋·배포하면 된다. 올릴 만한 상황은 Flash-Lite가 애매한 캡션에서
+브랜드명·메뉴명을 장소로 잘못 뽑을 때이고, 대가는 더 빨리 닳는 무료 할당량이다.
+등급 변경에 배포가 필요한 것은 의도한 트레이드오프다 — 드물게 일어나는 일이고,
+그 대신 변경 이력이 git에 남는다.
 
 ## 3단계: 좌표 붙이기 (`geocode.ts`)
 

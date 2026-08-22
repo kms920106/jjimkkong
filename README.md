@@ -42,15 +42,16 @@ npm run dev
 
 ### LLM 제공자 바꾸기
 
-장소 추출은 OpenAI 호환 chat-completions 엔드포인트를 호출하므로, 코드를 고치지 않고 환경변수만으로 제공자를 바꿀 수 있습니다.
+장소 추출은 OpenAI 호환 chat-completions 엔드포인트를 호출하므로, 아래 두 변수와 모델 상수 한 줄만으로 제공자를 바꿀 수 있습니다.
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `LLM_API_KEY` | (필수) | 제공자 API 키 |
 | `LLM_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | `/chat/completions`를 붙일 베이스 URL |
-| `LLM_MODEL` | `gemini-2.5-flash` | 모델 ID |
 
-기본값은 Google Gemini의 OpenAI 호환 계층입니다. 무료 티어 한도를 넘기면 앱이 429와 함께 안내 메시지를 표시합니다. 다른 제공자(Groq·OpenRouter·자체 Ollama 등)로 옮기려면 위 세 변수만 바꾸면 되고, 코드 수정은 필요 없습니다.
+기본값은 Google Gemini의 OpenAI 호환 계층입니다. 무료 티어 한도를 넘기면 앱이 429와 함께 안내 메시지를 표시합니다.
+
+**모델은 환경변수가 아니라 코드에서 고릅니다.** [`frontend/src/lib/ingest/llm-model.ts`](frontend/src/lib/ingest/llm-model.ts)의 `ACTIVE_LLM_TIER`에 등급 이름(`flash-lite` / `flash` / `pro`)을 적으면 되고, 그 이름이 Gemini 별칭으로 해석됩니다. 모델은 시크릿도 배포별 값도 아닌 **튜닝 값**이라 이 저장소의 다른 튜닝 상수들과 같은 자리에 둡니다 — 덤으로 오타가 런타임 404가 아니라 컴파일 에러가 됩니다. 다른 제공자(Groq·OpenRouter·자체 Ollama 등)로 옮기려면 위 두 변수와 이 상수만 바꾸면 됩니다.
 
 > Gemini CLI(`gemini` 명령)의 OAuth 로그인과 API 키는 별개입니다. 웹앱은 AI Studio에서 발급한 API 키를 사용합니다.
 
