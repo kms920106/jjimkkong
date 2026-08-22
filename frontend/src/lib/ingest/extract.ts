@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { LLM_MODEL } from "./llm-model";
+
 export type PlaceCandidate = {
   name: string;
   /** Neighborhood or city hint that narrows the map search, when mentioned. */
@@ -11,6 +13,39 @@ export class LlmRateLimitedError extends Error {
   constructor() {
     super("LLM provider rate limit exceeded");
     this.name = "LlmRateLimitedError";
+  }
+}
+
+/**
+ * The provider rejected the request, or stayed broken through every retry.
+ *
+ * This is ours to fix, not the caller's: a body the endpoint would not accept,
+ * a model name that does not exist, a key without access. It maps to a 503 and
+ * the provider's own text never reaches the user — `describeError()` logs it
+ * and answers with a generic Korean sentence.
+ *
+ * It exists because there was no class here when a stray `extra_body` key made
+ * every ingest 400: the plain Error fell through to the catch-all 500, so a
+ * permanent misconfiguration was reported to users as "try again in a moment"
+ * and showed up in logs only as "Unhandled API error".
+ *
+ * `status` is carried as a field rather than baked into the message because
+ * the retry rule reads it — see `postWithRetry`.
+ *
+ * Sibling of `LlmRateLimitedError`, never its parent. 429 is its own class and
+ * its own message, and it is classified before this one is ever constructed.
+ * Making it extend this class would look tidy — 429 does carry a status — but
+ * then `postWithRetry`'s rethrow and `describeError`'s 429 branch would both
+ * survive only on being listed first, and the quota message would go back to a
+ * generic 503 the moment either order changed.
+ */
+export class LlmRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, detail: string) {
+    super(`LLM request failed (${status}): ${detail}`);
+    this.name = "LlmRequestError";
+    this.status = status;
   }
 }
 
@@ -73,11 +108,10 @@ const MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 1_000;
 
 // Gemini's OpenAI-compatibility layer. Any other OpenAI-shaped endpoint works
-// by overriding LLM_BASE_URL / LLM_MODEL.
+// by overriding LLM_BASE_URL and picking a model in `llm-model.ts`.
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
-// Tracks the current stable flash model. Pinning a version (e.g.
-// gemini-2.5-flash) risks a 404 once Google closes it to new keys.
-const DEFAULT_MODEL = "gemini-flash-latest";
+// The model itself is not chosen here — `llm-model.ts` owns the tier ladder and
+// the active rung, so there is one answer to "which model does this app run".
 
 type ChatCompletionResponse = {
   choices?: Array<{
@@ -122,9 +156,11 @@ async function postWithRetry(
       if (res.ok) return res;
 
       const detail = await res.text().catch(() => "");
-      const error = new Error(
-        `LLM request failed (${res.status}): ${detail.slice(0, 300)}`,
-      );
+      // Generous cap because this text is server-log-only now — the client gets
+      // a fixed sentence. Provider rejections name the offending field path,
+      // and the 300 chars this used to keep would cut it off in exactly the
+      // case the error class exists to diagnose.
+      const error = new LlmRequestError(res.status, detail.slice(0, 2000));
       // 4xx other than 429 is a bad request; retrying sends the same body.
       if (res.status < 500) throw error;
       lastError = error;
@@ -132,7 +168,11 @@ async function postWithRetry(
       if (error instanceof LlmRateLimitedError) throw error;
       // A timeout (AbortError) or network failure is worth another attempt;
       // anything already classified above is rethrown by the branch that made it.
-      if (error instanceof Error && error.message.startsWith("LLM request failed (4")) {
+      // Read off the status field, not the message text: this rule used to
+      // match on the literal prefix "LLM request failed (4", so reformatting
+      // the message would have silently turned non-retryable 4xx into three
+      // retries of the exact body the provider had just rejected.
+      if (error instanceof LlmRequestError && error.status < 500) {
         throw error;
       }
       lastError = error;
@@ -173,8 +213,8 @@ function parseJsonLoosely(content: string): unknown {
 /**
  * Extracts visitable place names from a post via any OpenAI-compatible
  * endpoint. Defaults target Google Gemini's compatibility layer, which is free
- * with an AI Studio key; pointing LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
- * elsewhere swaps the provider without a code change.
+ * with an AI Studio key; pointing LLM_BASE_URL / LLM_API_KEY elsewhere and
+ * picking a model in `llm-model.ts` swaps the provider.
  */
 export async function extractPlaces(input: {
   title: string | null;
@@ -196,7 +236,7 @@ export async function extractPlaces(input: {
   );
 
   const payload = JSON.stringify({
-    model: process.env.LLM_MODEL ?? DEFAULT_MODEL,
+    model: LLM_MODEL,
     max_tokens: 2048,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -210,12 +250,29 @@ export async function extractPlaces(input: {
         schema: RESPONSE_JSON_SCHEMA,
       },
     },
-    // Gemini 3.x reasons before answering, which on this task adds tens of
-    // seconds and can burn the whole output budget before any text is emitted
-    // (finish_reason "length" with zero content). Pulling out a place name is
-    // extraction, not reasoning, so the budget buys nothing here.
-    // Ignored by providers that don't recognize it.
-    extra_body: { google: { thinking_config: { thinking_budget: 0 } } },
+    // Nothing else goes in this body. An `extra_body: { google: { … } }` key
+    // used to sit here to zero out Gemini's thinking budget, and it made every
+    // single ingest fail with 400 INVALID_ARGUMENT — not degrade, fail.
+    //
+    // `extra_body` is an *OpenAI Python SDK* convention: that SDK unwraps the
+    // key and merges its contents into the top-level body. This module builds
+    // the JSON by hand for `fetch`, so the key went out on the wire verbatim,
+    // and OpenAI-shaped endpoints reject unknown top-level fields rather than
+    // ignoring them. A top-level `google` key fails the same way
+    // (`Unknown name "google": Cannot find field`).
+    //
+    // The reason it was added does not hold either: measured against
+    // gemini-flash-lite-latest on a real Korean caption under this same strict
+    // schema, suppressing thinking changed nothing — ~1.1s and 99-106
+    // completion tokens whether or not it was asked for.
+    //
+    // If a future model really does stall on reasoning, `reasoning_effort` is
+    // accepted at the wire level — but "none" is rejected (only "low" and
+    // "minimal" were accepted), and the field is not universal across
+    // OpenAI-compatible providers, so it would have to be config-gated to keep
+    // provider swappability. A generic env-driven body passthrough was
+    // considered and rejected: its only known use buys nothing measurable, and
+    // a malformed value would reproduce exactly this outage from config.
   });
 
   const res = await postWithRetry(`${baseUrl}/chat/completions`, apiKey, payload);

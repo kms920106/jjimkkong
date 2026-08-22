@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ZodError } from "zod";
 import { UnauthorizedError } from "@/lib/auth";
 import { UnsupportedUrlError } from "@/lib/ingest/metadata";
-import { LlmRateLimitedError } from "@/lib/ingest/extract";
+import { LlmRateLimitedError, LlmRequestError } from "@/lib/ingest/extract";
 import { SmsDeliveryError, SmsVerificationError } from "@/lib/auth/sms";
 import { PasswordPolicyError } from "@/lib/auth/password";
 import { PhoneAlreadyRegisteredError } from "@/lib/auth/link";
@@ -104,6 +104,20 @@ export function describeError(error: unknown): {
   }
   if (error instanceof LlmRateLimitedError) {
     return { status: 429, message: "오늘의 무료 추출 한도를 다 썼습니다. 잠시 후 다시 시도해 주세요." };
+  }
+  // 503 for the same reason OAuthConfigError is: the request was fine and the
+  // failure is ours — a rejected body, a bad model name, a key without access.
+  // A 500 here is what let a permanent misconfiguration read as a transient
+  // blip, so this branch exists to keep the two apart in the logs.
+  //
+  // The provider's own text is logged and never returned: it names the model,
+  // quotes our payload, and echoes internal field paths.
+  if (error instanceof LlmRequestError) {
+    console.error("LLM request error:", error);
+    return {
+      status: 503,
+      message: "장소 추출 서비스에 문제가 있습니다. 잠시 후 다시 시도해 주세요.",
+    };
   }
   if (error instanceof ZodError) {
     return { status: 400, message: "요청 형식이 올바르지 않습니다." };
