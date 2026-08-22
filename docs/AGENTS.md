@@ -8,6 +8,11 @@
 발급받은 값을 어느 환경변수에 넣는지를 다룬다. 아키텍처 규칙은 여기가 아니라 루트
 [AGENTS.md](../AGENTS.md)에 있다.
 
+## Key Files
+| File | Description |
+|------|-------------|
+| `db-permissions.md` | DELETE 권한 없는 Postgres role로 하드 삭제를 막는 절차. 아직 라이브에 미적용 |
+
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|

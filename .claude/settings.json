@@ -9,6 +9,34 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-hard-delete.mjs\""
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(*prisma migrate reset*)",
+      "Bash(*prisma db push*)",
+      "Bash(*prisma db execute*)",
+      "Bash(*psql*)",
+      "Bash(*TRUNCATE*)",
+      "Bash(*DROP TABLE*)",
+      "Bash(*DROP DATABASE*)",
+      "Bash(*DELETE FROM*)",
+      "Bash(rm -rf /*)",
+      "Bash(*git reset --hard*)",
+      "Bash(*git clean -f*)",
+      "Bash(*git push*--force*)",
+      "Bash(*vercel blob del*)"
     ]
   }
 }

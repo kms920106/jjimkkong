@@ -61,7 +61,7 @@ export async function GET() {
     const user = await requireUser();
 
     const posts = await prisma.savedPost.findMany({
-      where: { userId: user.id },
+      where: { userId: user.id, deletedAt: null },
       orderBy: { createdAt: "desc" },
       include: savedPostInclude,
     });
@@ -107,16 +107,23 @@ export async function POST(request: NextRequest) {
       // blob. Same reasoning as the profile picture route.
       //
       // Not airtight for a *first* save of a post: both requests read null,
-      // both upsert, and whichever loses the unique race replaces a blob while
+      // both insert, and whichever loses the unique race replaces a blob while
       // believing it displaced nothing — leaking one blob. Accepted rather than
       // fixed, because closing it needs SELECT … FOR UPDATE or serializable
       // isolation on the hot save path, and the cost of the race is storage for
-      // one image, only under a double tap on a brand-new link.
-      const previous = await tx.savedPost.findUnique({
-        where: {
-          userId_sourceUrl: { userId: user.id, sourceUrl: post.sourceUrl },
-        },
-        select: { thumbnail: true },
+      // one image, only under a double tap on a brand-new link. The partial
+      // unique index still decides that race; it is scoped to live rows now.
+      //
+      // findFirst, not findUnique: uniqueness on [userId, sourceUrl] holds only
+      // among live rows now (a partial unique index — see the migration), so
+      // there is no unique key to look up by. That lost key is what made this
+      // rewrite compile-fail rather than silently keep matching soft-deleted
+      // rows, and the `deletedAt: null` here is the whole point of the change.
+      // A previously deleted save of the same link stays deleted and a fresh
+      // row is created beside it.
+      const previous = await tx.savedPost.findFirst({
+        where: { userId: user.id, sourceUrl: post.sourceUrl, deletedAt: null },
+        select: { id: true, thumbnail: true },
       });
 
       // Recorded only alongside a thumbnail that really is one of our blobs, so
@@ -134,35 +141,42 @@ export async function POST(request: NextRequest) {
         ? (post.thumbnailSource ?? null)
         : null;
 
-      const savedPost = await tx.savedPost.upsert({
-        where: {
-          userId_sourceUrl: { userId: user.id, sourceUrl: post.sourceUrl },
-        },
-        create: {
-          userId: user.id,
-          sourceUrl: post.sourceUrl,
-          platform: post.platform,
-          title: post.title ?? null,
-          caption: post.caption ?? null,
-          thumbnail: post.thumbnail ?? null,
-          thumbnailSource,
-          author: post.author ?? null,
-        },
-        update: {
-          title: post.title ?? null,
-          caption: post.caption ?? null,
-          author: post.author ?? null,
-          // The thumbnail alone is left untouched when null, unlike the fields
-          // above. What this column points at may be a blob we own: a
-          // re-ingest while Instagram is blocking us arrives with
-          // `thumbnail: null`, and overwriting would discard an image that is
-          // still perfectly good while orphaning its blob. There is no path
-          // by which a user asks to *remove* a thumbnail, so null here never
-          // means "clear it". If one is ever added it needs an explicit
-          // sentinel — this line will silently ignore a null.
-          ...(post.thumbnail ? { thumbnail: post.thumbnail, thumbnailSource } : {}),
-        },
-      });
+      // Split out of what was one upsert, for the same reason `previous` is now
+      // a findFirst: the composite unique key upsert dispatched on no longer
+      // exists. The branch is on the live row this transaction just read, so a
+      // soft-deleted save of the same link never gets resurrected by an update.
+      const savedPost = previous
+        ? await tx.savedPost.update({
+            where: { id: previous.id },
+            data: {
+              title: post.title ?? null,
+              caption: post.caption ?? null,
+              author: post.author ?? null,
+              // The thumbnail alone is left untouched when null, unlike the
+              // fields above. What this column points at may be a blob we own:
+              // a re-ingest while Instagram is blocking us arrives with
+              // `thumbnail: null`, and overwriting would discard an image that
+              // is still perfectly good while orphaning its blob. There is no
+              // path by which a user asks to *remove* a thumbnail, so null here
+              // never means "clear it". If one is ever added it needs an
+              // explicit sentinel — this line will silently ignore a null.
+              ...(post.thumbnail
+                ? { thumbnail: post.thumbnail, thumbnailSource }
+                : {}),
+            },
+          })
+        : await tx.savedPost.create({
+            data: {
+              userId: user.id,
+              sourceUrl: post.sourceUrl,
+              platform: post.platform,
+              title: post.title ?? null,
+              caption: post.caption ?? null,
+              thumbnail: post.thumbnail ?? null,
+              thumbnailSource,
+              author: post.author ?? null,
+            },
+          });
 
       // The blob this write displaced, if it was one of ours and nothing else
       // still points at it.

@@ -23,12 +23,13 @@ Vercel의 Root Directory도 여기다. **모든 명령은 이 디렉터리에서
 ## Key Files
 | File | Description |
 |------|-------------|
-| `package.json` | 스크립트·의존성. `dev`는 4000 포트, `postinstall`이 `prisma generate` |
+| `package.json` | 스크립트·의존성. `dev`는 4000 포트, `postinstall`이 `prisma generate`. `lint`는 `--max-warnings 0`, `typecheck`는 `tsc --noEmit`. **`db:push`는 없다** |
 | `next.config.ts` | Next 설정 |
 | `prisma.config.ts` | Prisma CLI 설정 (스키마 위치, 마이그레이션에 쓸 `DIRECT_URL`) |
 | `components.json` | shadcn/ui 설정 — style `base-nova`, baseColor `neutral`, 아이콘 lucide |
 | `tsconfig.json` | strict, `@/*` → `src/*` |
-| `eslint.config.mjs` | `npm run lint`가 읽는 설정 |
+| `eslint.config.mjs` | `npm run lint`가 읽는 설정. `eslint-rules/`를 `local/*`로 등록하고 `src/generated/prisma/**`를 ignore한다 |
+| `eslint-rules/no-hard-delete.mjs` | 하드 삭제 가드의 lint 층. `no-prisma-hard-delete`·`no-blob-del-import`·`no-destructive-raw-sql` |
 | `postcss.config.mjs` | Tailwind v4 플러그인 |
 | `.env.example` | 환경변수 정본. 새 변수는 발급처 주석과 함께 여기에도 추가 |
 
@@ -37,7 +38,8 @@ Vercel의 Root Directory도 여기다. **모든 명령은 이 디렉터리에서
 |-----------|---------|
 | `src/` | 애플리케이션 코드 전부 (see `src/AGENTS.md`) |
 | `prisma/` | 스키마와 마이그레이션 (see `prisma/AGENTS.md`) |
-| `scripts/` | 일회성 운영 스크립트 (see `scripts/AGENTS.md`) |
+| `scripts/` | 일회성 운영 스크립트 (see `scripts/AGENTS.md`). 둘 다 자기 `PrismaClient`를 만들고 **둘 다 `withDeleteGuard()`로 감싼다** |
+| `eslint-rules/` | 이 저장소 전용 ESLint 플러그인. 위 Key Files 참고 |
 | `public/` | 정적 자산. Next 기본 SVG만 있고 실제로 쓰이지 않는다 |
 
 ## For AI Agents
@@ -49,14 +51,27 @@ Vercel의 Root Directory도 여기다. **모든 명령은 이 디렉터리에서
 - 마이그레이션은 `DIRECT_URL`(5432)로 돈다. 풀러(6543)에는 마이그레이션 엔진이 쓰는
   prepared statement와 advisory lock이 없다. 앱 자체는 풀링된 `DATABASE_URL`을 쓴다.
 - 마이그레이션은 Vercel 빌드 중에 실행되지 않는다. `db:deploy`를 빌드에 끼워 넣지 말 것.
+- **`db:push` 스크립트를 다시 만들지 말 것.** 스키마에 DB를 맞추려고 컬럼을 떨어뜨리고,
+  이 저장소의 `DATABASE_URL`은 라이브 Supabase를 가리킨다. `db:migrate`/`db:deploy`가
+  실제 필요를 전부 덮는다.
+- **`new PrismaClient`를 새로 쓸 일이 있으면 `src/lib/prisma-guard.ts`의 `withDeleteGuard()`로
+  감싼다.** 지금 세 자리(`src/lib/prisma.ts` + `scripts/backfill-*.ts` 둘)가 전부 감싸져
+  있고, 감싸지 않은 클라이언트 하나가 가드 전체의 값을 그만큼 깎는다.
 
 ### Testing Requirements
-**테스트 스위트는 없다.** 검증은 세 가지다:
+**테스트 스위트는 없다**(예외 하나는 아래 훅 테스트다). 검증은 네 가지다:
 
 ```bash
-npm run lint
-npm run build
-npm run dev     # http://localhost:4000 에서 실제 플로우를 돌려본다
+npm run lint      # --max-warnings 0. 하드 삭제 규칙이 error로 걸린다
+npm run typecheck # tsc --noEmit
+npm run build     # ESLint도 함께 돈다 — 규칙을 warning으로 낮추면 아무것도 막지 못한다
+npm run dev       # http://localhost:4000 에서 실제 플로우를 돌려본다
+```
+
+훅 층에만 테스트가 있고, 저장소 **루트**에서 돌린다:
+
+```bash
+cd .. && node .claude/hooks/block-hard-delete.test.mjs
 ```
 
 타입체크만 통과했다고 동작한다고 말하지 말 것 — 이 코드베이스에서 실제로 깨지는

@@ -20,8 +20,13 @@ export async function GET(
   try {
     const { id } = await context.params;
 
+    // The relation filter is not optional. This query reads SavedPostPlace, and
+    // a soft-deleted post keeps its place links, so without `post.deletedAt` a
+    // link the user deleted would go on being listed here — and this route
+    // serves every user's posts without authentication, so it would be listed
+    // to strangers. Nothing else in this file would look wrong.
     const links = await prisma.savedPostPlace.findMany({
-      where: { placeId: id },
+      where: { placeId: id, post: { deletedAt: null } },
       select: {
         memo: true,
         post: {

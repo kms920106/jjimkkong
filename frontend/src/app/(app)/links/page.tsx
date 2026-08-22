@@ -17,7 +17,7 @@ export default async function PostsPage() {
 
   const posts = user
     ? await prisma.savedPost.findMany({
-        where: { userId: user.id },
+        where: { userId: user.id, deletedAt: null },
         orderBy: { createdAt: "desc" },
         include: savedPostInclude,
       })

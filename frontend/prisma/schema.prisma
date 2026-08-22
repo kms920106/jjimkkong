@@ -295,14 +295,27 @@ model SavedPost {
   /// a re-backup would have to re-scrape the post page.
   thumbnailSource String?
   author    String?
+  /// Set instead of deleting the row. Deleting a saved link used to remove it,
+  /// which took its SavedPostPlace rows with it through the cascade below — the
+  /// memos the user wrote on each place and the position that makes /links
+  /// number them as a route, all unrecoverable. Every read has to filter on
+  /// this; see the list in AGENTS.md, they all move together.
+  deletedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user   UserProfile      @relation(fields: [userId], references: [id], onDelete: Cascade)
   places SavedPostPlace[]
 
-  @@unique([userId, sourceUrl])
-  @@index([userId, createdAt])
+  /// Not @@unique, deliberately. Uniqueness on [userId, sourceUrl] holds only
+  /// among live rows — a partial unique index that Prisma's schema language
+  /// cannot express, so it lives in the migration SQL and this is the plain
+  /// index that backs the same lookup. Restoring @@unique here would make a
+  /// link the user once deleted permanently unsavable, and would silently
+  /// re-enable findUnique/upsert on this key: losing that compile error is how
+  /// a deletedAt filter goes missing.
+  @@index([userId, sourceUrl])
+  @@index([userId, deletedAt, createdAt])
   /// Not for reads. Before deleting a thumbnail blob, the save and delete routes
   /// count how many rows still reference that URL — the check that stops a
   /// caller from pointing their own post at someone else's public blob URL and

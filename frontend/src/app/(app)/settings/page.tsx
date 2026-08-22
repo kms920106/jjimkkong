@@ -18,7 +18,9 @@ export default async function SettingsPage() {
   // Only used for the withdrawal dialog's "링크 N개" line, so it is counted
   // rather than fetched: the page renders no post.
   const savedCount = user
-    ? await prisma.savedPost.count({ where: { userId: user.id } })
+    ? await prisma.savedPost.count({
+        where: { userId: user.id, deletedAt: null },
+      })
     : 0;
 
   return (

@@ -12,7 +12,8 @@
 |------|-------------|
 | `ingest/route.ts` | `POST` — metadata → extract → geocode. `maxDuration = 60` |
 | `posts/route.ts` | `GET` 목록 / `POST` 저장. 확인된 장소를 **서버에서 다시 지오코딩**한다. `maxDuration = 60` |
-| `posts/[id]/route.ts` | `DELETE` — `deleteMany({ where: { id, userId } })` 그 자체가 소유권 검사다 |
+| `posts/[id]/route.ts` | `DELETE` — **소프트 삭제.** `deletedAt`을 찍고, `where`의 `userId`가 소유권 검사다 |
+| `places/[id]/sources/route.ts` | `GET` — 이 장소를 언급한 **모든 사용자의** 게시글. 인증 없다. `post: { deletedAt: null }` relation 필터가 필수다 |
 | `settings/route.ts` | `PATCH` — 닉네임·지도 제공자. 두 필드 모두 optional(생략 = 그대로, 빈 닉네임 = 이메일 폴백으로 복귀) |
 | `settings/profile/route.ts` | `PATCH` — 프로필 사진·닉네임·상태메세지. **multipart**이고 텍스트 두 필드는 항상 온다 |
 | `account/route.ts` | `DELETE` — 회원탈퇴. `withdrawnAt`만 찍는다(예외 둘: `Session` 삭제, 프로필 사진 blob 삭제) |
@@ -31,8 +32,15 @@
 
 **모든 핸들러가 `requireUser()`를 부르고 반환된 `userId`로 쿼리를 한정한다.**
 Prisma는 테이블 소유자로 접속해 Postgres RLS를 우회하므로, DB가 대신 막아주지 않는다.
-`deleteMany({ where: { id, userId } })`를 `delete({ where: { id } })`로 줄이면 그 행이
-모든 사용자에게 조용히 열린다.
+`where`에서 `userId`를 빼면 그 행이 모든 사용자에게 조용히 열린다. 소프트 삭제 모델에서는
+그 검사가 `findFirst({ where: { id, userId, deletedAt: null } })` + `update`의 모양으로
+있다 — `lib/prisma-guard.ts`는 **삭제를 막을 뿐 잘못 범위 잡힌 update를 막지 못한다.**
+
+**하드 삭제는 `lib/prisma-guard.ts`가 런타임에서 막는다.** `delete`/`deleteMany`가 허용된
+모델은 넷(`Session`·`PhoneVerification`·`PasswordAttempt`·`SavedPostPlace`)이고, 나머지는
+`HardDeleteBlockedError`로 throw되며 Postgres에 닿지 않는다. **새 라우트에서 행을 지워야
+한다고 느끼면 그건 대개 소프트 삭제해야 한다는 신호다** — 자세한 것은 루트 AGENTS.md와
+`lib/AGENTS.md` 참고.
 
 **클라이언트가 보낸 좌표는 절대 믿지 않는다.** `Place`는 사용자 간 공유이고
 `[name, address]`가 키다. 요청 본문의 lat/lng을 그대로 받으면 한 사용자가 남의 핀을
@@ -42,8 +50,38 @@ Prisma는 테이블 소유자로 접속해 Postgres RLS를 우회하므로, DB�
 **저장 트랜잭션 안에서는 장소를 정렬한 뒤 upsert한다.** 동시에 도는 트랜잭션들이 락을
 같은 순서로 잡게 하기 위해서다. 이 정렬을 빼면 데드락이 난다.
 
-**재저장은 장소를 덧붙이는 게 아니라 교체한다.** `SavedPost`가 `[userId, sourceUrl]`에
-유니크라 같은 링크는 갱신되고, 다시 인제스트했을 때 장소가 줄어도 고아 행이 남지 않는다.
+**재저장은 장소를 덧붙이는 게 아니라 교체한다.** 같은 링크의 **살아 있는** 행이 있으면
+갱신되고, 다시 인제스트했을 때 장소가 줄어도 고아 행이 남지 않는다.
+
+**`POST /api/posts`는 `upsert`가 아니라 `findFirst` + `create`/`update`다.** `[userId,
+sourceUrl]` 유니크가 partial unique index(`WHERE "deletedAt" IS NULL`)가 되면서 dispatch할
+복합 유니크 키 자체가 없어졌기 때문이다. 이 컴파일 에러가 rewrite를 **강제한 것**이 요점이다 —
+`upsert`가 그대로 컴파일됐다면 소프트 삭제된 행을 조용히 매칭해서 사용자가 지운 게시글을
+update로 부활시켰을 것이다. `findFirst`의 `deletedAt: null`이 이 변경의 핵심이고, 예전에
+지운 같은 링크는 그대로 지워진 채 **그 옆에 새 행이 생긴다.**
+
+**링크 삭제도 삭제가 아니라 상태 변경이다.** `DELETE /api/posts/[id]`는 `deletedAt`을 찍고,
+`SavedPostPlace` 행은 **일부러 그대로 둔다** — 함께 쓸어내면 메모와 `position`이 사라져 이
+변경이 존재하는 이유인 복구 가능성이 없어진다. 하드 삭제 시절에는 cascade가 그걸 했다.
+
+이 라우트를 고칠 때 **읽기 필터 일곱 곳을 함께 본다.** 이 디렉터리에 넷이 있다 —
+`GET /api/posts`, `POST /api/posts`의 `previous` 조회, `DELETE /api/posts/[id]`의 `findFirst`,
+그리고 `GET /api/places/[id]/sources`. 나머지 셋은 페이지(`(app)/page.tsx`,
+`(app)/links/page.tsx`, `(app)/settings/page.tsx`)에 있다. 전체 목록과 각각이 빠졌을 때
+무슨 일이 생기는지는 루트 AGENTS.md에 있다.
+
+**`GET /api/places/[id]/sources`가 빠뜨리기 가장 쉬운 자리다.** 이 쿼리는 `SavedPostPlace`를
+읽으므로 `deletedAt`이 자기 테이블에 없고 **relation 필터**(`post: { deletedAt: null }`)를
+써야 한다. 게다가 이 라우트는 **인증 없이 모든 사용자의 게시글을 돌려준다** — 필터가 빠지면
+사용자가 지운 링크가 낯선 사람에게 계속 보인다. 미관이 아니라 프라이버시 버그이고, 이 파일만
+읽으면 아무것도 이상해 보이지 않는다.
+
+**썸네일 blob 참조 카운트의 규칙이 삭제 라우트에서 둘로 갈린다.**
+- **`deletedAt` 필터를 넣지 않는다.** 소프트 삭제된 행도 자기 blob을 가리키고 복원되면 다시
+  렌더해야 하므로 **그건 참조다.** 걸러내면 다른 행(어쩌면 다른 사용자의 행)이 아직 필요한
+  blob을 지운다 — 이 카운트가 막으려고 존재하는 바로 그 버그다.
+- **`id: { not: row.id }`는 새로 붙었고 반드시 필요하다.** 하드 삭제는 행이 사라진 뒤에 셌지만
+  이제는 살아남아 **자기를 세므로**, 합이 0에 닿을 수 없고 blob이 영원히 회수되지 않는다.
 
 **탈퇴는 삭제가 아니라 상태 변경이다.** `UserProfile`·`AuthIdentity`·`SavedPost`는 전부
 남는다. `Session`만 지우는데, 남겨두면 살아 있는 쿠키가 탈퇴 계정을 가리킨 채
@@ -61,6 +99,11 @@ Prisma는 테이블 소유자로 접속해 Postgres RLS를 우회하므로, DB�
 로그아웃 상태에서 `POST /api/posts`, `DELETE /api/posts/:id`, `PATCH /api/settings`,
 `PATCH /api/settings/profile`, `DELETE /api/account`가 전부 401인지 확인한다. **다른 계정의 post id로 DELETE를 보내
 404/무변화가 나오는지**도 함께 본다 — 소유권 검사가 살아 있다는 증거는 이것뿐이다.
+
+소프트 삭제는 **지운 뒤에 확인해야 하는 것이 셋**이다: 홈 지도·`/links`·`/settings` 개수에서
+사라졌는가, **그 장소의 핀을 눌러 열리는 시트(`/api/places/[id]/sources`)에서도 사라졌는가**,
+그리고 **같은 링크를 다시 저장할 수 있는가**(partial unique index가 살아 있다는 증거다).
+행이 남는다는 점 때문에 화면에서 사라진 것만으로는 아무것도 증명되지 않는다.
 
 ### Common Patterns
 ```ts

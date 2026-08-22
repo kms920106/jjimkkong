@@ -37,16 +37,24 @@ import { PrismaClient } from "../src/generated/prisma/client";
 import { Platform } from "../src/generated/prisma/enums";
 import { fetchMetadata } from "../src/lib/ingest/metadata";
 import { fetchAndPutThumbnail } from "../src/lib/post-thumbnail";
+import { withDeleteGuard } from "../src/lib/prisma-guard";
 
 // Its own client rather than lib/prisma.ts: that one is wired to the pooled
 // DATABASE_URL and caches itself on globalThis for Next's hot reload, neither of
 // which suits a one-shot script. The adapter is not optional — the generated
 // client uses engineType "client", which has no native engine to fall back on.
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({
-    connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL,
+//
+// Still wrapped in withDeleteGuard(). A one-shot script run by hand against
+// DIRECT_URL is the *most* dangerous client in the repository, not the least:
+// it holds the direct connection and nothing reviews what it does. Skipping the
+// guard here would leave the widest gap exactly where it matters.
+const prisma = withDeleteGuard(
+  new PrismaClient({
+    adapter: new PrismaPg({
+      connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL,
+    }),
   }),
-});
+);
 
 /**
  * How many rows in a row may fail to yield a thumbnail before this gives up.

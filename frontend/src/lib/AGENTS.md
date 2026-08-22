@@ -13,7 +13,8 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
 |------|-------------|
 | `auth.ts` | `requireUser()` / `getUser()` — 모든 라우트의 소유권 게이트, `UnauthorizedError` |
 | `api.ts` | `requireSameOrigin()`, `toErrorResponse()` — 알려진 에러 클래스를 상태 코드로 매핑하고 나머지는 500 뒤로 감춘다 |
-| `prisma.ts` | Prisma 싱글턴. 풀링된 `DATABASE_URL` + `PrismaPg` 어댑터, hot reload용 globalThis 캐시 |
+| `prisma.ts` | Prisma 싱글턴. 풀링된 `DATABASE_URL` + `PrismaPg` 어댑터, hot reload용 globalThis 캐시. **`withDeleteGuard()`로 감싼다** |
+| `prisma-guard.ts` | `withDeleteGuard()` — 하드 삭제를 Postgres에 닿기 전에 막는 Prisma Client Extension. `HARD_DELETE_ALLOWED`, `HardDeleteBlockedError`, `DestructiveSqlBlockedError` |
 | `types.ts` | 클라이언트와 공유하는 DTO(`SavedPostDTO`, `IngestResponse`, `ProfileDTO` 등) |
 | `serialize.ts` | Prisma 행 → DTO 변환과 `savedPostInclude` |
 | `legal.ts` | 약관·개인정보처리방침이 읽는 운영자 정보와 시행일 |
@@ -40,6 +41,8 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
   페이지는 열리고(빈 지도·빈 목록), 실제 게이트는 라우트 핸들러뿐이다.
 - `prisma.ts`는 **풀링된 `DATABASE_URL`**을 쓴다. 마이그레이션용 `DIRECT_URL`을
   여기에 넣지 말 것.
+- **`new PrismaClient`는 반드시 `withDeleteGuard()`로 감싼다.** 자리는 셋이다 —
+  여기 싱글턴과 `../../scripts/backfill-*.ts` 둘. 아래 `prisma-guard.ts` 절 참고.
 
 ### Testing Requirements
 여기 코드는 전부 네트워크 경계에 붙어 있어서 타입체크로 검증되지 않는다.
@@ -91,3 +94,39 @@ allowlist도 유지한다. `image/`로 시작하는지 보는 방식으로 바�
 
 **`BlobError`는 `ProfileImageError`로 감싼다.** 압도적으로 흔한 원인이 `BLOB_READ_WRITE_TOKEN`
 누락인데, 그대로 두면 일반 500이 되어 어떤 환경변수가 없는지 흔적이 남지 않는다.
+
+## `prisma-guard.ts`
+
+**이 파일이 이 저장소에서 기계적으로 강제되는 첫 불변조건이다.** 나머지 규칙은 전부 산문이고,
+어긴 코드가 lint와 build를 그대로 통과한다 — 깨졌다는 사실은 행이 사라진 뒤에 알게 된다.
+
+**Prisma Client Extension이 옳은 이음매인 이유는 호출과 와이어 사이에 앉기 때문이다.**
+차단된 `delete`/`deleteMany`는 `HardDeleteBlockedError`로 throw되고 Postgres에 닿지 않으며,
+어느 파일이 어떻게 불렀는지와 무관하다. 정적 분석은 그 약속을 할 수 없다 —
+`prisma[model].delete()`가 모든 lint 규칙을 지나간다. `../../eslint-rules/no-hard-delete.mjs`는
+조기 경보이고 **강제는 여기다.**
+
+**`lib/prisma.ts` 안이 아니라 공용 팩토리로 둔 이유가 있다.** `new PrismaClient`가 세 곳에
+있다 — 앱 싱글턴과, `DIRECT_URL`에 닿기 위해 자기 클라이언트를 만드는 백필 스크립트 둘.
+**싱글턴만 감싸면 손으로 라이브 데이터에 돌리는 쪽이 무방비로 남는다.**
+
+**`HARD_DELETE_ALLOWED`에 모델을 추가하는 것은 "이 행은 사용자 데이터가 아니다"라는 선언이고,
+이유를 주석으로 적어야 한다.** 지금 넷 — `Session`·`PhoneVerification`·`PasswordAttempt`·
+`SavedPostPlace`. 이 목록은 `eslint-rules/no-hard-delete.mjs`(camelCase delegate 이름),
+`.claude/hooks/block-hard-delete.mjs`, `docs/db-permissions.md`의 표에 각각 복제되어 있다 —
+**넷은 함께 움직인다.** 판단 근거는 여기에만 적고 나머지는 목록만 든다(복제하면 어긋난다).
+
+**`UserProfile`을 여기 넣지 말 것.** `onDelete: Cascade`는 **Postgres가 이 extension 아래에서
+실행하므로** 여기서 볼 수 없다. `UserProfile`에 걸린 세 cascade(`AuthIdentity`·`Session`·
+`SavedPost`)를 지키는 것은 삭제가 애초에 DB에 닿지 않는다는 사실이고, allowlist에 넣으면
+셋이 한 번에 다시 무장된다.
+
+**raw SQL 검사는 모델 훅과 별개로 필요하다.** Prisma는 raw 쿼리에 보고할 모델이 없어서
+`$allModels` 훅을 지나가지 않는다. 그래서 `$executeRaw`·`$executeRawUnsafe`·`$queryRaw`·
+`$queryRawUnsafe` 넷이 각자 자기 텍스트를 다시 검사한다. **`DROP COLUMN`과 `DROP INDEX`는
+일부러 목록에 없다** — 둘 다 이 저장소의 정당한 마이그레이션에 나오고(평문 전화번호 컬럼 삭제,
+unique index를 partial로 교체), 마이그레이션은 애초에 이 클라이언트를 지나지 않는다. 넣으면
+false positive만 생긴다.
+
+**이건 정규식이다. 실수를 잡을 뿐 작정한 호출자를 막지 못한다.** 절대적인 정지는 DELETE 권한이
+없는 Postgres role뿐이고, 그건 `docs/db-permissions.md`에 절차만 있다(아직 미적용).

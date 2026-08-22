@@ -28,12 +28,25 @@
 있으면 Next.js가 그 파일을 Vercel 함수 번들에 넣지 않는다. 빌드는 통과하고 런타임에
 "could not locate the Query Engine"으로 죽는다.
 
-**`@unique`를 되살리지 말 것.** `UserProfile.phoneHash`와
-`AuthIdentity[provider, providerUserId]`는 **partial unique index**
-(`WHERE "withdrawnAt" IS NULL`)이고, Prisma 스키마 언어로 표현할 수 없어서 마이그레이션
-raw SQL에만 있다. 그래서 스키마에는 평범한 `@@index`가 적혀 있다. `@unique`로 바꾸면
-탈퇴한 사용자가 영구히 재가입 불가가 된다. `findUnique`가 컴파일되지 않는 것도 의도된
-것이다 — `findFirst` + `withdrawnAt: null`을 쓴다.
+**`@unique`를 되살리지 말 것. 지금 partial unique index는 셋이다.**
+`UserProfile.phoneHash`, `AuthIdentity[provider, providerUserId]`
+(`WHERE "withdrawnAt" IS NULL`), 그리고 `SavedPost[userId, sourceUrl]`
+(`WHERE "deletedAt" IS NULL`, `20260822150000_soft_delete_saved_post`). 셋 다 Prisma 스키마
+언어로 표현할 수 없어서 마이그레이션 raw SQL에만 있고, 그래서 스키마에는 평범한 `@@index`가
+적혀 있다.
+
+되돌리면 **두 가지를 동시에 깨뜨린다.** 하나는 기능이다 — 탈퇴한 사용자가 영구히 재가입
+불가가 되고, 한 번 지운 링크를 영구히 다시 저장할 수 없다(소프트 삭제된 행이 그
+`sourceUrl`을 그대로 들고 있다). 다른 하나가 더 위험하다: **그 키의 `findUnique`/`upsert`가
+조용히 다시 컴파일된다.** 그 컴파일 에러를 잃는 것이 `withdrawnAt`/`deletedAt` 필터가
+사라지는 경로다. 실제로 `SavedPost` 쪽 유니크를 떼어낸 것이 `api/posts/route.ts`의
+`userId_sourceUrl` 호출부 두 곳을 컴파일 에러로 깨뜨려 `upsert`를 `findFirst` +
+`create`/`update`로 쪼개게 만들었고, 그게 소프트 삭제된 행을 update로 부활시키는 버그를
+사전에 막았다. **`findFirst` + 상태 필터를 쓴다.**
+
+**`@@index([userId, deletedAt, createdAt])`은 장식이 아니다.** 모든 목록 읽기가
+`(userId, deletedAt IS NULL)` 필터에 `createdAt` 정렬이다 — 홈 지도, `/links`, `/settings`의
+개수, `GET /api/posts`. 이전의 `@@index([userId, createdAt])`은 필터를 덮지 못해 교체됐다.
 
 **전화번호 두 컬럼은 항상 함께 움직인다.** DB CHECK 제약
 (`("phoneHash" IS NULL) = ("phoneEnc" IS NULL)`)이 반쪽 행을 거부한다. 이 제약을 빼면
@@ -58,6 +71,12 @@ npx prisma migrate deploy   # 20260817160100_drop_phone_plaintext
 ```
 
 ### Common Patterns
+- **행을 지우는 마이그레이션을 쓰지 말 것.** 런타임의 하드 삭제는
+  `../src/lib/prisma-guard.ts`가 막지만 **마이그레이션은 그 아래를 지난다** — 여기서 쓰는
+  SQL은 아무도 검사하지 않는다. 새 상태는 `deletedAt`/`withdrawnAt` 같은 컬럼으로 표현한다.
+- 삭제를 소프트로 바꿀 때는 **그 테이블의 전역 unique를 partial unique index로 함께 옮긴다.**
+  지운 행이 유니크 키를 계속 점유하므로, 안 하면 같은 값을 다시 만들 수 없다. 두 선례가
+  `20260817140000_soft_delete_account`와 `20260822150000_soft_delete_saved_post`다.
 - 스키마의 `///` 주석은 *왜*를 적는다. 모델을 고치면 주석도 함께 고친다.
 - 적용된 마이그레이션은 수정하지 않고 새 마이그레이션을 얹는다.
 - 소유권은 DB가 아니라 애플리케이션에서 검사한다 — Prisma가 테이블 소유자로 접속해

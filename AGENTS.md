@@ -68,10 +68,17 @@ cd frontend
 npm install            # postinstall에서 prisma generate 실행
 npm run dev            # http://localhost:4000  (3000이 아니라 4000)
 npm run build
-npm run lint
+npm run lint           # eslint --max-warnings 0 — 하드 삭제 규칙이 error로 걸린다
+npm run typecheck      # tsc --noEmit
 npm run db:migrate     # prisma migrate dev — DIRECT_URL 사용
 npm run db:deploy      # prisma migrate deploy — CI/운영용, 빌드 중 실행 금지
 npm run db:studio
+
+# db:push는 없다. 스키마에 맞추려고 컬럼을 떨어뜨리고 이 저장소의 DATABASE_URL은
+# 라이브 Supabase를 가리킨다 — 아래 "db:push는 삭제됐다" 참고. 다시 추가하지 말 것.
+
+# 하드 삭제 차단 훅의 테스트(45 케이스). 이것만 저장소 루트에서 실행한다.
+cd .. && node .claude/hooks/block-hard-delete.test.mjs && cd frontend
 
 # 일회성: 평문으로 남은 전화번호를 암호화한다. 아래 "전화번호 암호화 마이그레이션" 참고.
 npx tsx --env-file=.env scripts/backfill-phone-encryption.ts
@@ -81,8 +88,9 @@ npx tsx --env-file=.env scripts/backfill-phone-encryption.ts
 npx tsx --env-file=.env scripts/backfill-thumbnail-backup.ts
 ```
 
-테스트 스위트는 없다. 검증은 `npm run lint` + `npm run build` + 브라우저에서 직접 플로우를
-돌려보는 것이다. 타입체크만 통과했다고 변경이 동작한다고 말하지 말 것 — 이 코드베이스에서
+테스트 스위트는 없다. 검증은 `npm run lint` + `npm run typecheck` + `npm run build` +
+브라우저에서 직접 플로우를 돌려보는 것이다(훅만은 예외로 테스트가 있다 —
+`node .claude/hooks/block-hard-delete.test.mjs`). 타입체크만 통과했다고 변경이 동작한다고 말하지 말 것 — 이 코드베이스에서
 문제가 생기는 지점은 전부 네트워크 경계다.
 
 ## 인제스트 파이프라인
@@ -243,8 +251,114 @@ worker·web-push가 전부 없으며, iOS Safari의 Web Push는 사용자가 홈
 
 **소유권 검사는 DB가 아니라 애플리케이션에서 한다.** Prisma는 테이블 소유자로 접속하므로
 Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 호출하고 반환된 `userId`로
-쿼리를 한정해야 한다. `deleteMany({ where: { id, userId } })` 그 자체가 소유권 검사다 —
-이걸 `delete({ where: { id } })`로 줄이면 그 행이 모든 사용자에게 조용히 열린다.
+쿼리를 한정해야 한다. **한정 없는 쓰기는 그 행을 모든 사용자에게 조용히 여는 것이다** —
+`deleteMany({ where: { id, userId } })`를 `delete({ where: { id } })`로 줄이면 그렇게 된다.
+이 관용구는 **하드 삭제가 허용된 네 모델에만 남아 있다**(아래 "하드 삭제는 이제 런타임에서
+막힌다"). `SavedPost` 같은 소프트 삭제 모델에서는 같은 검사가
+`findFirst({ where: { id, userId, deletedAt: null } })` + `update`로 옮겨갔다 — 형태가
+바뀌었을 뿐 규칙은 그대로다. `where`에 `userId`가 빠졌는데 그걸 잡아 줄 장치는 여전히 없다.
+`withDeleteGuard()`는 삭제를 막을 뿐 **잘못 범위 잡힌 update를 막지 못한다.**
+
+**하드 삭제는 이제 런타임에서 막힌다. 이 저장소에서 기계적으로 강제되는 첫 불변조건이다.**
+그 전까지 이 문서의 모든 규칙은 산문뿐이었다 — "탈퇴는 삭제가 아니라 상태 변경이다"를 어긴
+코드가 `npm run lint`와 `npm run build`를 그대로 통과했고, 그러면 깨졌다는 사실은 데이터가
+사라진 뒤에 알게 된다. 층은 셋이고 **위로 갈수록 약하다**:
+
+1. **실제 강제는 층 1 하나뿐이다.** `withDeleteGuard()`
+   ([frontend/src/lib/prisma-guard.ts](frontend/src/lib/prisma-guard.ts))는 Prisma Client
+   Extension이라 **호출과 와이어 사이**에 앉는다. 차단된 `delete`/`deleteMany`는
+   `HardDeleteBlockedError`로 throw되며 Postgres에 닿지 않고, 어느 파일이 어떻게 불렀는지와
+   무관하다. 파괴적 raw SQL(`DELETE FROM`/`TRUNCATE`/`DROP TABLE|DATABASE|SCHEMA|TYPE`)도
+   `DestructiveSqlBlockedError`로 막는다.
+2. **층 2는 ESLint 규칙 셋**(`frontend/eslint-rules/no-hard-delete.mjs`, `eslint.config.mjs`에
+   `local/*`로 등록): `no-prisma-hard-delete`·`no-blob-del-import`·`no-destructive-raw-sql`.
+   런타임까지 가지 않고 **그 한 줄에서** 실패하게 만드는 것이 이 층이 사는 이유다.
+   `npm run lint`가 `--max-warnings 0`이고 `next build`가 ESLint를 돌리므로, 경고로 두면
+   아무것도 막지 못한다 — 셋 다 `error`다.
+3. **층 3은 AI 도구용 훅**(`.claude/hooks/block-hard-delete.mjs`, PreToolUse) +
+   `.claude/settings.json`의 `permissions.deny`. 사는 이유는 *타이밍*이다 — 잘못된 코드가
+   쓰인 뒤 잡히는 것이 아니라 **쓰이기 전에** 거부된다. 막으려는 실패 양상이 "에이전트가
+   자신 있게 행을 지우고 성공을 보고하는 것"이기 때문이다. 테스트는
+   `node .claude/hooks/block-hard-delete.test.mjs`(45 케이스).
+
+**훅에는 예외 경로가 셋 있고, 셋 다 구현 중에 훅이 정당한 작업을 막아서 생겼다.**
+지우지 말 것 — 각각이 없으면 훅이 자기 자신을 유지 불가능하게 만든다.
+
+1. **가드 자신의 파일**(`prisma-guard.ts`, `eslint-rules/`, `.claude/hooks/`) — 정의상
+   금지 패턴을 담고 있고, allowlist는 모델이 정말 자격을 갖출 때 바뀔 수 있어야 한다.
+2. **`scripts/verify-*`와 `*.test.*`** — 가드가 동작함을 증명하려면 차단된 delete를 실제로
+   *호출해* throw를 확인해야 한다. 이걸 못 쓰게 하면 가드를 확인할 방법이 "믿는 것"밖에
+   없어진다. 런타임 가드는 여전히 그 호출을 거부하므로 이 예외로 실제 삭제는 불가능하다.
+3. **`.md`/`.mdx`** — 훅은 이 문서를 쓰려는 시도를 **네 번 거부했다.** 위험한 패턴을
+   *설명하는 글*은 정규식에게 그 패턴과 구별되지 않는다. 즉 산문을 검사하는 가드레일은
+   자기 문서를 유지 불가능하게 만들고, **문서 없는 가드레일은 거슬릴 때 사람들이 지우는
+   그것이다.** 마크다운은 실행되지 않으므로 검사하지 않아 잃는 것이 없다.
+
+**세 층의 한계를 정확히 알고 쓸 것.** lint는 구문을 읽으므로 `prisma[model].delete()`는
+그냥 통과한다. 훅과 raw SQL 검사는 텍스트·정규식이라 **실수를 잡을 뿐 작정한 호출자를 막지
+못한다.** 그리고 `onDelete: Cascade`는 **Postgres가 extension 아래에서 실행하므로** 층 1도
+보지 못한다 — `UserProfile`의 세 cascade(`AuthIdentity`·`Session`·`SavedPost`)를 지키는 것은
+`UserProfile`이 allowlist에 **없다**는 사실이다. 삭제가 DB에 닿지 않으므로 cascade가 발화할
+기회 자체가 없다. `UserProfile`을 allowlist에 넣으면 세 개가 한 번에 다시 무장된다.
+**절대적인 정지는 층 4, DELETE 권한 없는 Postgres role뿐이고 아직 적용되지 않았다** —
+절차만 [docs/db-permissions.md](docs/db-permissions.md)에 문서로 있다.
+
+**`withDeleteGuard()`는 클라이언트를 만드는 세 자리 전부에 걸린다.** `src/lib/prisma.ts`의
+싱글턴과, `DIRECT_URL`에 닿기 위해 자기 클라이언트를 따로 만드는 백필 스크립트 둘
+(`scripts/backfill-*.ts`)이다. **싱글턴만 감싸면 손으로 라이브 데이터에 돌리는 쪽이,
+즉 가장 위험한 쪽이 무방비로 남는다.** 가드는 가장 좁은 틈만큼만 가치가 있다.
+
+**`HARD_DELETE_ALLOWED`에 모델을 추가하는 것은 "이 행은 사용자 데이터가 아니다"라는 선언이다.**
+지금 넷이고 각각 이유가 코드에 적혀 있다 — `Session`(즉시 무효화. 세션을 자기완결적 JWT가
+아니라 DB에 둔 이유 그 자체), `PhoneVerification`(SMS 발송이 throw했을 때의 보상 롤백),
+`PasswordAttempt`(rate-limit 윈도우 청소), `SavedPostPlace`(재저장이 장소 집합을 교체한다).
+**이유를 적지 않은 항목은 스타일 문제가 아니라 리뷰에서 잡아야 하는 버그다.**
+
+**`@vercel/blob`의 `del`은 두 파일에서만 import할 수 있다** — `src/lib/post-thumbnail.ts`와
+`src/lib/profile-image.ts`. 기존 삭제 호출부 셋은 전부 이 래퍼를 지나므로 동작은 바뀌지
+않았다. 이 래퍼들만 **행에서 읽어 온 URL**을 받고, 호출자가 먼저 참조 수를 센다. 새로 만든
+`del()` 호출에는 두 성질이 다 없고, blob URL은 공개라서 남의 이미지를 조준할 수 있다.
+
+**`eslint.config.mjs`가 `src/generated/prisma/**`를 명시적으로 ignore한다.** 예전에는 생성
+파일마다 붙은 `/* eslint-disable */` 헤더로만 면제되고 있었는데, 새 규칙들이 그 면제를
+**조용히 물려받았다.** 생성된 트리는 `delete`라는 단어가 타입과 JSDoc에 널려 있고 그중
+호출부는 하나도 없다 — 면제를 눈에 보이는 자리에 적어 둔다.
+
+**`db:push`는 삭제됐다. 다시 만들지 말 것.** `prisma db push`는 스키마에 DB를 맞추려고
+**컬럼을 떨어뜨리고**, 이 저장소의 `DATABASE_URL`은 라이브 Supabase를 가리킨다. `db:migrate`
+(개발)와 `db:deploy`(운영)가 실제 필요를 전부 덮는다. 층 3의 deny 목록에도 같은 이유로
+`db push`·`migrate reset`·`db execute`·`psql`이 들어 있다.
+
+**링크 삭제도 삭제가 아니라 상태 변경이다.** `DELETE /api/posts/[id]`는 `deletedAt`을 찍는다.
+하드 삭제였을 때는 cascade가 그 게시글의 `SavedPostPlace` 행까지 가져갔다 — **사용자가 장소마다
+쓴 메모와, `/links`가 동선으로 번호를 매기는 `position`이 함께 사라졌고 복구할 것이 남지
+않았다.** 그래서 `SavedPostPlace` 행은 소프트 삭제 시 **일부러 그대로 둔다**; 함께 쓸어내면
+이 변경이 존재하는 이유인 복구 가능성이 사라진다.
+
+이 플래그가 장식이 아니게 만드는 건 **일곱 곳의 읽기 필터**이고, 일곱은 반드시 함께 움직인다:
+
+1. `src/app/(app)/page.tsx` — 홈 지도의 핀.
+2. `src/app/(app)/links/page.tsx` — 링크 목록.
+3. `src/app/(app)/settings/page.tsx` — 저장한 링크 개수.
+4. `GET /api/posts` — 목록 API.
+5. `POST /api/posts`의 `previous` 조회 — 빠지면 재저장이 **소프트 삭제된 행을 되살린다**
+   (사용자가 지운 게시글이 update로 부활한다).
+6. `DELETE /api/posts/[id]`의 `findFirst` — 빠지면 이미 지운 링크를 다시 지우면서
+   `deletedAt`을 새 시각으로 갱신하고 204를 돌려준다.
+7. **`GET /api/places/[id]/sources` — 빠뜨릴 자리는 여기다.** 이 쿼리는 `SavedPostPlace`를
+   읽으므로 컬럼이 자기 테이블에 없고 **relation 필터**(`post: { deletedAt: null }`)가
+   필요하다. 게다가 이 라우트는 **인증 없이 모든 사용자의 게시글을 돌려준다** — 필터가
+   빠지면 사용자가 지운 링크가 낯선 사람에게 계속 보인다. 미관 문제가 아니라 프라이버시
+   버그다.
+
+**썸네일 blob 참조 카운트에는 `deletedAt` 필터를 넣지 말 것.** 소프트 삭제된 행도 여전히
+자기 blob을 가리키고 있고 복원되면 다시 렌더해야 하므로, **그건 참조다.** 걸러내면 다른
+행 — 어쩌면 다른 사용자의 행 — 이 아직 필요한 blob을 지운다. 그게 바로 이 참조 카운트가
+막으려고 존재하는 버그다.
+
+**대신 삭제 라우트의 카운트에는 `id: { not: row.id }`가 새로 붙었다.** 하드 삭제 시절에는
+행이 이미 사라진 뒤에 셌지만 이제는 살아남아 **자기를 세므로**, 합이 0에 닿을 수 없고 blob이
+영원히 회수되지 않는다.
 
 **클라이언트가 보낸 좌표는 절대 믿지 않는다.** `Place` 행은 사용자 간에 공유되며
 `[name, address]`를 키로 쓴다. 요청 본문의 lat/lng을 그대로 받으면 한 사용자가 다른
@@ -767,9 +881,25 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 나머지는 플랫폼 CDN을 가리킨다. `thumbnailSource`는 백업 전 원본이고 백업된 행에서만
 non-null이다 — 위 "인스타그램 썸네일은 만료된다" 참고.
 
-`SavedPost`는 `[userId, sourceUrl]`에 유니크가 걸려 있다 — 같은 링크를 다시 저장하면
-중복되지 않고 갱신된다. 재저장은 장소 집합을 덧붙이는 게 아니라 **교체**하므로, 다시
-인제스트했을 때 장소가 줄어들어도 고아 행이 남지 않는다.
+`SavedPost.deletedAt`은 `UserProfile.withdrawnAt`과 같은 성질의 컬럼이다 — 링크 삭제는
+행을 지우지 않고 이 값을 찍는다. 위 "링크 삭제도 삭제가 아니라 상태 변경이다" 참고.
+
+`SavedPost`의 `[userId, sourceUrl]` 유니크는 **살아 있는 행 사이에서만** 성립한다. 소프트
+삭제된 행이 자기 `sourceUrl`을 그대로 들고 있으므로, 전역 unique를 그대로 두면 한 번 지운
+링크를 **영구히 다시 저장할 수 없다.** `withdrawnAt` 쪽과 똑같이 **partial unique index**
+(`WHERE "deletedAt" IS NULL`)로 바뀌었고, Prisma 스키마 언어로는 표현할 수 없어서
+마이그레이션 raw SQL(`20260822150000_soft_delete_saved_post`)에만 있다. 스키마에는
+`@@unique`가 아니라 평범한 `@@index([userId, sourceUrl])`이 적혀 있다 — **되돌리면 재저장이
+막히고, 그와 동시에 그 키의 `findUnique`/`upsert`가 조용히 다시 컴파일된다.** 그 컴파일
+에러를 잃는 것이 `deletedAt` 필터가 사라지는 경로다. 실제로 이 변경은 `api/posts/route.ts`의
+`userId_sourceUrl` 호출부 두 곳을 컴파일 에러로 깨뜨렸고, `upsert`는 `findFirst` +
+`create`/`update`로 쪼개졌다. `@@index([userId, createdAt])`도
+`@@index([userId, deletedAt, createdAt])`로 바뀌었다 — 모든 목록 읽기가
+`(userId, deletedAt IS NULL)` 필터를 지나기 때문이다.
+
+같은 링크를 다시 저장하면(살아 있는 행이 있을 때) 중복되지 않고 갱신된다. 재저장은 장소 집합을
+덧붙이는 게 아니라 **교체**하므로, 다시 인제스트했을 때 장소가 줄어들어도 고아 행이 남지
+않는다. 한 번 지운 링크를 다시 저장하면 지운 행은 그대로 남고 **그 옆에 새 행이 생긴다.**
 
 `Place`는 전역 공유이고 `[name, address]`에 유니크가 걸려 있다. `SavedPostPlace`가 둘을
 잇고 선택적 메모를 들고 있다. 저장 트랜잭션 안에서는 장소를 정렬한 뒤 upsert하는데,
@@ -876,6 +1006,7 @@ non-null이다 — 위 "인스타그램 썸네일은 만료된다" 참고.
 | [docs/](docs/AGENTS.md) | 외부 제공자 설정 절차 |
 | [docs/oauth/](docs/oauth/AGENTS.md) | 네이버 로그인 설정과 레퍼런스 |
 | [docs/blob/](docs/blob/AGENTS.md) | 프로필 사진 저장소(Vercel Blob) 설정 절차 |
+| [docs/db-permissions.md](docs/db-permissions.md) | 하드 삭제를 막는 층 4(Postgres role). **아직 적용되지 않은 절차 문서** |
 
 `frontend/AGENTS.md` 위쪽의 `nextjs-agent-rules` 블록은 `next dev`가 다시 써 넣는
 자동 생성물이다. 지우지 말고 작업물과 함께 커밋한다.

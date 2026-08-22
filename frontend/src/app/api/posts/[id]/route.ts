@@ -13,20 +13,37 @@ export async function DELETE(
     const { id } = await context.params;
 
     // Scoping by userId is the ownership check — Prisma connects as the table
-    // owner and bypasses row-level security. Done as a findFirst + delete in
-    // one transaction rather than deleteMany because the deleted row's
-    // thumbnail is needed to clean up its blob, and deleteMany returns a count.
+    // owner and bypasses row-level security. Done as a findFirst + update in
+    // one transaction rather than updateMany because the row's thumbnail is
+    // needed to clean up its blob, and updateMany returns a count.
     const deleted = await prisma.$transaction(async (tx) => {
       const row = await tx.savedPost.findFirst({
-        where: { id, userId: user.id },
+        where: { id, userId: user.id, deletedAt: null },
         select: { id: true, thumbnail: true },
       });
       if (!row) return null;
 
-      await tx.savedPost.delete({ where: { id: row.id } });
+      // Stamped, not deleted. The hard delete this replaces took the post's
+      // SavedPostPlace rows with it through the cascade — the memos written on
+      // each place and the position that makes /links number them as a route.
+      // Those rows are deliberately left in place: sweeping them would undo the
+      // recoverability this change exists for.
+      await tx.savedPost.update({
+        where: { id: row.id },
+        data: { deletedAt: new Date() },
+      });
 
-      // Whether any surviving row still renders this blob. Checked after the
-      // delete, so the row being removed is already out of the count.
+      // Whether any *other* row still renders this blob.
+      //
+      // `id: { not: row.id }` is load-bearing and is new with the soft delete.
+      // The hard delete ran this count afterwards, when the row was already
+      // gone; now it survives and would count itself, so the total could never
+      // reach zero and the blob would never be collected.
+      //
+      // No `deletedAt` filter here, deliberately. A soft-deleted row still
+      // points at its thumbnail and still has to render if it is ever restored,
+      // so it counts as a reference. Filtering it out would delete a blob that
+      // a soft-deleted row — possibly another user's — still needs.
       //
       // Not bookkeeping — it is the ownership check for the blob. `thumbnail`
       // arrives in a request body on save, and blob URLs are public (they go
@@ -36,7 +53,9 @@ export async function DELETE(
       // The URL shape alone cannot tell the two cases apart; a reference count
       // can.
       const stillReferenced = isOwnThumbnailBlob(row.thumbnail)
-        ? await tx.savedPost.count({ where: { thumbnail: row.thumbnail } })
+        ? await tx.savedPost.count({
+            where: { thumbnail: row.thumbnail, id: { not: row.id } },
+          })
         : 1;
 
       return { ...row, orphaned: stillReferenced === 0 };
