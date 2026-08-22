@@ -30,11 +30,13 @@ export default function Loading() {
       </header>
 
       {/* Chip row: fixed widths stand in for the filter labels so the list
-          below does not jump down when the real tabs measure out. */}
+          below does not jump down when the real tabs measure out. The key is
+          the index, not the width — two chips can share a width (the last two
+          do), and keying on the value makes React see a duplicate key. */}
       <div className="flex gap-2" aria-hidden>
-        {[44, 76, 60, 68, 68].map((w) => (
+        {[44, 76, 60, 68, 68].map((w, i) => (
           <div
-            key={w}
+            key={i}
             className="h-8 shrink-0 animate-pulse rounded-full bg-muted"
             style={{ width: w }}
           />
