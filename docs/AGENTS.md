@@ -12,6 +12,7 @@
 | Directory | Purpose |
 |-----------|---------|
 | `oauth/` | 네이버 로그인 설정 절차와 API 레퍼런스 (see `oauth/AGENTS.md`) |
+| `blob/` | 프로필 사진 저장소(Vercel Blob) 설정 절차 (see `blob/AGENTS.md`) |
 | `domain/` | 비어 있음. 도메인/DNS 관련 문서 자리 |
 
 ## For AI Agents

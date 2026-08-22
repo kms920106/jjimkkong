@@ -13,6 +13,8 @@
 | `layout.tsx` | 공용 크롬 없음(의도). 홈은 전체화면 지도가 자기 버튼을 띄우고, 나머지 페이지는 각자 헤더를 들고 온다 |
 | `page.tsx` | 홈 `/` — 붙여넣기 입력 + 지도 + 목록. `getUser()`로 세션을 읽고 `HomeClient`에 넘긴다 |
 | `links/page.tsx` | `/links` — 저장한 링크 목록. 플랫폼 탭으로 갈린다 |
+| `profile/page.tsx` | `/profile` — 프로필 수정(사진·닉네임·상태메세지). drawer의 연필이 여기로 온다 |
+| `profile/loading.tsx` | 위와 같은 이유의 스켈레톤. 아래 "`/links`는 `loading.tsx`가 필요하다" 참고 |
 | `terms/page.tsx` | `/terms` — 이용약관 |
 | `privacy/page.tsx` | `/privacy` — 개인정보처리방침 |
 
@@ -20,6 +22,7 @@
 | Directory | Purpose |
 |-----------|---------|
 | `links/` | 저장 링크 목록 페이지 |
+| `profile/` | 프로필 수정 페이지 |
 | `terms/`, `privacy/` | 법적 고지 — 정적 산문, 서버 컴포넌트 |
 
 ## For AI Agents
@@ -70,3 +73,12 @@
 **정확히 같아야 한다.** 다르면 실제 데이터로 교체되는 순간 레이아웃이 튄다. 헤더를 공유하지 않고
 복제한 이유는 스켈레톤이 `posts`/`mapProvider`/`signedIn` 없이 렌더돼야 하기 때문이다 —
 그게 바로 아직 기다리는 중인 값들이다.
+
+## `/profile`도 같은 이유로 `loading.tsx`를 갖는다
+
+`force-dynamic`이고 drawer의 연필에서 진입하므로 위 `/links` 설명이 그대로 적용된다.
+스켈레톤 컨테이너는 `ProfileEditClient`의 최상위(`mx-auto flex w-full max-w-md flex-col
+gap-6 px-4 py-6`)와 정확히 같아야 한다.
+
+**이 페이지도 `requireUser()`를 쓰지 않는다.** 로그아웃 상태에서는 폼이 disabled로 렌더되고
+안내 문구가 뜬다. 실제 게이트는 `PATCH /api/settings/profile`이고, 그쪽은 401을 준다.

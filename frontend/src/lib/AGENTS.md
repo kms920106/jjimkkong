@@ -17,6 +17,7 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
 | `types.ts` | 클라이언트와 공유하는 DTO(`SavedPostDTO`, `IngestResponse`, `ProfileDTO` 등) |
 | `serialize.ts` | Prisma 행 → DTO 변환과 `savedPostInclude` |
 | `legal.ts` | 약관·개인정보처리방침이 읽는 운영자 정보와 시행일 |
+| `profile-image.ts` | 프로필 사진 Vercel Blob 업로드·삭제. 매직바이트 판정 + allowlist + `MAX_UPLOAD_BYTES`, `ProfileImageError` |
 | `utils.ts` | `cn()` — shadcn의 clsx + tailwind-merge |
 
 ## Subdirectories
@@ -60,3 +61,31 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
 - Zod, Prisma + `@prisma/adapter-pg`, `node-html-parser`, `solapi`, Node `crypto`
 
 <!-- MANUAL: -->
+
+## `profile-image.ts`
+
+**타입은 매직바이트가 결정한다.** `file.type`은 호출자가 쓴 헤더라서, 그것만 검사하고 그대로
+`contentType`에 박으면 아무 바이트나 자기가 고른 타입으로 서빙된다. `sniff()`이 앞 12바이트로
+실제 포맷을 판정하고, 선언값이 일치할 때만 통과시키며, 저장하는 `contentType`도 판정 결과다.
+WEBP는 RIFF 컨테이너라 8바이트째의 `WEBP`까지 봐야 한다 — 앞 4바이트만 보면 WAV·AVI가 통과한다.
+
+allowlist도 유지한다. `image/`로 시작하는지 보는 방식으로 바꾸지 말 것 — `image/svg+xml`이
+통과하면서 스크립트를 실어 나르고, Blob은 시키는 대로 서빙하므로 그 사진 URL을 직접 여는
+순간 blob 오리진에서 XSS가 된다.
+
+**HEIC은 allowlist에 없다.** 클라이언트가 WEBP로 다시 인코딩해서 보내고, 그걸 못 하는
+브라우저는 그 파일을 표시도 못 한다 — 저장 성공 + 빈 아바타가 되는 편보다 거부가 낫다.
+
+**`MAX_UPLOAD_BYTES`는 export한다.** 라우트가 `content-length`로 명백히 큰 본문을 파싱 전에
+떨궈내는데, 두 검사가 같은 숫자를 가리키지 않으면 한쪽은 장식이다. `content-length`는
+호출자가 쓰는 값이므로 진짜 게이트는 여기 있는 `file.size` 검사다.
+
+**키에 랜덤 접미어를 붙인다.** 사용자 id만으로 고정 키를 쓰면 같은 자리를 덮어쓰고, URL이
+그대로라서 CDN이 이전 이미지를 계속 서빙한다 — 새 사진을 올리고 옛 사진을 보게 된다.
+
+**`deleteProfileImage()`는 실패를 삼킨다.** 행이 이미 새 URL을 가리키고 있으므로, blob 하나가
+남는 것이 성공한 저장을 실패로 되돌리는 것보다 낫다. 인자로는 **교체되는 행에서 읽어 온 URL만**
+넘긴다 — 요청 본문의 URL을 넘기면 남의 blob을 지우는 경로가 된다.
+
+**`BlobError`는 `ProfileImageError`로 감싼다.** 압도적으로 흔한 원인이 `BLOB_READ_WRITE_TOKEN`
+누락인데, 그대로 두면 일반 500이 되어 어떤 환경변수가 없는지 흔적이 남지 않는다.

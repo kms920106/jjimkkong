@@ -7,6 +7,7 @@ import { SmsDeliveryError, SmsVerificationError } from "@/lib/auth/sms";
 import { PasswordPolicyError } from "@/lib/auth/password";
 import { PhoneAlreadyRegisteredError } from "@/lib/auth/link";
 import { PasswordAttemptError } from "@/lib/auth/password-attempts";
+import { ProfileImageError } from "@/lib/profile-image";
 import { OAuthConfigError, OAuthFlowError } from "@/lib/auth/providers";
 
 /** Thrown when a mutating request arrives from another origin. */
@@ -59,6 +60,11 @@ export function toErrorResponse(error: unknown): NextResponse {
   // verbatim.
   if (error instanceof PhoneAlreadyRegisteredError) {
     return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  // Type and size rules; the message names what was wrong so the profile form
+  // can show it verbatim.
+  if (error instanceof ProfileImageError) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
   }
   // Length rules only; the message names the limit the user missed.
   if (error instanceof PasswordPolicyError) {

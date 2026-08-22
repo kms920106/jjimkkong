@@ -11,7 +11,7 @@
 ## Key Files
 | File | Description |
 |------|-------------|
-| `schema.prisma` | 모델 10개(`UserProfile`, `AuthIdentity`, `Session`, `PhoneVerification`, `SavedPost`, `Place`, `SavedPostPlace`)와 enum 3개(`MapProvider`, `Platform`, `AuthProvider`) |
+| `schema.prisma` | 모델 10개(`UserProfile`, `AuthIdentity`, `Session`, `PhoneVerification`, `SavedPost`, `Place`, `SavedPostPlace`)와 enum 3개(`MapProvider`, `Platform`, `AuthProvider`). `UserProfile`의 `statusMessage`·`imageUrl`은 `/profile`이 쓰는 표시용 필드 |
 | `migrations/` | 적용 순서대로의 SQL. Prisma 스키마 언어로 표현 못 하는 제약이 여기에만 있다 |
 | `migrations/migration_lock.toml` | provider 고정(postgresql) |
 

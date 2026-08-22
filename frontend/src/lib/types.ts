@@ -75,6 +75,13 @@ export type IngestResponse = {
 /** The subset of UserProfile the client shell renders. */
 export type ProfileDTO = {
   nickname: string | null;
+  /** Free-text line under the nickname; null when never set. */
+  statusMessage: string | null;
+  /**
+   * Absolute Vercel Blob URL of the profile picture, or null for the
+   * initial-letter fallback. Served straight off the blob CDN.
+   */
+  imageUrl: string | null;
   email: string | null;
   /**
    * Already masked (`010-****-5678`) by the server, and null when the account

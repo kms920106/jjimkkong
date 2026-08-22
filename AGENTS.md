@@ -38,12 +38,12 @@ Vercel의 Root Directory도 `frontend`다.
 ```
 frontend/src/
   app/
-    (app)/          모든 페이지 — 홈(붙여넣기 + 지도 + 목록), 링크 목록
+    (app)/          모든 페이지 — 홈(붙여넣기 + 지도 + 목록), 링크 목록, 프로필 수정
     api/            ingest, posts, settings, account
     api/auth/       [provider]/start·callback, phone/send·verify, logout
     verify-phone/   휴대폰 인증 — 모든 첫 로그인이 반드시 거치는 관문
   components/       HomeClient(메인 플로우 전체), LoginDrawer, PhoneVerifyForm,
-                    CaptionPrompt, map/*
+                    CaptionPrompt, ProfileEditClient, map/*
   lib/
     ingest/         metadata.ts → extract.ts → geocode.ts  (파이프라인, 이 순서대로)
     map/            SDK 로더, 지도 공용 타입, 마커 조회 훅
@@ -191,6 +191,40 @@ upsert하면서 `withdrawnAt`을 `null`로 되돌렸고, 그게 탈퇴 테스트
 있는 우회로였다. **다시 만들지 말 것** — "로컬에서만"이라는 의도로 들어와도 이 코드베이스에는
 그걸 강제할 환경 분기가 없었고, 실제로 프로덕션 빌드에서도 켜져 있었다. 로그인 흐름을 손으로
 확인해야 하면 네이버 로그인 키와 Solapi 키를 채워서 진짜 경로로 들어갈 것.
+
+**프로필 사진의 타입은 요청 헤더가 아니라 파일의 매직바이트가 결정한다.** 코드는
+[frontend/src/lib/profile-image.ts](frontend/src/lib/profile-image.ts)에 있다.
+`file.type`은 multipart 파트 헤더, 즉 **호출자가 쓴 문자열**이다. 그걸 allowlist로 검사하고
+그대로 `contentType`에 박으면 검사한 것은 호출자의 주장뿐이고, 아무 바이트나 자기가 고른
+타입으로 blob 오리진에 올릴 수 있다. 그래서 앞 12바이트를 읽어 실제 포맷을 판정하고
+(`sniff()`), 선언된 값이 그와 **일치할 때만** 통과시킨다. 저장하는 `contentType`도 판정 결과다.
+
+allowlist 자체도 필요하다 — `image/`로 시작하는지 보는 prefix 검사로 되돌리지 말 것.
+`image/svg+xml`이 그 검사를 통과하면서 스크립트를 실어 나르고, Blob은 시키는 대로 서빙하므로
+누가 그 사진 URL을 직접 여는 순간 blob 오리진에서 XSS가 된다.
+
+**HEIC은 서버 allowlist에 없다.** iOS Safari는 HEIC를 디코드하므로 클라이언트의 `downscale()`이
+WEBP로 다시 인코딩해서 보낸다. 디코드 못 하는 브라우저는 원본을 보내게 되는데, 그 브라우저는
+받아서 **표시도 못 한다** — 저장은 성공하고 아바타는 비어 보인다. 파일 선택기의 `accept`에는
+HEIC를 남겨 둔다(아이폰 사진 대부분이 HEIC라 빼면 선택이 막힌다).
+
+**사진 blob의 키에는 랜덤 접미어를 붙인다**(`addRandomSuffix`). 사용자 id만으로 고정 키를 쓰면
+같은 자리를 덮어쓰게 되고, URL이 그대로라서 **blob CDN이 이전 이미지를 계속 서빙한다** — 사용자는
+새 사진을 올리고 옛 사진을 본다. 매번 새 URL이 나오게 하고, 대체된 blob은 행이 커밋된 *뒤에*
+지운다. 순서를 뒤집으면 update가 실패했을 때 존재하지 않는 blob을 가리키는 행이 남는다.
+
+**사진 변경은 세 상태다: 교체 / 삭제 / 그대로.** 파일이 오면 교체, `removeImage=1`이면 삭제,
+둘 다 없으면 손대지 않는다. "파일이 없으면 삭제"로 줄이지 말 것 — 닉네임만 고친 저장이 매번
+사진을 조용히 지운다.
+
+**지울 blob의 URL은 update와 같은 트랜잭션 안에서 다시 읽는다.** `requireUser()`가 준 행은
+업로드 *전에* 읽은 값이라서, 동시에 두 번 저장하면(더블탭, 탭 두 개) 둘 다 같은 옛 URL을 보고
+그것만 지운다 — 서로가 대체한 blob은 아무도 지우지 않고 참조 없는 과금 대상으로 남는다.
+
+**탈퇴는 사진만 예외로 실제로 지운다.** 탈퇴는 소프트 삭제지만 `imageUrl`은 행 데이터가 아니라
+**공개된 blob CDN URL**이다. 앱에서 닿을 수 없게 되는 것과 URL을 아는 사람이 못 받는 것은
+다르고, 얼굴 사진이 영구히 열려 있는 것은 탈퇴가 약속한 바가 아니다. 트랜잭션이 커밋된 뒤
+best effort로 지우고 컬럼은 `null`로 만든다.
 
 **`src/generated/prisma/`는 생성물이다.** gitignore되어 있고 `prisma generate`가 다시 쓴다.
 대신 `prisma/schema.prisma`를 수정한다.
@@ -501,6 +535,13 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 (`phoneEnc`가 같은 번호의 복호화 가능한 사본 — 위 "전화번호는 두 컬럼에" 참고). 사용자가 고른
 `mapProvider`도 여기에 담는다.
 
+사용자가 직접 고치는 표시용 필드는 `nickname`·`statusMessage`·`imageUrl` 셋이고, `/profile`
+페이지가 전부 한 요청으로 쓴다. 셋 다 nullable이며 **빈 제출은 `null`로 정규화한다** — `""`를
+저장하면 "없음" 상태가 둘이 되고, 화면마다 어느 쪽을 검사하는지가 갈린다.
+
+`imageUrl`은 이미지 바이트가 아니라 **Vercel Blob의 절대 URL**이다. 사진은 blob CDN에서
+바로 나가므로 이 행도, 라우트 핸들러도 거치지 않는다.
+
 `AuthIdentity`는 `UserProfile`에 붙은 소셜 로그인 하나다. `[provider, providerUserId]`에
 유니크가 걸려 있다 — 제공자 id는 그 제공자 안에서만 유일하므로 `providerUserId` 단독
 유니크는 카카오 id와 네이버 id가 충돌할 수 있다. 네이버와 카카오를 둘 다 연결한 사람은
@@ -556,7 +597,9 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 로그인이 사라졌으므로 이 키들이 없으면 **로그인할 방법이 없다** — 첫 로그인은 예외 없이 SMS
 인증을 거치기 때문이다.
 선택: `AUTH_BASE_URL`(프로덕션 콜백 URL 고정), `YOUTUBE_API_KEY`(없으면 유튜브 캡션은 항상 수동 입력),
-`NEXT_PUBLIC_KAKAO_MAP_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_KEY`, `LLM_*` 오버라이드.
+`NEXT_PUBLIC_KAKAO_MAP_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_KEY`, `LLM_*` 오버라이드,
+`BLOB_READ_WRITE_TOKEN`(프로필 사진 업로드. 없으면 `/profile`의 닉네임·상태메세지 저장은 되고
+사진 업로드만 실패한다).
 
 `.env*`는 `.env.example`만 빼고 gitignore된다. 실제 키를 절대 커밋하지 말 것. 새 변수를
 추가할 때는 발급처를 적은 주석과 함께 `.env.example`에도 넣는다.
@@ -602,6 +645,7 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 | [frontend/scripts/](frontend/scripts/AGENTS.md) | 일회성 운영 스크립트 |
 | [docs/](docs/AGENTS.md) | 외부 제공자 설정 절차 |
 | [docs/oauth/](docs/oauth/AGENTS.md) | 네이버 로그인 설정과 레퍼런스 |
+| [docs/blob/](docs/blob/AGENTS.md) | 프로필 사진 저장소(Vercel Blob) 설정 절차 |
 
 `frontend/AGENTS.md` 위쪽의 `nextjs-agent-rules` 블록은 `next dev`가 다시 써 넣는
 자동 생성물이다. 지우지 말고 작업물과 함께 커밋한다.

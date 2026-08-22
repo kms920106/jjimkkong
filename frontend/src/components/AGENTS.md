@@ -17,7 +17,8 @@ React 컴포넌트. 제품의 상호작용이 사실상 `HomeClient` 하나에 �
 | `CaptionPrompt.tsx` | 캡션을 못 가져왔을 때(`needsManualCaption`) 사용자가 직접 붙여넣는 다이얼로그 |
 | `LoginDrawer.tsx` | 제공자 선택. 보던 화면을 떠나지 않아야 하는 진입점이라 drawer |
 | `PhoneVerifyForm.tsx` | 번호 입력 → 코드 입력 2단계(`Step`). `/verify-phone` 페이지가 렌더 |
-| `AppDrawer.tsx` | 설정 drawer — 닉네임, 지도 제공자, 로그아웃, 회원탈퇴(`AlertDialog`) |
+| `AppDrawer.tsx` | 설정 drawer — 지도 제공자, 비밀번호, 로그아웃, 회원탈퇴(`AlertDialog`). 연필은 `/profile`로 나간다 |
+| `ProfileEditClient.tsx` | `/profile` 폼 — 사진·닉네임·상태메세지를 한 번의 multipart PATCH로 저장 |
 | `LegalPage.tsx` | 약관·개인정보 공용 크롬. 서버 컴포넌트(정적 산문이라 브라우저로 보낼 것이 없다) |
 | `ThemeProvider.tsx` | next-themes. shadcn 다크 팔레트가 `prefers-color-scheme`이 아니라 `.dark` 클래스에 걸려 있어서 필요 |
 
@@ -116,3 +117,28 @@ portal되므로 지도 컨테이너 **전체보다 뒤**에 오고, 버튼의 `z
 - React 19, `@base-ui/react`(shadcn 기반), lucide-react, sonner, next-themes
 
 <!-- MANUAL: -->
+
+## 프로필 편집은 drawer가 아니라 페이지다
+
+연필을 누르면 `AppDrawer`가 닫히고 `/profile`로 이동한다. 예전에는 drawer 안에서 닉네임
+입력칸이 펼쳐졌지만, 편집 대상에 **사진이 들어오면서 OS 파일 선택기로 제어가 넘어간다** —
+iOS에서는 앱이 밀려났다 돌아오고, 그때 drawer가 여전히 열려 있는지가 보장되지 않는다.
+사용자가 직접 나갈 수 있는 화면이 낫다.
+
+**`ProfileEditClient`는 저장 전까지 아무것도 업로드하지 않는다.** 고른 파일은 상태에만
+있으므로 페이지를 벗어나면 고아 blob이 남지 않는다. 파일과 그 미리보기 object URL은 **한
+값으로 묶어서** 들고 있다 — 따로 두면 effect가 도는 사이의 렌더가 이전 미리보기를 보여주고,
+revoke를 한 번 놓치면 고를 때마다 blob이 하나씩 샌다.
+
+**사진은 브라우저에서 먼저 축소한다**(가장 긴 변 512px, WEBP). 아바타가 96px로 그려지므로
+그 이상은 아무도 보지 않는 바이트다. 축소가 실패하면(HEIC를 디코드 못 하는 브라우저 등)
+원본을 그대로 보낸다 — 실패의 대가는 용량이어야 하고, 저장 자체가 막혀서는 안 된다.
+라우트의 6MB 상한은 이 축소를 건너뛴 호출자에 대한 백스톱이다.
+
+**파일 input은 `change` 후에 `value`를 비운다.** 비우지 않으면 같은 파일을 다시 골랐을 때
+값이 그대로여서 이벤트가 안 뜨고, 사용자에게는 두 번째 선택이 먹지 않은 것으로 보인다.
+
+**저장이 실패하면 사진 상태를 되돌린다.** 아바타는 낙관적으로 이미 고른 사진(또는 빈 상태)을
+보여주고 있으므로, 401 같은 실패를 그대로 두면 **지워지지 않은 사진이 지워진 것처럼 보이고**
+다음에 성공하는 저장이 그걸 실제로 지운다. `saving`은 `finally`에서 푼다 — `router.push()`가
+동기적으로 언마운트하지 않으므로, 이동이 중단되면 버튼이 "저장 중…"에 영구히 갇힌다.

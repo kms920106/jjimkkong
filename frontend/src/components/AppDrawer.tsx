@@ -16,10 +16,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import PasswordSettingForm from "@/components/PasswordSettingForm";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -48,8 +47,6 @@ export default function AppDrawer({
   savedCount,
 }: Props) {
   const router = useRouter();
-  const [nickname, setNickname] = useState(profile.nickname ?? "");
-  const [editingName, setEditingName] = useState(false);
   // Only holds the value of an in-flight save. The prop is the source of
   // truth the rest of the time, so a router.refresh() lands here without the
   // panel needing an effect to copy props into state.
@@ -97,15 +94,6 @@ export default function AppDrawer({
     // value, and on failure the radio has to snap back to the old one.
     await patch({ mapProvider: next });
     setPendingProvider(null);
-  }
-
-  async function saveNickname() {
-    const trimmed = nickname.trim();
-    if (trimmed === (profile.nickname ?? "")) {
-      setEditingName(false);
-      return;
-    }
-    if (await patch({ nickname: trimmed })) setEditingName(false);
   }
 
   async function signOut() {
@@ -163,50 +151,33 @@ export default function AppDrawer({
         <SheetTitle className="sr-only">메뉴</SheetTitle>
 
         {/* Clears SheetContent's own close button, which sits at top-3 and is
-            7 units tall — the nickname field grows to the full width when
-            editing, so it would otherwise run under it. */}
+            7 units tall — the name row would otherwise run under it. */}
         <div className="flex items-center gap-3 px-5 pt-12 pb-6">
           <Avatar className="h-12 w-12">
+            {profile.imageUrl && <AvatarImage src={profile.imageUrl} alt="" />}
             <AvatarFallback className="text-lg font-semibold">
               {name.slice(0, 1).toUpperCase()}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
-            {editingName ? (
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void saveNickname();
-                }}
-                className="flex items-center gap-2"
-              >
-                <Input
-                  autoFocus
-                  value={nickname}
-                  maxLength={20}
-                  onChange={(event) => setNickname(event.target.value)}
-                  placeholder="닉네임"
-                  className="min-w-0 flex-1"
-                />
-                <Button type="submit" size="sm" disabled={saving}>
-                  저장
-                </Button>
-              </form>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  // Seeded here rather than from a prop effect, so the field
-                  // always opens on whatever the server last confirmed.
-                  setNickname(profile.nickname ?? "");
-                  setEditingName(true);
-                }}
-                className="flex max-w-full items-center gap-1.5 text-left"
-              >
-                <span className="truncate text-base font-semibold">{name}</span>
-                <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="sr-only">닉네임 편집</span>
-              </button>
+            {/* The pencil leaves the drawer instead of unfolding a field in it.
+                Editing now covers a picture as well as text, and the picture
+                step hands control to the OS file picker — a panel that may or
+                may not still be mounted when the user comes back is worse than
+                a page they navigate to and away from. */}
+            <Link
+              href="/profile"
+              onClick={onClose}
+              className="flex max-w-full items-center gap-1.5 text-left"
+            >
+              <span className="truncate text-base font-semibold">{name}</span>
+              <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="sr-only">프로필 수정</span>
+            </Link>
+            {profile.statusMessage && (
+              <p className="truncate text-xs text-muted-foreground">
+                {profile.statusMessage}
+              </p>
             )}
             {profile.email && (
               <p className="truncate text-xs text-muted-foreground">

@@ -59,6 +59,18 @@ model UserProfile {
   /// User-chosen display name. Null until they set one; the UI falls back to
   /// the local part of the email so the drawer always has something to show.
   nickname    String?
+  /// Free-text line the user writes about themselves, shown under the nickname.
+  /// Null when never set; an empty submission clears it back to null rather than
+  /// storing "", so the UI has one absent state to check instead of two.
+  statusMessage String?
+  /// Absolute URL of the uploaded profile picture on Vercel Blob, or null for
+  /// the initial-letter fallback.
+  ///
+  /// A URL rather than the bytes: the image is served straight off the blob CDN,
+  /// so it never travels through this row or through a route handler. The old
+  /// blob is deleted when a new one replaces it — nothing else references it,
+  /// and Blob storage is billed by what is kept.
+  imageUrl    String?
   /// Blind index of the phone number: HMAC-SHA256 of the local-digit form,
   /// `v1:`-prefixed. Set once a provider hands us a verified number or the user
   /// completes the SMS challenge, and it is the key accounts are merged on — a

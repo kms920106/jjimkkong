@@ -34,6 +34,8 @@ export default async function HomePage() {
           user
             ? {
                 nickname: user.nickname,
+                statusMessage: user.statusMessage,
+                imageUrl: user.imageUrl,
                 email: user.email,
                 phoneMasked: maskedPhoneOf(user),
                 mapProvider: user.mapProvider,
@@ -43,6 +45,8 @@ export default async function HomePage() {
               }
             : {
                 nickname: null,
+                statusMessage: null,
+                imageUrl: null,
                 email: null,
                 phoneMasked: null,
                 mapProvider: MapProvider.NAVER,
