@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, ExternalLink, MapPin, Navigation, X } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Sheet,
@@ -40,14 +39,6 @@ export type PlaceSource = {
 export type PlaceDetail = {
   place: SavedPlaceDTO;
   sources: PlaceSource[];
-};
-
-const PLATFORM_LABEL: Record<Platform, string> = {
-  INSTAGRAM: "인스타그램",
-  YOUTUBE: "유튜브",
-  NAVER: "네이버맵",
-  KAKAO: "카카오맵",
-  OTHER: "기타",
 };
 
 type Props = {
@@ -208,57 +199,29 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
             own saved posts put this pin here. That is the whole reason the
             place is on their map, so it is the body of the sheet. */}
         <section className="mt-5">
-          <h3 className="text-xs font-medium text-muted-foreground">
-            저장한 링크 {sources.length}개
-          </h3>
-          <ul className="mt-2 flex flex-col gap-2">
+          <ul className="grid grid-cols-3 gap-2">
             {sources.map((source) => (
               <li key={source.postId}>
                 <a
                   href={source.sourceUrl}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="flex items-start gap-3 rounded-xl border border-border p-2.5 transition hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  className="block aspect-square overflow-hidden rounded-xl bg-muted transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 >
                   {source.thumbnail ? (
                     // Plain img for the same reason as the /links cards: these
-                    // are Instagram and YouTube CDN URLs, and routing a 48px
+                    // are Instagram and YouTube CDN URLs, and routing a
                     // thumbnail through the optimizer buys nothing while
                     // costing a remotePatterns entry per host.
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={source.thumbnail}
-                      alt=""
-                      width={48}
-                      height={48}
+                      alt={source.title ?? source.sourceUrl}
                       loading="lazy"
                       decoding="async"
-                      className="size-12 shrink-0 rounded-lg bg-muted object-cover"
+                      className="size-full object-cover"
                     />
                   ) : null}
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="line-clamp-2 text-sm font-medium">
-                      {source.title ?? source.sourceUrl}
-                    </span>
-                    <span className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-                      <Badge
-                        variant="secondary"
-                        className="px-1.5 py-0 text-[11px]"
-                      >
-                        {PLATFORM_LABEL[source.platform]}
-                      </Badge>
-                      {source.author && (
-                        <span className="truncate">{source.author}</span>
-                      )}
-                    </span>
-                    {/* The user's own note about this place in this post —
-                        the one piece of text here they wrote themselves. */}
-                    {source.memo && (
-                      <span className="line-clamp-2 text-xs text-muted-foreground italic">
-                        {source.memo}
-                      </span>
-                    )}
-                  </span>
                 </a>
               </li>
             ))}
