@@ -17,7 +17,7 @@
 | `profile/loading.tsx` | 위와 같은 이유의 스켈레톤. 아래 "`/links`는 `loading.tsx`가 필요하다" 참고 |
 | `settings/page.tsx` | `/settings` — 설정 목록. 비밀번호·약관·지도·로그아웃·회원탈퇴 |
 | `settings/loading.tsx` | 위와 같은 이유의 스켈레톤 |
-| `settings/password/page.tsx` | `/settings/password` — 비밀번호 설정·변경(SMS 재인증 3단계) |
+| `settings/password/page.tsx` | `/settings/password` — 비밀번호 설정·변경(현재 → 새 비밀번호 2단계) |
 | `settings/password/loading.tsx` | 위와 같은 이유의 스켈레톤 |
 | `terms/page.tsx` | `/terms` — 이용약관 |
 | `privacy/page.tsx` | `/privacy` — 개인정보처리방침 |

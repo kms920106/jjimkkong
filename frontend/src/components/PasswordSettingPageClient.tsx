@@ -9,10 +9,12 @@ import PasswordSettingForm from "@/components/PasswordSettingForm";
  * Page chrome around `PasswordSettingForm`, which used to unfold inline inside
  * the settings drawer.
  *
- * It is a page now for the same reason `/profile` is: the form is a multi-step
- * SMS flow, and the step in the middle sends the user to their messages app.
- * A panel that may or may not still be mounted when they come back loses the
- * proof they just paid an SMS for; a URL they can return to does not.
+ * It is a page now for the same reason `/profile` is: the form is a two-screen
+ * flow with a password manager in the middle of it. A panel that unmounts —
+ * because the browser's autofill sheet took focus, or the user switched apps to
+ * read a password out of one — takes the first screen's progress with it, and
+ * that progress cost the user a round trip to the server. A URL they can return
+ * to does not.
  *
  * The back link and `onDone` both land on `/settings` rather than home — this
  * screen is only ever reached from there, so that is where the user was.
@@ -20,11 +22,9 @@ import PasswordSettingForm from "@/components/PasswordSettingForm";
 export default function PasswordSettingPageClient({
   signedIn,
   hasPassword,
-  phoneMasked,
 }: {
   signedIn: boolean;
   hasPassword: boolean;
-  phoneMasked: string | null;
 }) {
   const router = useRouter();
   const title = hasPassword ? "비밀번호 변경" : "비밀번호 설정";
@@ -41,7 +41,6 @@ export default function PasswordSettingPageClient({
         {signedIn ? (
           <PasswordSettingForm
             hasPassword={hasPassword}
-            phoneMasked={phoneMasked}
             // The form already called router.refresh() before this fires, so the
             // settings list it returns to shows 변경 rather than 설정 straight away.
             onDone={() => router.push("/settings")}

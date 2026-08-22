@@ -1,5 +1,4 @@
 import { getUser } from "@/lib/auth";
-import { maskedPhoneOf } from "@/lib/auth/phone-crypto";
 import PasswordSettingPageClient from "@/components/PasswordSettingPageClient";
 
 // Reads the session cookie, so this page is always rendered per request.
@@ -18,8 +17,6 @@ export default async function PasswordSettingPage() {
     <PasswordSettingPageClient
       signedIn={user !== null}
       hasPassword={user?.passwordHash != null}
-      // Masked on the server; the decrypted number never reaches the browser.
-      phoneMasked={user ? maskedPhoneOf(user) : null}
     />
   );
 }

@@ -21,7 +21,7 @@ React 컴포넌트. 제품의 상호작용이 사실상 `HomeClient` 하나에 �
 | `AppDrawer.tsx` | 왼쪽 메뉴 — 프로필 헤더(연필은 `/profile`), `링크`, 설정 진입, 지도 제공자 선택 |
 | `SettingsClient.tsx` | `/settings` 목록 — 비밀번호 변경, 약관·개인정보, 로그아웃, 회원탈퇴(`AlertDialog`). 전부 같은 모양의 행 |
 | `PasswordSettingPageClient.tsx` | `/settings/password` 크롬. `PasswordSettingForm`을 감싸고 완료 시 `/settings`로 보낸다 |
-| `PasswordSettingForm.tsx` | 번호 → 코드 → 비밀번호 3단계. 세션이 있어도 SMS로 번호를 다시 증명시킨다 |
+| `PasswordSettingForm.tsx` | 현재 비밀번호 → 새 비밀번호 2단계. 세션만으로 credential을 새로 발급하지 않는다 |
 | `ProfileEditClient.tsx` | `/profile` 폼 — 사진·닉네임·상태메세지를 한 번의 multipart PATCH로 저장 |
 | `LegalPage.tsx` | 약관·개인정보 공용 크롬. 서버 컴포넌트(정적 산문이라 브라우저로 보낼 것이 없다) |
 | `ThemeProvider.tsx` | next-themes. shadcn 다크 팔레트가 `prefers-color-scheme`이 아니라 `.dark` 클래스에 걸려 있어서 필요 |
@@ -151,10 +151,25 @@ drawer의 이점을 쓰지 못한다. 도착하자마자 닫아야 하는 패널
 실제 게이트는 `PATCH /api/settings`와 `DELETE /api/account`다.
 
 **비밀번호 변경은 `/settings/password`라는 별도 페이지다.** `PasswordSettingForm`은
-번호 → SMS 코드 → 비밀번호의 3단계이고, 가운데 단계에서 사용자가 **문자 앱으로 나갔다가
-돌아온다.** 돌아왔을 때 여전히 열려 있는지 보장되지 않는 패널 안에 두면 방금 문자 한 통을
-지불하고 얻은 증명을 잃는다. URL이 있으면 잃지 않는다 — `/profile`이 페이지인 것과 같은
-이유이며, 그쪽은 파일 선택기가 같은 역할을 한다.
+현재 비밀번호 → 새 비밀번호의 2단계이고, 그 사이에서 사용자가 **비밀번호 관리자를 열거나 다른
+앱으로 나갔다 돌아온다.** 돌아왔을 때 여전히 열려 있는지 보장되지 않는 패널 안에 두면 첫 화면의
+진행 상태(서버 왕복 한 번을 지불한 결과)를 잃는다. URL이 있으면 잃지 않는다 — `/profile`이
+페이지인 것과 같은 이유이며, 그쪽은 파일 선택기가 같은 역할을 한다.
+
+**첫 화면은 `POST /api/settings/password/verify`로 현재 비밀번호만 확인한다.** 최종 저장까지
+미루면 사용자가 새 비밀번호를 두 번 타이핑한 *뒤에* 첫 화면이 틀렸다는 걸 알게 되고, 실패 문구가
+어느 칸의 문제인지 말할 수 없다. 사전 검사일 뿐이라 최종 저장도 현재 비밀번호를 다시 검사한다.
+
+**비밀번호가 없는 계정(`hasPassword: false`)은 첫 화면을 건너뛴다.** 증명할 것이 없는 화면을
+먼저 보여줄 이유가 없다.
+
+**제출 버튼은 `Button`이 아니라 평범한 `<button>`이다.** 이 화면의 affordance 전체가 버튼의 두
+상태(미완성=연한 로즈 / 제출 가능=진한 crimson)인데, `Button`의 "준비 안 됨"은 `opacity-50`이라
+근검정 primary 위에서 회색으로 읽힌다. 디자인의 로즈는 흐려진 색이 아니라 **다른 색**이라서
+variant를 만들면 fill·radius·height·width에 disabled 처리까지 전부 덮어써야 하고, 그 시점에
+variant는 이 문자열에 간접층만 더한 것이다. crimson을 리터럴로 쓴 이유는 테마에 토큰이 없기
+때문이다 — `--primary`는 근검정이고 `--destructive`는 에러 빨강이라 재사용하면 앞으로의 파괴적
+동작 리스타일이 이 버튼까지 끌고 간다.
 
 `onDone`과 뒤로가기는 둘 다 홈이 아니라 `/settings`로 간다. 이 화면에 닿는 경로가 거기뿐이다.
 

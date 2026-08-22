@@ -16,6 +16,8 @@
 | `settings/route.ts` | `PATCH` — 닉네임·지도 제공자. 두 필드 모두 optional(생략 = 그대로, 빈 닉네임 = 이메일 폴백으로 복귀) |
 | `settings/profile/route.ts` | `PATCH` — 프로필 사진·닉네임·상태메세지. **multipart**이고 텍스트 두 필드는 항상 온다 |
 | `account/route.ts` | `DELETE` — 회원탈퇴. `withdrawnAt`만 찍는다(예외 둘: `Session` 삭제, 프로필 사진 blob 삭제) |
+| `settings/password/route.ts` | `POST` — 비밀번호 설정·변경. 이미 있으면 **현재 비밀번호**를 요구한다(최초 설정은 세션만) |
+| `settings/password/verify/route.ts` | `POST` — 현재 비밀번호 확인만. 아무것도 쓰지 않는 사전 검사이고 권한을 주지 않는다 |
 
 ## Subdirectories
 | Directory | Purpose |
