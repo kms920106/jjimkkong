@@ -11,7 +11,12 @@ import AppDrawer from "@/components/AppDrawer";
 import LoginDrawer, { loginErrorMessage } from "@/components/LoginDrawer";
 import UrlSheet from "@/components/UrlSheet";
 import PlaceSheet, { type PlaceDetail } from "@/components/PlaceSheet";
-import type { IngestResponse, ProfileDTO, SavedPostDTO } from "@/lib/types";
+import type {
+  IngestResponse,
+  PlaceSourceDTO,
+  ProfileDTO,
+  SavedPostDTO,
+} from "@/lib/types";
 import type { FocusRequest, MapMarker } from "@/lib/map/types";
 import { cn } from "@/lib/utils";
 
@@ -72,6 +77,15 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   // leaving a snapshot of data that no longer exists.
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
 
+  // Every user's saved links for the currently open pin, fetched separately
+  // from `posts` (which is scoped to the caller). Keyed by place id so a
+  // stale response from a pin the user has since closed cannot land on the
+  // wrong sheet.
+  const [communalSources, setCommunalSources] = useState<{
+    placeId: string;
+    sources: PlaceSourceDTO[];
+  } | null>(null);
+
   const requestFocus = useCallback((placeId: string) => {
     setFocusRequest((prev) => ({
       placeIds: [placeId],
@@ -91,6 +105,29 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     },
     [requestFocus],
   );
+
+  // Fetches the communal source list whenever the selected pin changes.
+  // Un-scoped by design — the place row is already shared across users, so
+  // this only reads what the shared map already implies. A stale in-flight
+  // request from a pin the user has since left is discarded by checking the
+  // placeId still matches the current selection when it resolves.
+  useEffect(() => {
+    if (!selectedPlaceId) return;
+    let cancelled = false;
+    fetch(`/api/places/${selectedPlaceId}/sources`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { sources: PlaceSourceDTO[] } | null) => {
+        if (cancelled || !body) return;
+        setCommunalSources({ placeId: selectedPlaceId, sources: body.sources });
+      })
+      .catch(() => {
+        // Silent: PlaceSheet still has the caller's own sources from
+        // `placeDetails` to fall back on.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPlaceId]);
 
   // Strip the consumed params so a refresh or a back-navigation does not yank
   // the map back to a pin the user has since panned away from, or reopen the
@@ -151,9 +188,31 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
 
   // Resolved through the index rather than stored, so a place that disappears
   // — its only post deleted — closes the sheet instead of showing stale data.
-  const selectedPlace = selectedPlaceId
+  const ownPlaceDetail = selectedPlaceId
     ? (placeDetails.get(selectedPlaceId) ?? null)
     : null;
+
+  /**
+   * What PlaceSheet actually renders: the caller's own sources (always
+   * present, from `posts`) merged with every other user's sources for the
+   * same pin (fetched separately, arrives a beat later). Deduped by
+   * sourceUrl — the same post saved by two different users produces two
+   * SavedPost rows and would otherwise list the same link twice.
+   */
+  const selectedPlace = useMemo<PlaceDetail | null>(() => {
+    if (!ownPlaceDetail) return null;
+    const bySourceUrl = new Map(
+      ownPlaceDetail.sources.map((source) => [source.sourceUrl, source]),
+    );
+    if (communalSources && communalSources.placeId === ownPlaceDetail.place.id) {
+      for (const source of communalSources.sources) {
+        if (!bySourceUrl.has(source.sourceUrl)) {
+          bySourceUrl.set(source.sourceUrl, source);
+        }
+      }
+    }
+    return { place: ownPlaceDetail.place, sources: [...bySourceUrl.values()] };
+  }, [ownPlaceDetail, communalSources]);
 
   const refreshPosts = useCallback(async () => {
     const res = await fetch("/api/posts");

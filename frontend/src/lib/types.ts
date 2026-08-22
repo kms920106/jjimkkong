@@ -12,6 +12,24 @@ export type SavedPlaceDTO = {
   memo: string | null;
 };
 
+/**
+ * Shape returned by GET /api/places/[id]/sources — every saved post that
+ * names a place, across every user, deduped by sourceUrl. Not scoped to the
+ * caller: the place pin is already shared across users, so the sheet under
+ * it is too. Deliberately missing `createdAt`/`id`-for-the-post beyond what
+ * PlaceSheet renders, since this is read-only and never round-trips to a
+ * mutation endpoint.
+ */
+export type PlaceSourceDTO = {
+  postId: string;
+  sourceUrl: string;
+  platform: Platform;
+  title: string | null;
+  thumbnail: string | null;
+  author: string | null;
+  memo: string | null;
+};
+
 export type SavedPostDTO = {
   id: string;
   sourceUrl: string;
