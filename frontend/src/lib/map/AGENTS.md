@@ -13,6 +13,7 @@
 | `loader.ts` | `loadNaverMaps()`/`loadKakaoMaps()`/`loadGoogleMaps()` — 페이지당 한 번만 주입하고 전역이 실제 사용 가능해진 뒤 resolve |
 | `types.ts` | `MapMarker`, `FocusRequest`, `MapViewProps`, `DEFAULT_CENTER`(서울시청)·`DEFAULT_ZOOM`·`FOCUS_ZOOM` |
 | `useMarkerLookup.ts` | 마커를 ref에 담아 id로 조회하는 훅 |
+| `externalLinks.ts` | 외부 지도 앱 URL·길찾기 링크. `/links` 카드와 `PlaceSheet`가 공유 |
 
 ## For AI Agents
 
@@ -38,6 +39,12 @@ resolve한다. 카카오는 `autoload=false`로 주입되므로 `kakao.maps.load
 
 **로더는 페이지당 한 번이다.** `pending` 맵이 중복 주입을 막는다. 제공자를 추가하면
 같은 패턴(고유 script id + 전역 확인)을 따른다.
+
+**외부 지도 링크는 퍼머링크가 아니라 이름 검색이다**(`externalLinks.ts`). 어느 제공자도
+링크 걸 place id를 주지 않고, `place.naverLink`는 지도 페이지가 아니라 업체 홈페이지다.
+예외는 게시글 자체가 지도 링크인 경우(`Platform.NAVER`/`KAKAO`)뿐이고, `hrefForApp()`이
+그 퍼머링크를 **자기 제공자 자리에 끼워 넣는다** — 줄을 하나 더 만들면 정확도만 다른
+네이버맵 항목이 둘이 된다. `/links`와 `PlaceSheet`가 같은 함수를 쓴다.
 
 ### Testing Requirements
 각 지도 콘솔의 허용 도메인에 `http://localhost:4000`과 배포 도메인이 등록되어 있어야

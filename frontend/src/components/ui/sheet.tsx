@@ -41,14 +41,23 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  showOverlay = true,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
+  /**
+   * Set false for a non-modal sheet that must leave the page underneath
+   * usable. `modal={false}` on the Root alone is not enough: the backdrop is
+   * still rendered as `fixed inset-0`, so it goes on swallowing every click
+   * meant for the content behind the sheet — including this sheet's own
+   * close button, which the backdrop covers.
+   */
+  showOverlay?: boolean
 }) {
   return (
     <SheetPortal>
-      <SheetOverlay />
+      {showOverlay && <SheetOverlay />}
       <SheetPrimitive.Popup
         data-slot="sheet-content"
         data-side={side}

@@ -37,6 +37,11 @@ shadcn/ui가 생성한 프리미티브. `@base-ui/react` 위에 Tailwind 클래�
 **드러난 문자열은 여전히 한국어여야 한다** — 생성물이라도 사용자에게 보이는 기본 라벨
 (닫기, 취소 등)이 있으면 번역한다.
 
+**`SheetContent`의 `showOverlay`는 손으로 넣은 것이다**(생성물 아님, `shadcn add`가
+덮어쓰면 다시 넣어야 한다). 비모달 시트에 필요하다 — Root의 `modal={false}`는 backdrop을
+없애 주지 않아서, `fixed inset-0`짜리 backdrop이 그대로 남아 뒤 화면으로 가는 클릭을
+전부 삼킨다. `PlaceSheet`(지도 위 장소 카드)가 유일한 사용처다.
+
 ### Testing Requirements
 `npm run build`로 타입을 확인하고, 라이트/다크 양쪽에서 실제로 본다.
 오버레이는 모바일 뷰포트에서 한 번 더 확인한다 — 이 앱의 주 사용 환경이다.

@@ -10,8 +10,10 @@ import CaptionPrompt from "@/components/CaptionPrompt";
 import AppDrawer from "@/components/AppDrawer";
 import LoginDrawer, { loginErrorMessage } from "@/components/LoginDrawer";
 import UrlSheet from "@/components/UrlSheet";
+import PlaceSheet, { type PlaceDetail } from "@/components/PlaceSheet";
 import type { IngestResponse, ProfileDTO, SavedPostDTO } from "@/lib/types";
 import type { FocusRequest, MapMarker } from "@/lib/map/types";
+import { cn } from "@/lib/utils";
 
 type Props = {
   initialPosts: SavedPostDTO[];
@@ -64,12 +66,31 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     loginErrorMessage(searchParams.get("error")),
   );
 
+  // The pin whose sheet is open, or null. Held as an id rather than the
+  // detail object so a refresh of `posts` — deleting the post from another
+  // tab, re-saving the link — flows through to the open sheet instead of
+  // leaving a snapshot of data that no longer exists.
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+
   const requestFocus = useCallback((placeId: string) => {
     setFocusRequest((prev) => ({
       placeIds: [placeId],
       nonce: (prev?.nonce ?? 0) + 1,
     }));
   }, []);
+
+  /**
+   * A marker click does both: it opens the place's sheet and moves the camera
+   * to the pin, the way tapping a pin on 네이버지도 does. Focusing without
+   * opening the sheet was the old behaviour and said nothing about the place.
+   */
+  const handleMarkerClick = useCallback(
+    (placeId: string) => {
+      setSelectedPlaceId(placeId);
+      requestFocus(placeId);
+    },
+    [requestFocus],
+  );
 
   // Strip the consumed params so a refresh or a back-navigation does not yank
   // the map back to a pin the user has since panned away from, or reopen the
@@ -94,6 +115,45 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     }
     return [...byId.values()];
   }, [posts]);
+
+  /**
+   * Every saved place with the posts that named it, keyed by place id — what
+   * the sheet renders when a pin is tapped.
+   *
+   * Built as one index rather than searched on each click because the
+   * relation runs the wrong way for a lookup: `posts` holds places, so
+   * answering "which posts mention this place" means scanning every post's
+   * place list. A place saved from two different reels is one pin and gets
+   * both of them listed.
+   */
+  const placeDetails = useMemo(() => {
+    const byId = new Map<string, PlaceDetail>();
+    for (const post of posts) {
+      for (const place of post.places) {
+        const source = {
+          postId: post.id,
+          sourceUrl: post.sourceUrl,
+          platform: post.platform,
+          title: post.title,
+          thumbnail: post.thumbnail,
+          author: post.author,
+          // The memo belongs to this post's link to the place, not to the
+          // shared place row, so it travels with the source.
+          memo: place.memo,
+        };
+        const existing = byId.get(place.id);
+        if (existing) existing.sources.push(source);
+        else byId.set(place.id, { place, sources: [source] });
+      }
+    }
+    return byId;
+  }, [posts]);
+
+  // Resolved through the index rather than stored, so a place that disappears
+  // — its only post deleted — closes the sheet instead of showing stale data.
+  const selectedPlace = selectedPlaceId
+    ? (placeDetails.get(selectedPlaceId) ?? null)
+    : null;
 
   const refreshPosts = useCallback(async () => {
     const res = await fetch("/api/posts");
@@ -248,7 +308,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
       <MapView
         provider={profile.mapProvider}
         markers={markers}
-        onMarkerClick={requestFocus}
+        onMarkerClick={handleMarkerClick}
         focusRequest={focusRequest}
       />
 
@@ -280,12 +340,23 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           setSheetOpen(true);
         }}
         aria-label="링크 추가"
+        // Hidden while a place card is up. The card is a bottom sheet and this
+        // button sits inside its area, and z-index cannot resolve that: the
+        // sheet is portaled to <body>, so it comes after this whole fixed
+        // container in DOM order and paints over the button whatever z-30
+        // says. Raising the button instead would leave it floating on top of
+        // the card, which is not a control the card wants. Closing the card
+        // brings it straight back.
+        //
         // No env(safe-area-inset-*) here: the app never sets viewport-fit=cover,
         // so every inset resolves to 0 and the calc would be decoration. The
         // same is true of the insets already written into UrlSheet and
         // LoginDrawer — turning cover mode on activates all of them at once and
         // needs a pass on a notched device, so it is not bundled into this fix.
-        className="absolute right-5 bottom-6 z-30 h-11 w-11 rounded-full shadow-lg"
+        className={cn(
+          "absolute right-5 bottom-6 z-30 h-11 w-11 rounded-full shadow-lg",
+          selectedPlace && "hidden",
+        )}
       >
         <Plus className="h-7 w-7" />
       </Button>
@@ -307,6 +378,22 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         redirectTo="/"
         initialError={loginError}
       />
+
+      {/* Stood down while the URL sheet or the caption prompt is up: those are
+          modal and would trap focus over a non-modal sheet the user can no
+          longer reach or dismiss. The selection survives, so closing them
+          brings the place card back. */}
+      {selectedPlace && !sheetOpen && !captionNeeded && (
+        <PlaceSheet
+          // Keyed by place so switching pins remounts rather than animating
+          // one card's contents into another's while the old scroll position
+          // stays put.
+          key={selectedPlace.place.id}
+          detail={selectedPlace}
+          mapProvider={profile.mapProvider}
+          onClose={() => setSelectedPlaceId(null)}
+        />
+      )}
 
       {sheetOpen && (
         <UrlSheet
