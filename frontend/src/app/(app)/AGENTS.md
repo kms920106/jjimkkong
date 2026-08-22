@@ -15,6 +15,10 @@
 | `links/page.tsx` | `/links` — 저장한 링크 목록. 플랫폼 탭으로 갈린다 |
 | `profile/page.tsx` | `/profile` — 프로필 수정(사진·닉네임·상태메세지). drawer의 연필이 여기로 온다 |
 | `profile/loading.tsx` | 위와 같은 이유의 스켈레톤. 아래 "`/links`는 `loading.tsx`가 필요하다" 참고 |
+| `settings/page.tsx` | `/settings` — 설정 목록. 비밀번호·약관·지도·로그아웃·회원탈퇴 |
+| `settings/loading.tsx` | 위와 같은 이유의 스켈레톤 |
+| `settings/password/page.tsx` | `/settings/password` — 비밀번호 설정·변경(SMS 재인증 3단계) |
+| `settings/password/loading.tsx` | 위와 같은 이유의 스켈레톤 |
 | `terms/page.tsx` | `/terms` — 이용약관 |
 | `privacy/page.tsx` | `/privacy` — 개인정보처리방침 |
 
@@ -23,6 +27,7 @@
 |-----------|---------|
 | `links/` | 저장 링크 목록 페이지 |
 | `profile/` | 프로필 수정 페이지 |
+| `settings/` | 설정 목록과 비밀번호 변경 페이지 |
 | `terms/`, `privacy/` | 법적 고지 — 정적 산문, 서버 컴포넌트 |
 
 ## For AI Agents
@@ -43,7 +48,7 @@
 두 문서가 같은 값을 각자 들고 있으면 한쪽만 갱신된다.
 
 ### Testing Requirements
-**로그아웃 상태로 먼저 연다.** 홈·링크·약관·개인정보 네 페이지가 전부 열리고,
+**로그아웃 상태로 먼저 연다.** 홈·링크·설정·비밀번호·약관·개인정보가 전부 열리고,
 홈에서 저장을 시도하면 401이 나야 한다. 로그인 상태에서 핀과 목록이 채워지는지 확인한다.
 
 ### Common Patterns
@@ -82,3 +87,16 @@ gap-6 px-4 py-6`)와 정확히 같아야 한다.
 
 **이 페이지도 `requireUser()`를 쓰지 않는다.** 로그아웃 상태에서는 폼이 disabled로 렌더되고
 안내 문구가 뜬다. 실제 게이트는 `PATCH /api/settings/profile`이고, 그쪽은 401을 준다.
+
+## `/settings`와 `/settings/password`도 `loading.tsx`를 갖는다
+
+둘 다 `force-dynamic`이고 drawer의 `설정` 행에서 진입하므로 위 `/links` 설명이 그대로
+적용된다. 스켈레톤 컨테이너는 각각 `SettingsClient`의 최상위(`mx-auto flex w-full max-w-md
+flex-col gap-6 py-6` — 행이 화면 끝까지 닿아야 해서 가로 패딩이 컨테이너가 아니라 행에 있다)와
+`PasswordSettingPageClient`의 최상위(`mx-auto flex w-full max-w-md flex-col gap-6 px-4 py-6`)와
+정확히 같아야 한다.
+
+**둘 다 `requireUser()`를 쓰지 않는다.** `/settings`는 로그아웃 상태에서 약관·개인정보 행을
+그대로 살려 두고(법적 고지는 로그인 뒤로 숨길 수 없다) 계정 행만 disabled로 그린다.
+`/settings/password`는 폼 대신 안내 문구를 그린다. 게이트는 `PATCH /api/settings`,
+`DELETE /api/account`, `POST /api/settings/password`다.

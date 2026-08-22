@@ -1,31 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronRight, Pencil } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronRight, Pencil, Settings } from "lucide-react";
 import { displayName, type MapProvider, type ProfileDTO } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import PasswordSettingForm from "@/components/PasswordSettingForm";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 const PROVIDERS: Array<{ value: MapProvider; label: string }> = [
   { value: "NAVER", label: "네이버 지도" },
@@ -40,6 +25,21 @@ type Props = {
   savedCount: number;
 };
 
+/**
+ * The left menu: who you are, where you can go, and which map you see.
+ *
+ * It used to hold the rest of the settings too — an inline password flow, legal
+ * links, sign-out and withdrawal. Those moved to `/settings`, because each one
+ * either leaves for another screen or ends the session, and a panel that has to
+ * survive those navigations only to be dismissed on arrival is doing a page's
+ * job.
+ *
+ * The map picker stayed. It is the one setting whose effect is *the thing
+ * directly behind this drawer* — choosing 카카오맵 swaps the map the user is
+ * looking at, and they see it happen as the drawer closes. Moving it into the
+ * settings list would put a full navigation between the choice and its only
+ * feedback, and a radio block is not a row in a list built entirely of rows.
+ */
 export default function AppDrawer({
   open,
   onClose,
@@ -47,94 +47,38 @@ export default function AppDrawer({
   savedCount,
 }: Props) {
   const router = useRouter();
-  // Only holds the value of an in-flight save. The prop is the source of
-  // truth the rest of the time, so a router.refresh() lands here without the
-  // panel needing an effect to copy props into state.
+  // Only holds the value of an in-flight save. The prop is the source of truth
+  // the rest of the time, so a router.refresh() lands here without the panel
+  // needing an effect to copy props into state.
   const [pendingProvider, setPendingProvider] = useState<MapProvider | null>(
     null,
   );
   const provider = pendingProvider ?? profile.mapProvider;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Collapsed by default: it is a multi-step SMS flow, and unfolding it only when
-  // asked keeps the settings list scannable.
-  const [passwordOpen, setPasswordOpen] = useState(false);
-  const [withdrawOpen, setWithdrawOpen] = useState(false);
-  const [withdrawing, setWithdrawing] = useState(false);
-  // Separate from `error`, which renders inside the settings nav — a failed
-  // withdrawal has to appear in the dialog the user is looking at.
-  const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
-  async function patch(body: Record<string, unknown>) {
+  async function selectProvider(next: MapProvider) {
+    if (next === provider || saving) return;
+    setPendingProvider(next);
     setSaving(true);
     setError(null);
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ mapProvider: next }),
       });
       if (!res.ok) throw new Error("설정을 저장하지 못했습니다.");
       router.refresh();
-      return true;
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "설정을 저장하지 못했습니다.",
       );
-      return false;
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function selectProvider(next: MapProvider) {
-    if (next === provider || saving) return;
-    setPendingProvider(next);
-    // Cleared either way: on success the refreshed prop carries the new
-    // value, and on failure the radio has to snap back to the old one.
-    await patch({ mapProvider: next });
-    setPendingProvider(null);
-  }
-
-  async function signOut() {
-    // Revokes the session row as well as the cookie, so the token is dead
-    // even if a copy of it was captured.
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    onClose();
-    // Home, not a login page — there is no longer one. refresh() rebuilds the
-    // tree without the session, which is what empties the map of pins.
-    router.push("/");
-    router.refresh();
-  }
-
-  async function withdraw() {
-    setWithdrawing(true);
-    setWithdrawError(null);
-    try {
-      // No body: the dialog itself is the confirmation, so there is nothing to
-      // send. Content-Type is still set — it is what forces a CORS preflight on
-      // a cross-origin attempt, which requireSameOrigin() then rejects outright.
-      const res = await fetch("/api/account", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(
-          typeof body?.error === "string" ? body.error : "탈퇴하지 못했습니다.",
-        );
-      }
-      setWithdrawOpen(false);
-      onClose();
-      // Same landing as sign-out: the account is gone, so refresh() rebuilds
-      // the tree with no session and the map comes back empty.
-      router.push("/");
-      router.refresh();
-    } catch (cause) {
-      setWithdrawError(
-        cause instanceof Error ? cause.message : "탈퇴하지 못했습니다.",
-      );
-      setWithdrawing(false);
+      // Cleared either way: on success the refreshed prop carries the new
+      // value, and on failure the radio has to snap back to the old one.
+      setPendingProvider(null);
     }
   }
 
@@ -149,6 +93,19 @@ export default function AppDrawer({
     >
       <SheetContent side="left" className="w-[85%] max-w-sm gap-0 sm:max-w-sm">
         <SheetTitle className="sr-only">메뉴</SheetTitle>
+
+        {/* Sits left of SheetContent's own close button (top-3 right-3) so the
+            two form one row instead of overlapping. */}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="absolute top-3 right-12"
+          nativeButton={false}
+          render={<Link href="/settings" onClick={onClose} />}
+        >
+          <Settings className="h-4 w-4" />
+          <span className="sr-only">설정</span>
+        </Button>
 
         {/* Clears SheetContent's own close button, which sits at top-3 and is
             7 units tall — the name row would otherwise run under it. */}
@@ -184,16 +141,10 @@ export default function AppDrawer({
                 {profile.email}
               </p>
             )}
-            {/* Masked by the server; the full number is never sent here. */}
-            {profile.phoneMasked && (
-              <p className="truncate text-xs text-muted-foreground">
-                {profile.phoneMasked}
-              </p>
-            )}
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-5 pb-6">
+        <nav className="flex flex-1 flex-col gap-2 overflow-y-auto px-5 pb-6">
           <Link
             href="/links"
             onClick={onClose}
@@ -206,29 +157,7 @@ export default function AppDrawer({
             </span>
           </Link>
 
-          <h2 className="px-1 pt-7 pb-2 text-xs font-semibold text-muted-foreground">
-            보안
-          </h2>
-          {passwordOpen ? (
-            <PasswordSettingForm
-              hasPassword={profile.hasPassword}
-              phoneMasked={profile.phoneMasked}
-              onDone={() => setPasswordOpen(false)}
-            />
-          ) : (
-            <Button
-              variant="outline"
-              onClick={() => setPasswordOpen(true)}
-              className="h-auto justify-between px-4 py-3"
-            >
-              <span className="text-sm font-medium">
-                {profile.hasPassword ? "비밀번호 변경" : "비밀번호 설정"}
-              </span>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          )}
-
-          <h2 className="px-1 pt-7 pb-2 text-xs font-semibold text-muted-foreground">
+          <h2 className="px-1 pt-5 pb-2 text-xs font-semibold text-muted-foreground">
             지도
           </h2>
           <RadioGroup
@@ -249,92 +178,11 @@ export default function AppDrawer({
           </RadioGroup>
 
           {error && (
-            <Alert variant="destructive" className="mt-3">
+            <Alert variant="destructive" className="mt-1">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
-
-          {/* Small and last, but present on every screen a signed-in user can
-              reach — 개인정보처리방침 is a disclosure the law requires to be
-              kept continuously public, not shown once at sign-up. */}
-          <div className="flex items-center gap-3 px-1 pt-7 text-xs text-muted-foreground">
-            <Link
-              href="/terms"
-              onClick={onClose}
-              className="underline underline-offset-2 hover:text-foreground"
-            >
-              이용약관
-            </Link>
-            <Link
-              href="/privacy"
-              onClick={onClose}
-              className="underline underline-offset-2 hover:text-foreground"
-            >
-              개인정보처리방침
-            </Link>
-          </div>
         </nav>
-
-        <div className="flex items-center justify-between border-t border-border px-5 py-4">
-          <Button variant="ghost" size="sm" onClick={signOut}>
-            로그아웃
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              // Reset here, not on close: reopening after a failed attempt
-              // should start clean, and the dialog keeps no state of its own.
-              setWithdrawError(null);
-              setWithdrawOpen(true);
-            }}
-            className="text-xs text-muted-foreground hover:text-destructive"
-          >
-            회원탈퇴
-          </Button>
-        </div>
-
-        <AlertDialog
-          open={withdrawOpen}
-          onOpenChange={(next) => {
-            // Mid-delete: dismissing would leave the user on a page whose
-            // account may already be gone, with no indication either way.
-            if (!next && withdrawing) return;
-            setWithdrawOpen(next);
-          }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>회원탈퇴</AlertDialogTitle>
-              <AlertDialogDescription>
-                탈퇴하면 지금 바로 로그아웃되고, 저장한 링크 {savedCount}개를 다시
-                볼 수 없습니다. 같은 계정으로 다시 로그인하더라도 새 계정으로
-                시작하며 이전 링크는 복구되지 않습니다.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-
-            {withdrawError && (
-              <Alert variant="destructive">
-                <AlertDescription>{withdrawError}</AlertDescription>
-              </Alert>
-            )}
-
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={withdrawing}>취소</AlertDialogCancel>
-              <AlertDialogAction
-                // A plain Button, not a Base UI Close, so nothing dismisses the
-                // dialog for us — withdraw() closes it, and only once the
-                // delete actually succeeded. A Close here would tear the dialog
-                // down mid-request and swallow the error message.
-                onClick={() => void withdraw()}
-                disabled={withdrawing}
-                className="bg-destructive text-white hover:bg-destructive/90"
-              >
-                {withdrawing ? "탈퇴 중…" : "탈퇴하기"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </SheetContent>
     </Sheet>
   );

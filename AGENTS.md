@@ -38,12 +38,13 @@ Vercel의 Root Directory도 `frontend`다.
 ```
 frontend/src/
   app/
-    (app)/          모든 페이지 — 홈(붙여넣기 + 지도 + 목록), 링크 목록, 프로필 수정
+    (app)/          모든 페이지 — 홈(붙여넣기 + 지도 + 목록), 링크 목록, 프로필 수정,
+                    설정(+비밀번호 변경), 약관·개인정보
     api/            ingest, posts, settings, account
     api/auth/       [provider]/start·callback, phone/send·verify, logout
     verify-phone/   휴대폰 인증 — 모든 첫 로그인이 반드시 거치는 관문
   components/       HomeClient(메인 플로우 전체), LoginDrawer, PhoneVerifyForm,
-                    CaptionPrompt, ProfileEditClient, map/*
+                    CaptionPrompt, ProfileEditClient, SettingsClient, map/*
   lib/
     ingest/         metadata.ts → extract.ts → geocode.ts  (파이프라인, 이 순서대로)
     map/            SDK 로더, 지도 공용 타입, 마커 조회 훅
@@ -233,6 +234,21 @@ HEIC를 남겨 둔다(아이폰 사진 대부분이 HEIC라 빼면 선택이 막
 **공개된 blob CDN URL**이다. 앱에서 닿을 수 없게 되는 것과 URL을 아는 사람이 못 받는 것은
 다르고, 얼굴 사진이 영구히 열려 있는 것은 탈퇴가 약속한 바가 아니다. 트랜잭션이 커밋된 뒤
 best effort로 지우고 컬럼은 `null`로 만든다.
+
+**설정은 페이지(`/settings`)다.** `AppDrawer`가 비밀번호·약관·로그아웃·회원탈퇴를 들고
+있었지만, 그 항목들은 하나같이 다른 화면으로 나가거나 세션을 끝낸다 — 도착과 동시에 닫아야
+하는 패널은 페이지가 할 일을 대신하는 것이다.
+
+**지도 제공자 선택만 drawer에 남는다.** 바로 뒤에 보이는 지도를 바꾸는 유일한 설정이라,
+선택과 그 결과 사이에 페이지 이동을 끼우면 안 된다. `/settings`가 전부 같은 모양의 행으로만
+이루어진 목록이라는 점도 있다 — 라디오 카드 하나가 섞이면 그것만 실수처럼 보인다.
+같은 이유로 **회원탈퇴 행도 빨간색이 아니다**; 경고는 확인 다이얼로그가 나른다.
+
+**비밀번호 변경도 별도 페이지(`/settings/password`)다.** 3단계 중 가운데에서 사용자가 문자
+앱으로 나갔다 돌아오는데, 그때 패널이 열려 있다는 보장이 없으면 방금 SMS 한 통으로 얻은 증명을
+잃는다. `/profile`을 페이지로 만든 것과 같은 판단이며, 거기서는 파일 선택기가 같은 역할을 한다.
+**둘 다 `requireUser()`를 쓰지 않는다** — 약관·개인정보 행은 로그아웃 상태에서도 살아 있어야
+하고, 게이트는 언제나처럼 API다.
 
 **인스타그램 썸네일은 만료된다.** `scontent-*.cdninstagram.com` URL은 서명 URL이고
 `oh`/`oe`/`_nc_ohc`가 서명과 만료 시각이다. 저장한 날에는 보이던 썸네일이 며칠 뒤
@@ -646,7 +662,7 @@ non-null이다 — 위 "인스타그램 썸네일은 만료된다" 참고.
 
 ## 지도
 
-세 개의 제공자가 `MapView` 스위치 하나 뒤에 있고, 설정에서 사용자별로 고른다: 네이버(기본),
+세 개의 제공자가 `MapView` 스위치 하나 뒤에 있고, `/settings`에서 사용자별로 고른다: 네이버(기본),
 카카오, 구글. 각각 provider를 key로 갖는 별도 컴포넌트라서, 전환하면 이전 지도를 재사용하지
 않고 완전히 해체한다.
 

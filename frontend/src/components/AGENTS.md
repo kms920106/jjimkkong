@@ -18,7 +18,10 @@ React 컴포넌트. 제품의 상호작용이 사실상 `HomeClient` 하나에 �
 | `PostThumbnail.tsx` | 게시글 썸네일 하나 + `onError` 폴백. 만료된 인스타 URL(403)이 깨진 아이콘으로 보이지 않게 한다. `key={src}`로 마운트해 실패 상태를 리셋한다 |
 | `LoginDrawer.tsx` | 제공자 선택. 보던 화면을 떠나지 않아야 하는 진입점이라 drawer |
 | `PhoneVerifyForm.tsx` | 번호 입력 → 코드 입력 2단계(`Step`). `/verify-phone` 페이지가 렌더 |
-| `AppDrawer.tsx` | 설정 drawer — 지도 제공자, 비밀번호, 로그아웃, 회원탈퇴(`AlertDialog`). 연필은 `/profile`로 나간다 |
+| `AppDrawer.tsx` | 왼쪽 메뉴 — 프로필 헤더(연필은 `/profile`), `링크`, 설정 진입, 지도 제공자 선택 |
+| `SettingsClient.tsx` | `/settings` 목록 — 비밀번호 변경, 약관·개인정보, 로그아웃, 회원탈퇴(`AlertDialog`). 전부 같은 모양의 행 |
+| `PasswordSettingPageClient.tsx` | `/settings/password` 크롬. `PasswordSettingForm`을 감싸고 완료 시 `/settings`로 보낸다 |
+| `PasswordSettingForm.tsx` | 번호 → 코드 → 비밀번호 3단계. 세션이 있어도 SMS로 번호를 다시 증명시킨다 |
 | `ProfileEditClient.tsx` | `/profile` 폼 — 사진·닉네임·상태메세지를 한 번의 multipart PATCH로 저장 |
 | `LegalPage.tsx` | 약관·개인정보 공용 크롬. 서버 컴포넌트(정적 산문이라 브라우저로 보낼 것이 없다) |
 | `ThemeProvider.tsx` | next-themes. shadcn 다크 팔레트가 `prefers-color-scheme`이 아니라 `.dark` 클래스에 걸려 있어서 필요 |
@@ -118,6 +121,46 @@ portal되므로 지도 컨테이너 **전체보다 뒤**에 오고, 버튼의 `z
 - React 19, `@base-ui/react`(shadcn 기반), lucide-react, sonner, next-themes
 
 <!-- MANUAL: -->
+
+## 설정은 drawer가 아니라 페이지다
+
+`AppDrawer`는 펼쳐지는 비밀번호 폼, 약관 링크, 로그아웃, 회원탈퇴를 들고 있었다. 그
+항목들은 `/settings`로 옮겨졌다.
+
+이유는 **항목의 성격이 drawer와 맞지 않았다**는 것이다. 약관·개인정보·비밀번호는 다른
+화면으로 나가고, 로그아웃·회원탈퇴는 세션을 끝낸다 — 어느 쪽도 "보던 화면을 떠나지 않는다"는
+drawer의 이점을 쓰지 못한다. 도착하자마자 닫아야 하는 패널은 페이지가 할 일을 대신하고 있는
+것이다.
+
+**지도 제공자 선택만은 drawer에 남았다.** 이것 하나가 **바로 뒤에 보이는 것을 바꾸는**
+설정이기 때문이다 — 카카오맵을 고르면 사용자가 보고 있던 지도가 그대로 바뀌고, drawer가
+닫히면서 그 결과를 본다. 목록으로 옮기면 선택과 유일한 피드백 사이에 페이지 이동이 끼고,
+행으로만 이루어진 목록에 라디오 카드 하나가 섞이면 그것만 실수처럼 보인다.
+
+**`/settings`는 전부 같은 모양의 행이다.** 헤딩도, 그룹 제목도 없고 **그룹 사이의 회색
+띠가 곧 구분선**이다. `LinkRow`(이동)와 `ActionRow`(동작)가 같은 `ROW` 상수를 공유하는
+이유가 이것이다 — 하나는 `<a>`, 하나는 `<button>`이지만 라벨 x좌표·오른쪽 셰브론·높이가
+같아야 한다. 따로 스타일링하면 이런 목록은 1px씩 어긋난다.
+
+**회원탈퇴 행도 검정이다.** 빨간색으로 칠하면 이 목록의 유일한 규칙(모든 행이 같아 보인다)이
+깨지고, 그 색이 나르려는 경고는 이미 확인 다이얼로그의 내용 전부다 — 실제로 읽히는 곳은
+거기다.
+
+**`/settings`도 `requireUser()`를 쓰지 않는다.** 로그아웃 상태에서는 약관·개인정보 행이
+그대로 동작하고(법적 고지는 로그인 뒤에 숨기면 안 된다) 계정 관련 행만 disabled로 그려진다.
+실제 게이트는 `PATCH /api/settings`와 `DELETE /api/account`다.
+
+**비밀번호 변경은 `/settings/password`라는 별도 페이지다.** `PasswordSettingForm`은
+번호 → SMS 코드 → 비밀번호의 3단계이고, 가운데 단계에서 사용자가 **문자 앱으로 나갔다가
+돌아온다.** 돌아왔을 때 여전히 열려 있는지 보장되지 않는 패널 안에 두면 방금 문자 한 통을
+지불하고 얻은 증명을 잃는다. URL이 있으면 잃지 않는다 — `/profile`이 페이지인 것과 같은
+이유이며, 그쪽은 파일 선택기가 같은 역할을 한다.
+
+`onDone`과 뒤로가기는 둘 다 홈이 아니라 `/settings`로 간다. 이 화면에 닿는 경로가 거기뿐이다.
+
+**두 페이지 다 `loading.tsx`가 필요하다.** `force-dynamic`이라 prefetch가 미리 만들어 둘
+HTML이 없다 — 아래 `/links`·`/profile`과 같은 이유이고, 스켈레톤의 컨테이너 클래스는 각
+클라이언트 컴포넌트의 최상위와 정확히 같아야 한다.
 
 ## 프로필 편집은 drawer가 아니라 페이지다
 

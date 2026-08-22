@@ -1,12 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Check,
   ChevronDown,
-  ChevronLeft,
   Copy,
   MapPin,
   MoreHorizontal,
@@ -33,7 +31,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -44,6 +42,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import LoginDrawer from "@/components/LoginDrawer";
+import { SettingsHeader } from "@/components/SettingsHeader";
 import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
 import { cn } from "@/lib/utils";
 
@@ -202,102 +201,96 @@ export default function LinksClient({
   }
 
   return (
-    <div className="flex w-full flex-col gap-4 px-4 py-6">
-      <header className="flex items-center gap-3">
-        <Link
-          href="/"
-          aria-label="지도로 돌아가기"
-          onClick={goBack}
-          className={cn(
-            buttonVariants({ variant: "ghost", size: "icon" }),
-            "rounded-full text-muted-foreground",
-          )}
-        >
-          <ChevronLeft aria-hidden />
-        </Link>
-        <h1 className="text-base font-semibold">링크</h1>
-      </header>
-
-      {/* The filter drives `filter` state directly rather than TabsContent:
-          the list below is one shared surface, so re-rendering it per panel
-          would duplicate the whole card list. */}
-      <Tabs
-        value={filter}
-        // Base UI also reports `null` when the active tab unmounts — deleting
-        // the last post of a platform drops its tab — so that falls back to
-        // 전체 rather than becoming a filter that matches nothing.
-        onValueChange={(value) =>
-          setFilter(typeof value === "string" ? (value as Filter) : "ALL")
-        }
-        aria-label="플랫폼"
-      >
-        {/* Scrolls rather than wraps: the row must stay one line on a phone,
-            where four or five tabs do not fit across. TabsList is
-            `inline-flex w-fit` by default, so the scroll container is the
-            list itself with `max-w-full` holding it inside the viewport.
-            `scrollbar-none` hides the scrollbar chrome draws on this axis —
-            the row is still touch/drag-scrollable, just without the visible
-            track that a `overflow-x-auto` div otherwise gets on desktop. */}
-        <TabsList
-          variant="line"
-          className="-mx-4 h-auto max-w-[calc(100%+2rem)] justify-start overflow-x-auto scrollbar-none px-4 pb-1"
-        >
-          {tabs.map((tab) => (
-            <TabsTrigger
-              key={tab.value}
-              value={tab.value}
-              className="h-8 shrink-0 flex-none rounded-full border-border px-3.5 group-data-[variant=line]/tabs-list:data-active:bg-primary group-data-[variant=line]/tabs-list:data-active:text-primary-foreground"
-            >
-              {tab.label} {counts.get(tab.value) ?? 0}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {visible.length === 0 ? (
-        <Card className="flex flex-col items-center gap-4 border border-dashed border-border bg-transparent p-8 text-center text-sm text-muted-foreground ring-0">
-          {/* Signed out the list is empty for a reason the user can act on,
-              so the copy names it and offers the login right here. */}
-          {!signedIn ? (
-            <>
-              로그인하면 저장한 링크를 여기에서 볼 수 있습니다.
-              <Button type="button" onClick={() => setLoginOpen(true)}>
-                로그인
-              </Button>
-            </>
-          ) : posts.length === 0 ? (
-            "아직 저장한 링크가 없습니다. 지도에서 + 버튼을 눌러 링크를 붙여넣으세요."
-          ) : (
-            "이 플랫폼으로 저장한 링크가 없습니다."
-          )}
-        </Card>
-      ) : (
-        <ul className="flex flex-col gap-3">
-          {visible.map((post) => (
-            <PostCard
-              key={post.id}
-              post={post}
-              mapProvider={mapProvider}
-              onFocus={focusOnMap}
-              onDelete={() => handleDelete(post.id)}
-            />
-          ))}
-        </ul>
-      )}
-
-      {/* Returns here rather than to the map, so the login does not cost the
-          user the page they were on. */}
-      <LoginDrawer
-        open={loginOpen}
-        onOpenChange={setLoginOpen}
-        redirectTo="/links"
+    <div className="flex w-full flex-col gap-4">
+      <SettingsHeader
+        href="/"
+        ariaLabel="지도로 돌아가기"
+        title="링크"
+        onBackClick={goBack}
       />
+
+      <div className="flex w-full flex-col gap-4 px-4">
+        {/* The filter drives `filter` state directly rather than TabsContent:
+            the list below is one shared surface, so re-rendering it per panel
+            would duplicate the whole card list. */}
+        <Tabs
+          value={filter}
+          // Base UI also reports `null` when the active tab unmounts — deleting
+          // the last post of a platform drops its tab — so that falls back to
+          // 전체 rather than becoming a filter that matches nothing.
+          onValueChange={(value) =>
+            setFilter(typeof value === "string" ? (value as Filter) : "ALL")
+          }
+          aria-label="플랫폼"
+        >
+          {/* Scrolls rather than wraps: the row must stay one line on a phone,
+              where four or five tabs do not fit across. TabsList is
+              `inline-flex w-fit` by default, so the scroll container is the
+              list itself with `max-w-full` holding it inside the viewport.
+              `scrollbar-none` hides the scrollbar chrome draws on this axis —
+              the row is still touch/drag-scrollable, just without the visible
+              track that a `overflow-x-auto` div otherwise gets on desktop. */}
+          <TabsList
+            variant="line"
+            className="-mx-4 h-auto max-w-[calc(100%+2rem)] justify-start overflow-x-auto scrollbar-none px-4 pb-1"
+          >
+            {tabs.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className="h-8 shrink-0 flex-none rounded-full border-border px-3.5 group-data-[variant=line]/tabs-list:data-active:bg-primary group-data-[variant=line]/tabs-list:data-active:text-primary-foreground"
+              >
+                {tab.label} {counts.get(tab.value) ?? 0}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {visible.length === 0 ? (
+          <Card className="flex flex-col items-center gap-4 border border-dashed border-border bg-transparent p-8 text-center text-sm text-muted-foreground ring-0">
+            {/* Signed out the list is empty for a reason the user can act on,
+                so the copy names it and offers the login right here. */}
+            {!signedIn ? (
+              <>
+                로그인하면 저장한 링크를 여기에서 볼 수 있습니다.
+                <Button type="button" onClick={() => setLoginOpen(true)}>
+                  로그인
+                </Button>
+              </>
+            ) : posts.length === 0 ? (
+              "아직 저장한 링크가 없습니다. 지도에서 + 버튼을 눌러 링크를 붙여넣으세요."
+            ) : (
+              "이 플랫폼으로 저장한 링크가 없습니다."
+            )}
+          </Card>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {visible.map((post) => (
+              <PostCard
+                key={post.id}
+                post={post}
+                mapProvider={mapProvider}
+                onFocus={focusOnMap}
+                onDelete={() => handleDelete(post.id)}
+              />
+            ))}
+          </ul>
+        )}
+
+        {/* Returns here rather than to the map, so the login does not cost the
+            user the page they were on. */}
+        <LoginDrawer
+          open={loginOpen}
+          onOpenChange={setLoginOpen}
+          redirectTo="/links"
+        />
+      </div>
     </div>
   );
 }
@@ -424,7 +417,10 @@ function PostCard({
               {places.length > 1 && (
                 <>
                   <span aria-hidden>·</span>
-                  <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                  <Badge
+                    variant="secondary"
+                    className="px-1.5 py-0 text-[11px]"
+                  >
                     {places.length}곳
                   </Badge>
                 </>
@@ -476,7 +472,9 @@ function PostCard({
                 onClick={() => setExpanded(!open)}
                 aria-expanded={open}
                 aria-controls={bodyId}
-                aria-label={open ? "장소 접기" : `장소 ${places.length}곳 펼치기`}
+                aria-label={
+                  open ? "장소 접기" : `장소 ${places.length}곳 펼치기`
+                }
                 className="rounded-full text-muted-foreground"
               >
                 <ChevronDown
