@@ -1,22 +1,93 @@
 import type { MapProvider, Platform, SavedPlaceDTO } from "@/lib/types";
 
 /**
- * Search URLs, not permalinks. Neither provider gives us a place id we could
+ * Where one map button leads.
+ *
+ * Two shapes because iOS treats the two kinds of URL completely differently,
+ * and this app is used as a Home Screen (standalone) web app on iOS:
+ *
+ * - `url` is an **Apple Universal Link**. iOS hands it straight to the native
+ *   app and our own window never navigates, so the post stays on screen and in
+ *   the app switcher. If the app is absent the same URL just loads the web map
+ *   — no interstitial, no error dialog. This is why the Instagram button
+ *   already behaves correctly and needs nothing from us.
+ * - `scheme` is a custom URL scheme, needed only where no Universal Link
+ *   exists. It hands off just as cleanly, but it cannot degrade on its own:
+ *   with the app missing, nothing happens (or iOS shows "Cannot Open Page").
+ *   So it carries the web map to fall back to — see `openMapApp()`.
+ */
+export type MapTarget =
+  | { kind: "url"; href: string }
+  | { kind: "scheme"; scheme: string; fallback: string };
+
+/*
+ * Search targets, not permalinks. Neither provider gives us a place id we could
  * link to: `place.naverLink` holds the Local Search API's `link`, which is the
  * merchant's own homepage (often a blog, often empty) — not a map page. A name
- * search lands on the right place in both apps and degrades to a result list
+ * search lands on the right place in every app and degrades to a result list
  * rather than a 404 when the name is ambiguous.
  */
-function naverMapUrl(place: SavedPlaceDTO): string {
-  return `https://map.naver.com/p/search/${encodeURIComponent(place.name)}`;
+
+/**
+ * Naver is the one provider that needs a scheme: `map.naver.com` serves no
+ * apple-app-site-association file (verified), so iOS opens its https URLs as a
+ * *web page*. In a Home Screen app that page replaced the post the user was
+ * reading with Naver's "Install NAVER Maps" interstitial, which then launched
+ * the app itself — the app opened, but our screen was gone.
+ *
+ * `place` rather than `search` because we already hold coordinates, so the pin
+ * is exact instead of a name guess. All three of `lat`, `lng` and `name` are
+ * required by the scheme, as is `appname` on every `nmap://` URL.
+ */
+function naverMapTarget(place: SavedPlaceDTO): MapTarget {
+  const name = encodeURIComponent(place.name);
+  // `appname` is a caller label, so a constant is honest here. It is emphatically
+  // *not* read from `window.location`: this function runs during the server
+  // render too (both call sites build the target in their render body, to fill
+  // the anchor's href), so a window-dependent value would be the SSR branch's
+  // value baked into the hydrated tree — a lie that reads like a feature.
+  const appname = "jjimkkong";
+  return {
+    kind: "scheme",
+    scheme: `nmap://place?lat=${place.lat}&lng=${place.lng}&name=${name}&appname=${appname}`,
+    // The App Store page would be the other candidate, but a user who tapped
+    // 네이버맵 wants to see the place — a web map does that and a store page
+    // does not.
+    // The path `search2/search.naver` merely 302s here (measured), so name the
+    // destination directly and save the redirect.
+    fallback: `https://m.map.naver.com/search?query=${name}`,
+  };
 }
 
-function kakaoMapUrl(place: SavedPlaceDTO): string {
-  return `https://map.kakao.com/?q=${encodeURIComponent(place.name)}`;
+/**
+ * `m.map.kakao.com/actions/searchView`, and all three parts of that matter.
+ *
+ * - The **host must be `m.`**. `map.kakao.com` serves a *malformed* association
+ *   file (an unterminated string, so iOS may reject it wholesale), and on a
+ *   mobile UA it now 302s `/?q=` to `applink.map.kakao.com` — Kakao's own
+ *   "open in app" interstitial, which is exactly the screen this change exists
+ *   to stop showing. `m.map.kakao.com` serves valid JSON.
+ * - `/actions/searchView` is one of the paths that file universal-links; the
+ *   `map.kakao.com` equivalent redirects to a 404 page (measured).
+ * - So this is a Universal Link and needs no scheme: with the app installed
+ *   iOS hands it over, without it the same URL renders Kakao's mobile web
+ *   search for the place.
+ *
+ * Do not "simplify" this back to `map.kakao.com/?q=`.
+ */
+function kakaoMapTarget(place: SavedPlaceDTO): MapTarget {
+  return {
+    kind: "url",
+    href: `https://m.map.kakao.com/actions/searchView?q=${encodeURIComponent(place.name)}`,
+  };
 }
 
-function googleMapUrl(place: SavedPlaceDTO): string {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}`;
+/** Already a Universal Link per Google's iOS docs, and it degrades to the web map. */
+function googleMapTarget(place: SavedPlaceDTO): MapTarget {
+  return {
+    kind: "url",
+    href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}`,
+  };
 }
 
 /**
@@ -30,11 +101,11 @@ function googleMapUrl(place: SavedPlaceDTO): string {
  */
 const MAP_APPS: Record<
   MapProvider,
-  { label: string; url: (place: SavedPlaceDTO) => string }
+  { label: string; target: (place: SavedPlaceDTO) => MapTarget }
 > = {
-  NAVER: { label: "네이버맵", url: naverMapUrl },
-  KAKAO: { label: "카카오맵", url: kakaoMapUrl },
-  GOOGLE: { label: "구글맵", url: googleMapUrl },
+  NAVER: { label: "네이버맵", target: naverMapTarget },
+  KAKAO: { label: "카카오맵", target: kakaoMapTarget },
+  GOOGLE: { label: "구글맵", target: googleMapTarget },
 };
 
 // Derived rather than hand-listed: MAP_APPS is a Record<MapProvider, …>, so
@@ -45,7 +116,7 @@ const MAP_APP_ORDER = Object.keys(MAP_APPS) as MapProvider[];
 export type MapApp = {
   provider: MapProvider;
   label: string;
-  url: (place: SavedPlaceDTO) => string;
+  target: (place: SavedPlaceDTO) => MapTarget;
 };
 
 export function mapAppsFor(preferred: MapProvider): MapApp[] {
@@ -75,17 +146,32 @@ export function exactLinkFor(post: {
 }
 
 /**
- * The href for one app given the post the place was saved from, folding the
- * exact permalink into its own provider's slot rather than adding a row — the
- * menu must not offer two 네이버맵 entries that differ only in precision.
+ * Where one app's button leads, given the post the place was saved from. The
+ * exact permalink folds into its own provider's slot rather than adding a row —
+ * the menu must not offer two 네이버맵 entries that differ only in precision.
+ *
+ * A permalink stays a plain `url`: it is the link the user actually saved, and
+ * `naver.me`/`map.naver.com` permalinks are not ours to rewrite into a scheme.
  */
-export function hrefForApp(
+export function targetForApp(
   app: MapApp,
   place: SavedPlaceDTO,
   post?: { platform: Platform; sourceUrl: string },
-): string {
+): MapTarget {
   const exact = post ? exactLinkFor(post) : undefined;
-  return exact?.provider === app.provider ? exact.href : app.url(place);
+  return exact?.provider === app.provider
+    ? { kind: "url", href: exact.href }
+    : app.target(place);
+}
+
+/**
+ * The `href` to put on the anchor. For a scheme target that is the *fallback*,
+ * not the scheme: the attribute has to stay a real link so the markup works
+ * without JS and so long-press/copy-link gives something openable. `nmap://`
+ * in an href would hand a broken menu entry to every desktop visitor.
+ */
+export function hrefOf(target: MapTarget): string {
+  return target.kind === "url" ? target.href : target.fallback;
 }
 
 /** Directions to the place in the user's preferred app, by name search. */

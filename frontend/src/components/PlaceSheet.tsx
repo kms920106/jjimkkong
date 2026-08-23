@@ -12,7 +12,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { PostThumbnail } from "@/components/PostThumbnail";
-import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
+import { hrefOf, mapAppsFor, targetForApp } from "@/lib/map/externalLinks";
+import { openMapApp } from "@/lib/map/openMapApp";
 import type {
   MapProvider,
   PlaceSourceDTO,
@@ -170,21 +171,33 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
             Scrolls on a narrow phone rather than wrapping into a second line
             that pushes the source list below the fold. */}
         <div className="-mx-5 mt-3 flex gap-2 overflow-x-auto scrollbar-none px-5">
-          {apps.map((app) => (
-            <a
-              key={app.provider}
-              href={hrefForApp(app, place, exactSource)}
-              target="_blank"
-              rel="noreferrer noopener"
-              className={cn(
-                buttonVariants({ variant: "outline", size: "sm" }),
-                "shrink-0 rounded-full",
-              )}
-            >
-              <ExternalLink aria-hidden />
-              {app.label}
-            </a>
-          ))}
+          {apps.map((app) => {
+            const target = targetForApp(app, place, exactSource);
+            return (
+              <a
+                key={app.provider}
+                href={hrefOf(target)}
+                // No `target="_blank"`: see the same anchors in
+                // PostDetailClient — in the iOS Home Screen app it opens an
+                // in-app browser sheet over us rather than a tab.
+                // `noreferrer` only: it still suppresses the Referer on a
+                // same-tab navigation, whereas `noopener` governs a new
+                // browsing context that no longer exists here. Leaving it in
+                // reads as if `target="_blank"` were still present.
+                rel="noreferrer"
+                onClick={(event) => {
+                  if (openMapApp(target)) event.preventDefault();
+                }}
+                className={cn(
+                  buttonVariants({ variant: "outline", size: "sm" }),
+                  "shrink-0 rounded-full",
+                )}
+              >
+                <ExternalLink aria-hidden />
+                {app.label}
+              </a>
+            );
+          })}
         </div>
 
         {/* What this app knows that a map app does not: which of the user's

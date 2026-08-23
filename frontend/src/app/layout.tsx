@@ -17,6 +17,16 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "찜꽁",
   description: "인스타그램·유튜브 링크를 붙여넣으면 장소를 지도에 저장합니다.",
+  // The service is used from the iOS Home Screen, so declare it: without this
+  // the same launcher entry opens inside Safari chrome instead of standalone.
+  appleWebApp: {
+    capable: true,
+    title: "찜꽁",
+    // Not `black-translucent`, which pushes content under the status bar. This
+    // app's layouts do not reserve room for it, so the header would sit beneath
+    // the clock.
+    statusBarStyle: "default",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

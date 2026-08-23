@@ -20,7 +20,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
+import { hrefOf, mapAppsFor, targetForApp } from "@/lib/map/externalLinks";
+import { openMapApp } from "@/lib/map/openMapApp";
 import { formatCategory } from "@/lib/place-category";
 import { platformLabel } from "@/lib/platform-labels";
 import { useBackLink } from "@/lib/use-back-link";
@@ -372,17 +373,29 @@ function PlaceCard({
         {/* `mt-auto` pins the links to the bottom so cards of differing text
             length still line their actions up across the row. */}
         <div className="mt-auto flex flex-wrap gap-x-3 gap-y-1 pt-1 text-xs">
-          {apps.map((app) => (
-            <a
-              key={app.provider}
-              href={hrefForApp(app, place, post)}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-muted-foreground underline decoration-dotted underline-offset-2"
-            >
-              {app.label}
-            </a>
-          ))}
+          {apps.map((app) => {
+            const target = targetForApp(app, place, post);
+            return (
+              <a
+                key={app.provider}
+                href={hrefOf(target)}
+                // No `target="_blank"`: from the iOS Home Screen app that opens
+                // an in-app browser sheet over us instead of a tab, which both
+                // buries the native-app handoff and leaves a sheet to dismiss.
+                // `noreferrer` only: it still suppresses the Referer on a
+                // same-tab navigation, whereas `noopener` governs a new
+                // browsing context that no longer exists here. Leaving it in
+                // reads as if `target="_blank"` were still present.
+                rel="noreferrer"
+                onClick={(event) => {
+                  if (openMapApp(target)) event.preventDefault();
+                }}
+                className="text-muted-foreground underline decoration-dotted underline-offset-2"
+              >
+                {app.label}
+              </a>
+            );
+          })}
         </div>
       </div>
     </li>
