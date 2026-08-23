@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ExternalLink, MapPin, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { MapProvider, SavedPlaceDTO, SavedPostDTO } from "@/lib/types";
+import { AuthorLink } from "@/components/AuthorLink";
 import { PostThumbnail } from "@/components/PostThumbnail";
 import { SettingsHeader } from "@/components/SettingsHeader";
 import {
@@ -126,6 +127,22 @@ export default function PostDetailClient({
                 </div>
               }
             />
+            {/* Eleven o'clock, mirroring how the platforms themselves label a
+                post: the author sits over the top-left of the media, the way
+                Instagram's own header does, so the picture arrives already
+                attributed instead of the handle being a line of metadata
+                underneath it. The source link keeps the opposite corner, so
+                the two overlays never collide however long the handle is. */}
+            {post.author && (
+              <div className="absolute top-3 left-3">
+                <AuthorLink
+                  author={post.author}
+                  authorImage={post.authorImage}
+                  platform={post.platform}
+                  variant="overlay"
+                />
+              </div>
+            )}
             <div className="absolute right-3 bottom-3">
               <SourceLink post={post} />
             </div>
@@ -135,16 +152,22 @@ export default function PostDetailClient({
         <div
           className={`flex flex-col gap-3 px-4 ${post.thumbnail ? "" : "pt-4"}`}
         >
-          <div className="flex flex-col gap-1">
-            <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-              <span>{platformLabel(post.platform)}</span>
-              {post.author && (
-                <>
-                  <span aria-hidden>·</span>
-                  <span className="min-w-0 truncate">{post.author}</span>
-                </>
-              )}
+          {/* The author is drawn over the picture, so this line carries only
+              the platform — repeating the handle directly beneath its own
+              overlay would read as two different authors. A post with no
+              picture has no overlay to carry it, so it gets the link here
+              instead; that is the same condition SourceLink below tests. */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-xs text-muted-foreground">
+              {platformLabel(post.platform)}
             </p>
+            {!post.thumbnail && post.author && (
+              <AuthorLink
+                author={post.author}
+                authorImage={post.authorImage}
+                platform={post.platform}
+              />
+            )}
           </div>
 
           {caption && <Caption text={caption} />}

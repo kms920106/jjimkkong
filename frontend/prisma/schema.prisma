@@ -295,6 +295,23 @@ model SavedPost {
   /// a re-backup would have to re-scrape the post page.
   thumbnailSource String?
   author    String?
+  /// The author's avatar, as a URL that can be rendered as-is — our own Vercel
+  /// Blob for Instagram, whose avatar URLs are signed and expire exactly like
+  /// its post thumbnails do. Null when the platform gave us none, which is the
+  /// normal state for YouTube and the map platforms.
+  ///
+  /// Denormalized onto every post by the same author rather than kept in an
+  /// Author table. There is no author entity in this app: `author` is a handle
+  /// string the ingest pipeline read off a page, not a row anyone owns, and the
+  /// only thing a table would add is a join plus a second write path. A re-save
+  /// refreshes whichever row it touches, so a handle whose avatar changed
+  /// converges post by post instead of all at once — acceptable for a picture.
+  authorImage String?
+  /// The pre-backup CDN URL, set only on rows whose avatar we copied — so
+  /// `authorImageSource IS NOT NULL` is the predicate for "this avatar is
+  /// backed up", exactly as `thumbnailSource` is for the thumbnail. Kept even
+  /// once expired: it is the only record of where the image came from.
+  authorImageSource String?
   /// Set instead of deleting the row. Deleting a saved link used to remove it,
   /// which took its SavedPostPlace rows with it through the cascade below — the
   /// memos the user wrote on each place and the position that makes /links
@@ -316,6 +333,9 @@ model SavedPost {
   /// a deletedAt filter goes missing.
   @@index([userId, sourceUrl])
   @@index([userId, deletedAt, createdAt])
+  /// Backs /links/author/[author], which lists one author's live posts for one
+  /// user. Same (userId, deletedAt IS NULL) prefix every other list read uses.
+  @@index([userId, deletedAt, author])
   /// Not for reads. Before deleting a thumbnail blob, the save and delete routes
   /// count how many rows still reference that URL — the check that stops a
   /// caller from pointing their own post at someone else's public blob URL and

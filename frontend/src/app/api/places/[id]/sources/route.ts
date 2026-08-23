@@ -37,6 +37,7 @@ export async function GET(
             title: true,
             thumbnail: true,
             author: true,
+            authorImage: true,
           },
         },
       },
@@ -56,6 +57,7 @@ export async function GET(
         title: link.post.title,
         thumbnail: link.post.thumbnail,
         author: link.post.author,
+        authorImage: link.post.authorImage,
         memo: link.memo,
       });
     }

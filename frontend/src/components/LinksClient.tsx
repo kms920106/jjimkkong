@@ -1,10 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { Copy, MapPin } from "lucide-react";
 import type { Platform, SavedPostDTO } from "@/lib/types";
-import { PostThumbnail } from "@/components/PostThumbnail";
+import { PostGrid } from "@/components/PostGrid";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -142,14 +140,7 @@ export default function LinksClient({
           </Card>
         </div>
       ) : (
-        // `gap-px` on a muted background, not `gap-0`: the hairline between
-        // cells is what keeps two adjacent dark thumbnails from reading as one
-        // image, and it costs no layout the way a border would.
-        <ul className="grid grid-cols-3 gap-px bg-border">
-          {visible.map((post) => (
-            <PostCell key={post.id} post={post} />
-          ))}
-        </ul>
+        <PostGrid posts={visible} />
       )}
 
       <div className="px-4">
@@ -162,83 +153,5 @@ export default function LinksClient({
         />
       </div>
     </div>
-  );
-}
-
-/**
- * The card's own title, used as the cell's accessible name.
- *
- * The post is the thing the user saved — a reel called "홍대 데이트코스" with
- * six stops in it — so its title leads even when places were extracted. Using
- * the first place instead (as this once did) promoted one arbitrary stop to
- * stand for the whole post and threw the post's identity away.
- *
- * Falls back through the first place to the raw URL, because a post whose
- * metadata fetch came back empty still has to be identifiable.
- */
-function postTitle(post: SavedPostDTO): string {
-  return post.title ?? post.places[0]?.name ?? post.sourceUrl;
-}
-
-/**
- * One square in the grid: the post's picture and nothing else.
- *
- * The whole cell is the link, so the tap target is the thumbnail itself rather
- * than a caption under it — that is what lets the grid be gapless. Since no
- * text is drawn, the accessible name has to carry the post's identity, and the
- * badges are `aria-hidden` because they restate what that name already says.
- */
-function PostCell({ post }: { post: SavedPostDTO }) {
-  const title = postTitle(post);
-  const count = post.places.length;
-
-  return (
-    <li className="relative aspect-square">
-      <Link
-        href={`/links/${post.id}`}
-        aria-label={
-          count > 0 ? `${title} — 장소 ${count}곳` : title
-        }
-        className="block size-full focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-      >
-        <PostThumbnail
-          key={post.thumbnail}
-          src={post.thumbnail}
-          alt=""
-          className="size-full bg-muted object-cover"
-          fallback={
-            // No picture is a normal state, not an error: a map link has no
-            // thumbnail at all. The cell still has to fill its square or the
-            // grid develops holes, so it names the platform instead.
-            <span
-              aria-hidden
-              className="flex size-full items-center justify-center bg-muted p-1 text-center text-[10px] leading-tight text-muted-foreground"
-            >
-              {platformLabel(post.platform)}
-            </span>
-          }
-        />
-
-        {/* Top-right, matching where Instagram puts its own multi-item mark —
-            the grid this imitates has trained the position. */}
-        {count > 1 && (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white"
-          >
-            <Copy className="size-2.5" strokeWidth={2.5} />
-            {count}
-          </span>
-        )}
-        {count === 1 && (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-black/55 p-1 text-white"
-          >
-            <MapPin className="size-2.5" strokeWidth={2.5} />
-          </span>
-        )}
-      </Link>
-    </li>
   );
 }

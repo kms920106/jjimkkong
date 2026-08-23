@@ -1,17 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Camera, ChevronLeft, X } from "lucide-react";
+import { Camera, X } from "lucide-react";
 import { displayName } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SubmitButton } from "@/components/ui/submit-button";
-import { cn } from "@/lib/utils";
+import { SettingsHeader } from "@/components/SettingsHeader";
 
 type Initial = {
   nickname: string | null;
@@ -188,123 +186,113 @@ export default function ProfileEditClient({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col gap-6 px-4 py-6">
-      <header className="flex items-center gap-3">
-        <Link
-          href="/"
-          aria-label="지도로 돌아가기"
-          className={cn(
-            buttonVariants({ variant: "ghost", size: "icon" }),
-            "rounded-full text-muted-foreground",
-          )}
-        >
-          <ChevronLeft aria-hidden />
-        </Link>
-        <h1 className="text-base font-semibold">프로필 수정</h1>
-      </header>
+    <div className="flex w-full flex-col gap-6">
+      <SettingsHeader href="/" ariaLabel="지도로 돌아가기" title="프로필 수정" />
 
-      <div className="flex justify-center py-2">
-        <div className="relative">
-          <Avatar className="size-24">
-            {/* Named, unlike the drawer's copy: there the adjacent nickname
-                carries the identity, but here the avatar is the subject of the
-                screen and whether a picture is set is exactly what the 삭제
-                button appearing depends on. */}
-            {shownImage && <AvatarImage src={shownImage} alt="프로필 사진" />}
-            <AvatarFallback className="text-3xl font-semibold">
-              {name.slice(0, 1).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
+      <div className="mx-auto flex w-full max-w-md flex-col gap-6 px-4">
+        <div className="flex justify-center py-2">
+          <div className="relative">
+            <Avatar className="size-24">
+              {/* Named, unlike the drawer's copy: there the adjacent nickname
+                  carries the identity, but here the avatar is the subject of the
+                  screen and whether a picture is set is exactly what the 삭제
+                  button appearing depends on. */}
+              {shownImage && <AvatarImage src={shownImage} alt="프로필 사진" />}
+              <AvatarFallback className="text-3xl font-semibold">
+                {name.slice(0, 1).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
 
-          {/* The camera badge is the picker's only trigger; the input itself
-              stays hidden because a styled file input cannot be made to look
-              like this across browsers. */}
-          <button
-            type="button"
-            onClick={() => fileInput.current?.click()}
-            disabled={!signedIn || saving}
-            aria-label="프로필 사진 변경"
-            className="absolute right-0 bottom-0 flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground ring-2 ring-background transition hover:bg-muted/80 disabled:opacity-50"
-          >
-            <Camera className="size-4" aria-hidden />
-          </button>
-
-          {shownImage && (
+            {/* The camera badge is the picker's only trigger; the input itself
+                stays hidden because a styled file input cannot be made to look
+                like this across browsers. */}
             <button
               type="button"
-              onClick={() => {
-                replacePicked(null);
-                setRemoved(true);
-              }}
+              onClick={() => fileInput.current?.click()}
               disabled={!signedIn || saving}
-              aria-label="프로필 사진 삭제"
-              className="absolute top-0 right-0 flex size-7 items-center justify-center rounded-full bg-muted text-muted-foreground ring-2 ring-background transition hover:bg-muted/80 disabled:opacity-50"
+              aria-label="프로필 사진 변경"
+              className="absolute right-0 bottom-0 flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground ring-2 ring-background transition hover:bg-muted/80 disabled:opacity-50"
             >
-              <X className="size-3.5" aria-hidden />
+              <Camera className="size-4" aria-hidden />
             </button>
-          )}
 
-          {/* HEIC stays in `accept` even though the server rejects it: iOS camera
-              roll pictures are HEIC, and downscale() re-encodes them to WEBP
-              before the upload. Dropping it here would grey out most of an
-              iPhone's photos in the picker. */}
-          <input
-            ref={fileInput}
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              // Cleared so re-picking the same file fires change again — the
-              // input keeps its value otherwise and the second pick is silent.
-              event.target.value = "";
-              if (file) void pick(file);
-            }}
+            {shownImage && (
+              <button
+                type="button"
+                onClick={() => {
+                  replacePicked(null);
+                  setRemoved(true);
+                }}
+                disabled={!signedIn || saving}
+                aria-label="프로필 사진 삭제"
+                className="absolute top-0 right-0 flex size-7 items-center justify-center rounded-full bg-muted text-muted-foreground ring-2 ring-background transition hover:bg-muted/80 disabled:opacity-50"
+              >
+                <X className="size-3.5" aria-hidden />
+              </button>
+            )}
+
+            {/* HEIC stays in `accept` even though the server rejects it: iOS camera
+                roll pictures are HEIC, and downscale() re-encodes them to WEBP
+                before the upload. Dropping it here would grey out most of an
+                iPhone's photos in the picker. */}
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                // Cleared so re-picking the same file fires change again — the
+                // input keeps its value otherwise and the second pick is silent.
+                event.target.value = "";
+                if (file) void pick(file);
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="nickname">닉네임</Label>
+          <Input
+            id="nickname"
+            value={nickname}
+            maxLength={20}
+            disabled={!signedIn || saving}
+            onChange={(event) => setNickname(event.target.value)}
+            placeholder="닉네임을 입력해 주세요"
           />
         </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="statusMessage">상태메세지</Label>
+          <Input
+            id="statusMessage"
+            value={statusMessage}
+            maxLength={60}
+            disabled={!signedIn || saving}
+            onChange={(event) => setStatusMessage(event.target.value)}
+            placeholder="상태메세지를 입력해 주세요"
+          />
+        </div>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {!signedIn && (
+          <Alert>
+            <AlertDescription>
+              로그인한 뒤에 프로필을 수정할 수 있습니다.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <SubmitButton onClick={() => void save()} disabled={!signedIn || saving}>
+          {saving ? "저장 중…" : "완료"}
+        </SubmitButton>
       </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="nickname">닉네임</Label>
-        <Input
-          id="nickname"
-          value={nickname}
-          maxLength={20}
-          disabled={!signedIn || saving}
-          onChange={(event) => setNickname(event.target.value)}
-          placeholder="닉네임을 입력해 주세요"
-        />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="statusMessage">상태메세지</Label>
-        <Input
-          id="statusMessage"
-          value={statusMessage}
-          maxLength={60}
-          disabled={!signedIn || saving}
-          onChange={(event) => setStatusMessage(event.target.value)}
-          placeholder="상태메세지를 입력해 주세요"
-        />
-      </div>
-
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {!signedIn && (
-        <Alert>
-          <AlertDescription>
-            로그인한 뒤에 프로필을 수정할 수 있습니다.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <SubmitButton onClick={() => void save()} disabled={!signedIn || saving}>
-        {saving ? "저장 중…" : "완료"}
-      </SubmitButton>
     </div>
   );
 }

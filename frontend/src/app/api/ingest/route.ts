@@ -6,6 +6,7 @@ import { describePost, fetchMetadata } from "@/lib/ingest/metadata";
 import { extractPlaces } from "@/lib/ingest/extract";
 import { geocodeCandidates } from "@/lib/ingest/geocode";
 import { backupThumbnail } from "@/lib/post-thumbnail";
+import { backupAuthorImage } from "@/lib/post-author-image";
 import { Platform } from "@/generated/prisma/enums";
 import type { IngestEvent } from "@/lib/types";
 
@@ -124,10 +125,19 @@ export async function POST(request: NextRequest) {
         // so a deferred backup would mean saving the expiring CDN URL and
         // reintroducing exactly the breakage post-thumbnail.ts prevents.
         //
-        // Safe to leave floating across the early return below:
-        // backupThumbnail() never rejects (see its contract), so this can
-        // neither throw here nor surface as an unhandled rejection.
-        const backup = backupThumbnail(fetched);
+        // Safe to leave floating across the early return below: neither
+        // backupThumbnail() nor backupAuthorImage() rejects (see their
+        // contracts), so this can neither throw here nor surface as an
+        // unhandled rejection.
+        //
+        // The author's avatar expires for exactly the same reason the
+        // thumbnail does and is copied on the same trip. Sequenced after
+        // rather than run in parallel with it: both hit the same Instagram
+        // CDN, this one is the less important of the two, and Meta answers a
+        // burst from one origin less reliably than two ordered requests. The
+        // pair together still overlaps the model and Naver, which is where the
+        // cost was actually hiding.
+        const backup = backupThumbnail(fetched).then(backupAuthorImage);
 
         // Nothing downstream to report to; stop before paying for the model.
         if (aborted) return;

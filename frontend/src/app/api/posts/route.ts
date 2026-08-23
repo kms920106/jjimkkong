@@ -7,6 +7,7 @@ import { savedPostInclude, toSavedPostDTO } from "@/lib/serialize";
 import { classifyUrl } from "@/lib/ingest/metadata";
 import { geocodeCandidates } from "@/lib/ingest/geocode";
 import { deleteThumbnailBlob, isOwnThumbnailBlob } from "@/lib/post-thumbnail";
+import { isOwnAuthorImageBlob } from "@/lib/post-author-image";
 import { Platform } from "@/generated/prisma/enums";
 
 // Re-geocoding each confirmed place server-side costs one Naver call apiece,
@@ -41,6 +42,11 @@ const BodySchema = z.object({
     // about it. Do not make this field load-bearing again.
     thumbnailSource: httpUrl.nullable().optional(),
     author: z.string().max(200).nullable().optional(),
+    authorImage: httpUrl.nullable().optional(),
+    // Record only, exactly like `thumbnailSource` above — nothing fetches it
+    // and no delete decision reads it. Avatars have no delete path at all
+    // (see lib/post-author-image.ts), so this one is purely descriptive.
+    authorImageSource: httpUrl.nullable().optional(),
   }),
   // Only the name and the area hint are taken from the client; every other
   // field on the shared Place row is re-derived server-side below.
@@ -141,6 +147,13 @@ export async function POST(request: NextRequest) {
         ? (post.thumbnailSource ?? null)
         : null;
 
+      // Same rule for the avatar: only record a source alongside a URL that
+      // really is one of our blobs, so the column never claims a platform CDN
+      // URL was backed up.
+      const authorImageSource = isOwnAuthorImageBlob(post.authorImage ?? null)
+        ? (post.authorImageSource ?? null)
+        : null;
+
       // Split out of what was one upsert, for the same reason `previous` is now
       // a findFirst: the composite unique key upsert dispatched on no longer
       // exists. The branch is on the live row this transaction just read, so a
@@ -163,6 +176,14 @@ export async function POST(request: NextRequest) {
               ...(post.thumbnail
                 ? { thumbnail: post.thumbnail, thumbnailSource }
                 : {}),
+              // Conditional for the same reason the thumbnail is: a re-ingest
+              // while Instagram is blocking us arrives with `authorImage:
+              // null`, and overwriting would drop a perfectly good avatar. No
+              // path lets a user *clear* an avatar, so null never means
+              // "remove it".
+              ...(post.authorImage
+                ? { authorImage: post.authorImage, authorImageSource }
+                : {}),
             },
           })
         : await tx.savedPost.create({
@@ -175,6 +196,8 @@ export async function POST(request: NextRequest) {
               thumbnail: post.thumbnail ?? null,
               thumbnailSource,
               author: post.author ?? null,
+              authorImage: post.authorImage ?? null,
+              authorImageSource,
             },
           });
 

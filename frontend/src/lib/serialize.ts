@@ -17,6 +17,7 @@ export function toSavedPostDTO(post: SavedPostWithPlaces): SavedPostDTO {
     title: post.title,
     thumbnail: post.thumbnail,
     author: post.author,
+    authorImage: post.authorImage,
     createdAt: post.createdAt.toISOString(),
     places: post.places.map(({ place, memo }) => ({
       id: place.id,

@@ -27,6 +27,7 @@ export type PlaceSourceDTO = {
   title: string | null;
   thumbnail: string | null;
   author: string | null;
+  authorImage: string | null;
   memo: string | null;
 };
 
@@ -43,6 +44,13 @@ export type SavedPostDTO = {
    */
   thumbnail: string | null;
   author: string | null;
+  /**
+   * The author's avatar, already a renderable URL — our blob for Instagram,
+   * null everywhere else. `authorImageSource` is deliberately not exposed for
+   * the same reason `thumbnailSource` is not: nothing in the browser needs the
+   * pre-backup URL, and it is the one that goes stale.
+   */
+  authorImage: string | null;
   createdAt: string;
   places: SavedPlaceDTO[];
 };
@@ -61,6 +69,13 @@ export type IngestedPost = {
    */
   thumbnailSource: string | null;
   author: string | null;
+  authorImage: string | null;
+  /**
+   * Round-tripped for the same reason `thumbnailSource` is: it is what lets the
+   * saved row record that its avatar is a blob of ours rather than a platform
+   * URL that will expire.
+   */
+  authorImageSource: string | null;
 };
 
 export type IngestCandidate = {

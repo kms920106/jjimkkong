@@ -287,6 +287,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           title: post.title,
           thumbnail: post.thumbnail,
           author: post.author,
+          authorImage: post.authorImage,
           // The memo belongs to this post's link to the place, not to the
           // shared place row, so it travels with the source.
           memo: place.memo,
@@ -431,6 +432,8 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
             thumbnail: result.post.thumbnail,
             thumbnailSource: result.post.thumbnailSource,
             author: result.post.author,
+            authorImage: result.post.authorImage,
+            authorImageSource: result.post.authorImageSource,
           },
           // Only the search terms are sent; the server re-geocodes so a
           // request cannot write coordinates into the shared place table.
@@ -530,6 +533,9 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
                 thumbnailSource:
                   result.post.thumbnailSource ?? previous.thumbnailSource,
                 author: result.post.author ?? previous.author,
+                authorImage: result.post.authorImage ?? previous.authorImage,
+                authorImageSource:
+                  result.post.authorImageSource ?? previous.authorImageSource,
               },
             }
           : result;

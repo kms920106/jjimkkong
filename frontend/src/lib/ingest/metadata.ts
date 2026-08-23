@@ -21,6 +21,21 @@ export type PostMetadata = {
    */
   thumbnailSource: string | null;
   author: string | null;
+  /**
+   * The author's avatar, as a URL to render. Instagram serves these from the
+   * same signed CDN as post images, so this becomes a blob URL once
+   * {@link import("@/lib/post-author-image").backupAuthorImage} has run.
+   *
+   * Null for every platform but Instagram: YouTube's oEmbed and Data API
+   * responses carry a channel title but no avatar, and the map platforms have
+   * no author at all.
+   */
+  authorImage: string | null;
+  /**
+   * The original CDN URL, set only where `authorImage` was replaced by a
+   * backup — the same "this was backed up" predicate `thumbnailSource` is.
+   */
+  authorImageSource: string | null;
   /** True when the caption could not be fetched and the user must paste it. */
   needsManualCaption: boolean;
   /**
@@ -200,6 +215,8 @@ async function fetchYouTube(
     // backed up and this stays null.
     thumbnailSource: null,
     author: null,
+    authorImage: null,
+    authorImageSource: null,
     needsManualCaption: false,
   };
 
@@ -231,6 +248,11 @@ async function fetchYouTube(
           title: snippet.title ?? null,
           caption: snippet.description ?? null,
           author: snippet.channelTitle ?? null,
+          // The Data API's snippet has no channel avatar; fetching one
+          // would be a second quota-costing call to channels.list for a
+          // picture, so YouTube posts render the initial fallback.
+          authorImage: null,
+          authorImageSource: null,
           thumbnail:
             snippet.thumbnails?.maxres?.url ??
             snippet.thumbnails?.high?.url ??
@@ -257,6 +279,9 @@ async function fetchYouTube(
     ...base,
     title: body.title ?? null,
     author: body.author_name ?? null,
+    // oEmbed returns author_name and author_url, never a picture.
+    authorImage: null,
+    authorImageSource: null,
     thumbnail: body.thumbnail_url ?? base.thumbnail,
     // oEmbed carries no description, so there is nothing for the model to read.
     needsManualCaption: true,
@@ -375,7 +400,12 @@ function parseEmbedCaption(root: HTMLElement): { caption: string; author: string
 /** Full caption, untruncated — the only free source that still returns one. */
 async function fetchInstagramEmbed(
   sourceUrl: string,
-): Promise<{ caption: string; author: string | null; thumbnail: string | null } | null> {
+): Promise<{
+  caption: string;
+  author: string | null;
+  authorImage: string | null;
+  thumbnail: string | null;
+} | null> {
   try {
     const res = await fetchWithTimeout(`${sourceUrl}embed/captioned/`, {
       headers: { "User-Agent": CRAWLER_UA },
@@ -389,6 +419,16 @@ async function fetchInstagramEmbed(
     const root = parse(body);
     const thumbnail =
       root.querySelector(".EmbeddedMediaImage")?.getAttribute("src")?.trim() || null;
+
+    // The author's avatar, in the header strip above the media. Two selectors
+    // because the embed markup carries both a semantic class and a generic
+    // one, and which appears varies by post type — a single selector would
+    // silently return null for half of them.
+    const authorImage =
+      root
+        .querySelector(".Avatar img, .EmbedHeader img")
+        ?.getAttribute("src")
+        ?.trim() || null;
 
     // Read the thumbnail before parseEmbedCaption, which mutates the tree.
     const parsed = parseEmbedCaption(root);
@@ -410,7 +450,7 @@ async function fetchInstagramEmbed(
       return null;
     }
 
-    return { ...parsed, thumbnail };
+    return { ...parsed, authorImage, thumbnail };
   } catch (cause) {
     const { reason, context } = classifyThrown(cause);
     logInstagramFailure("embed", sourceUrl, reason, context);
@@ -454,9 +494,21 @@ export function parseOgCaption(description: string): string | null {
 async function fetchInstagramOgTags(sourceUrl: string): Promise<{
   thumbnail: string | null;
   author: string | null;
+  /**
+   * Never set here. The og tags describe the *post* — og:image is the media,
+   * not the avatar — so this path recovers the handle without a picture, and
+   * the UI falls back to the initial. Named anyway so both Instagram paths
+   * return the same shape and the caller carries no branch.
+   */
+  authorImage: null;
   caption: string | null;
 }> {
-  const empty = { thumbnail: null, author: null, caption: null };
+  const empty = {
+    thumbnail: null,
+    author: null,
+    authorImage: null,
+    caption: null,
+  };
   try {
     const res = await fetchWithTimeout(sourceUrl, {
       headers: { "User-Agent": CRAWLER_UA },
@@ -497,7 +549,7 @@ async function fetchInstagramOgTags(sourceUrl: string): Promise<{
 
     // og:url carries the handle as https://www.instagram.com/<handle>/reel/<id>/
     const author = ogUrl?.match(/instagram\.com\/([^/]+)\/(?:p|reel|tv)\//)?.[1] ?? null;
-    return { thumbnail, author, caption };
+    return { thumbnail, author, authorImage: null, caption };
   } catch (cause) {
     const { reason, context } = classifyThrown(cause);
     logInstagramFailure("og", sourceUrl, reason, context);
@@ -516,6 +568,8 @@ async function fetchInstagram(sourceUrl: string): Promise<PostMetadata> {
     // module does no storage work.
     thumbnailSource: null,
     author: null,
+    authorImage: null,
+    authorImageSource: null,
     needsManualCaption: true,
   };
 
@@ -525,6 +579,7 @@ async function fetchInstagram(sourceUrl: string): Promise<PostMetadata> {
       ...base,
       caption: embed.caption,
       author: embed.author,
+      authorImage: embed.authorImage,
       thumbnail: embed.thumbnail,
       needsManualCaption: false,
     };
@@ -547,6 +602,7 @@ async function fetchInstagram(sourceUrl: string): Promise<PostMetadata> {
     ...base,
     thumbnail: og.thumbnail,
     author: og.author,
+    authorImage: og.authorImage,
     caption: og.caption,
     needsManualCaption: og.caption === null,
   };
@@ -612,6 +668,8 @@ async function fetchMapPlace(
     // Both vendors serve unsigned og:image URLs, so there is nothing to back up.
     thumbnailSource: null,
     author: null,
+    authorImage: null,
+    authorImageSource: null,
     // A map link never needs one: it names a place outright, so there is no
     // prose for the user to supply.
     needsManualCaption: false,
@@ -672,6 +730,8 @@ export function describePost(rawUrl: string): PostMetadata {
     thumbnail: null,
     thumbnailSource: null,
     author: null,
+    authorImage: null,
+    authorImageSource: null,
     // Nothing was fetched, so on its own this post still needs a caption. The
     // caller supplying one overrides this alongside `caption`.
     needsManualCaption: true,

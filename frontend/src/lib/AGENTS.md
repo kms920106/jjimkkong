@@ -20,6 +20,9 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
 | `legal.ts` | 약관·개인정보처리방침이 읽는 운영자 정보와 시행일 |
 | `profile-image.ts` | 프로필 사진 Vercel Blob 업로드·삭제. `file.type` 일치 검사 + `MAX_UPLOAD_BYTES`, `ProfileImageError`. **실패하면 throw한다** |
 | `post-thumbnail.ts` | 인스타그램 썸네일을 Blob으로 백업. `backupThumbnail()` / `deleteThumbnailBlob()`. **절대 throw하지 않는다** — 실패 시 원본 URL로 폴백 |
+| `post-author-image.ts` | 작성자 아바타를 Blob으로 백업. `backupAuthorImage()`. **삭제 경로가 없다** — 아바타는 한 작성자의 모든 게시글이 공유하므로 참조 카운트가 성립하지 않는다. 역시 throw하지 않는다 |
+| `cdn-image-backup.ts` | 위 둘이 공유하는 fetch·sniff·put 단계. 리다이렉트 거부·매직바이트 판정·크기 상한이 여기 한 곳에 있다 |
+| `author-profile-url.ts` | 작성자의 플랫폼 프로필 URL. 인스타그램만 non-null — 유튜브의 `author`는 채널 제목이라 URL을 지을 수 없다 |
 | `image-bytes.ts` | 매직바이트 → MIME 판정과 allowlist. 위 두 모듈이 공유 (SVG 제외 = blob 오리진 XSS) |
 | `platform-labels.ts` | `platformLabel()` — `Platform` → 한국어 이름. `Record`라 enum에 값이 늘면 컴파일러가 항목을 요구한다 |
 | `place-category.ts` | `formatCategory()` / `categoryLeaf()` — 네이버의 `음식점>일식>카레`를 읽을 수 있는 빵부스러기로. 없으면 `""`가 아니라 `null` |
