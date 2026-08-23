@@ -41,11 +41,14 @@ export default function Loading() {
         <span aria-hidden />
       </header>
 
-      <div className="flex w-full flex-col gap-4 px-4">
-        {/* Chip row: fixed widths stand in for the filter labels so the list
-            below does not jump down when the real tabs measure out. The key is
-            the index, not the width — two chips can share a width (the last two
-            do), and keying on the value makes React see a duplicate key. */}
+      {/* Chip row: fixed widths stand in for the filter labels so the grid
+          below does not jump down when the real tabs measure out. The key is
+          the index, not the width — two chips can share a width (the last two
+          do), and keying on the value makes React see a duplicate key.
+
+          Wrapped in its own `px-4` rather than the container having it, exactly
+          as LinksClient does: the grid must reach both screen edges. */}
+      <div className="px-4">
         <div className="flex gap-2" aria-hidden>
           {[44, 76, 60, 68, 68].map((w, i) => (
             <div
@@ -55,26 +58,19 @@ export default function Loading() {
             />
           ))}
         </div>
-
-        <p className="sr-only" role="status">
-          링크를 불러오는 중입니다.
-        </p>
-
-        <ul className="flex flex-col gap-3" aria-hidden>
-          {[0, 1, 2, 3].map((i) => (
-            <li key={i} className="rounded-xl border border-border bg-card p-3">
-              <div className="flex items-start gap-3">
-                <div className="h-16 w-16 shrink-0 animate-pulse rounded-lg bg-muted" />
-                <div className="flex min-w-0 flex-1 flex-col gap-2 py-0.5">
-                  <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
-                  <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
-                  <div className="mt-1 h-6 w-1/2 animate-pulse rounded-full bg-muted" />
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
       </div>
+
+      <p className="sr-only" role="status">
+        링크를 불러오는 중입니다.
+      </p>
+
+      {/* Nine cells: three rows is what a phone shows above the fold, so the
+          skeleton fills the same space the real grid will. */}
+      <ul className="grid grid-cols-3 gap-px bg-border" aria-hidden>
+        {Array.from({ length: 9 }, (_, i) => (
+          <li key={i} className="aspect-square animate-pulse bg-muted" />
+        ))}
+      </ul>
     </div>
   );
 }

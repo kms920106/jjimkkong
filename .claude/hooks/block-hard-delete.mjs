@@ -33,8 +33,57 @@ const BLOB_DELETE_OWNERS = ["post-thumbnail.ts", "profile-image.ts"];
 /** `<client>.<model>.delete(` / `.deleteMany(` — the Prisma delegate shape. */
 const PRISMA_DELETE = /(?:\w+)\.(\w+)\s*\.\s*(delete|deleteMany)\s*\(/g;
 
-const DESTRUCTIVE_SQL =
-  /\b(?:DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?|DROP\s+(?:TABLE|DATABASE|SCHEMA|TYPE))\b/i;
+/**
+ * Destructive SQL inside a file being written.
+ *
+ * Every branch requires the keyword to be *followed by a named target*, and a
+ * bare lowercase word does not count as one. Matching the keyword alone also
+ * matched Tailwind's `truncate` utility class, which this app's UI puts on
+ * nearly every list row: the hook refused to let `LinksClient.tsx` be written
+ * at all, i.e. it blocked ordinary work on the very files it exists to protect.
+ *
+ * What separates the two is how a table gets named. In this codebase's SQL the
+ * identifier is quoted — Prisma's models are PascalCase, so `"Place"` and
+ * `"SavedPost"` cannot be written bare — while a class list is unquoted
+ * lowercase words. So the keyword is matched case-insensitively but its operand
+ * is checked case-SENSITIVELY by namesATarget(): quoted, or uppercase-initial,
+ * or one of the SQL words that may stand between (`TABLE`, `IF EXISTS`).
+ * `truncate text-xs` matches none of those.
+ *
+ * This is a heuristic, and lowercase unquoted SQL slips through it — which is
+ * the layer's documented nature (it reads text; the enforcement is
+ * prisma-guard.ts). The trade is deliberate: a guard that blocks every UI file
+ * gets switched off, and then it guards nothing.
+ *
+ * The Bash pattern in DANGEROUS_COMMANDS stays deliberately broader: a shell
+ * command is not markup, and the bare keyword there has no innocent reading.
+ */
+const DESTRUCTIVE_KEYWORD =
+  /\b(DELETE\s+FROM|TRUNCATE|DROP\s+(?:TABLE|DATABASE|SCHEMA|TYPE))\s+(\S+)/gi;
+
+/**
+ * True when what follows a destructive keyword names a table.
+ *
+ * Case-sensitive, and that is the whole point: under a case-insensitive test
+ * `[A-Z_]` also accepts `text-xs`, which is what let the class list back
+ * through on the first attempt.
+ */
+function namesATarget(operand) {
+  return (
+    /^["'`]/.test(operand) || // "Place", `SavedPost`
+    /^(?:TABLE|IF)\b/i.test(operand) || // TRUNCATE TABLE …, DROP TABLE IF EXISTS …
+    /^[A-Z_]/.test(operand) // a PascalCase / SCREAMING_CASE bare identifier
+  );
+}
+
+/** Returns the offending SQL fragment, or null when the text is innocent. */
+function findDestructiveSql(text) {
+  DESTRUCTIVE_KEYWORD.lastIndex = 0;
+  for (const [, keyword, operand] of text.matchAll(DESTRUCTIVE_KEYWORD)) {
+    if (namesATarget(operand)) return `${keyword} ${operand}`;
+  }
+  return null;
+}
 
 /**
  * Commands that destroy data or schema.
@@ -114,10 +163,10 @@ if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {
   // pair drops a column, the soft-delete pair swaps unique indexes for partial
   // ones). Row and table destruction is what gets refused.
   if (/prisma\/migrations\/.*\.sql$/.test(path)) {
-    const match = DESTRUCTIVE_SQL.exec(added);
+    const match = findDestructiveSql(added);
     if (match) {
       deny(
-        `Blocked: this migration contains "${match[0]}". Destroying rows or tables ` +
+        `Blocked: this migration contains "${match}". Destroying rows or tables ` +
           `in a migration is irreversible against live Supabase data. If it is ` +
           `genuinely required, apply it by hand after confirming with the user.`,
       );
@@ -165,10 +214,10 @@ if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {
     );
   }
 
-  const sql = DESTRUCTIVE_SQL.exec(added);
+  const sql = findDestructiveSql(added);
   if (sql) {
     deny(
-      `Blocked: raw SQL containing "${sql[0]}". Schema and row destruction ` +
+      `Blocked: raw SQL containing "${sql}". Schema and row destruction ` +
         `belong in a reviewed migration, not in application code.`,
     );
   }

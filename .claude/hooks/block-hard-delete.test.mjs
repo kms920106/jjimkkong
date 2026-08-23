@@ -89,6 +89,19 @@ const cases = [
   ["docs: AGENTS.md may quote destructive SQL", { tool_name: "Edit", tool_input: { file_path: p("frontend/prisma/AGENTS.md"), new_string: `마이그레이션에 ${DELFROM} 을 쓰지 말 것.` } }, 0],
   ["docs: db-permissions.md may quote SQL", { tool_name: "Write", tool_input: { file_path: p("docs/db-permissions.md"), content: `${TRUNC} / ${DROPT} 권한을 회수한다.` } }, 0],
 
+  // ---- The SQL pattern must not fire on English or CSS ----
+  // A keyword with no operand after it is not SQL. Tailwind's `truncate` class
+  // is on nearly every list row in this app, and the bare-keyword pattern this
+  // replaced refused to let those components be written at all — the hook was
+  // blocking ordinary work on the files it exists to protect.
+  ["ui: tailwind truncate class", { tool_name: "Write", tool_input: { file_path: p("frontend/src/components/X.tsx"), content: `<span className="min-w-0 ${TRUNC.toLowerCase()} text-xs" />` } }, 0],
+  ["ui: line-clamp beside truncate", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/components/Y.tsx"), new_string: `className="${TRUNC.toLowerCase()}"` } }, 0],
+  // …but real SQL still names its target, quoted or bare, so it still fails.
+  ["sql: TRUNCATE with quoted table", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/z.ts"), content: `sql(\`${TRUNC} "Place"\`)` } }, 2],
+  ["sql: TRUNCATE TABLE bare name", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/z.ts"), content: `sql(\`${TRUNC} TABLE place\`)` } }, 2],
+  ["sql: DELETE FROM still blocked", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/z.ts"), content: `sql(\`${DELFROM} "SavedPost"\`)` } }, 2],
+  ["sql: DROP TABLE IF EXISTS", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/z.ts"), content: `sql(\`${DROPT} IF EXISTS place\`)` } }, 2],
+
   // ---- Robustness ----
   ["other tool ignored", { tool_name: "Read", tool_input: { file_path: "anything" } }, 0],
 ];

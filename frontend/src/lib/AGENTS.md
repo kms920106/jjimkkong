@@ -21,6 +21,8 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
 | `profile-image.ts` | 프로필 사진 Vercel Blob 업로드·삭제. `file.type` 일치 검사 + `MAX_UPLOAD_BYTES`, `ProfileImageError`. **실패하면 throw한다** |
 | `post-thumbnail.ts` | 인스타그램 썸네일을 Blob으로 백업. `backupThumbnail()` / `deleteThumbnailBlob()`. **절대 throw하지 않는다** — 실패 시 원본 URL로 폴백 |
 | `image-bytes.ts` | 매직바이트 → MIME 판정과 allowlist. 위 두 모듈이 공유 (SVG 제외 = blob 오리진 XSS) |
+| `platform-labels.ts` | `platformLabel()` — `Platform` → 한국어 이름. `Record`라 enum에 값이 늘면 컴파일러가 항목을 요구한다 |
+| `place-category.ts` | `formatCategory()` / `categoryLeaf()` — 네이버의 `음식점>일식>카레`를 읽을 수 있는 빵부스러기로. 없으면 `""`가 아니라 `null` |
 | `utils.ts` | `cn()` — shadcn의 clsx + tailwind-merge |
 
 ## Subdirectories
