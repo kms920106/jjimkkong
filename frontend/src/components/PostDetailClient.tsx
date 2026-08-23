@@ -28,6 +28,23 @@ import { useBackLink } from "@/lib/use-back-link";
 /**
  * One saved post in full: its picture, its caption, and the places it named.
  *
+ * Two white blocks on a grey page, the same grammar /settings uses — the gap
+ * between them *is* the separator, so it has to read as a band rather than as
+ * a hairline. Before it, 매장 정보 began four pixels under the caption and the
+ * two ran together as one column.
+ *
+ * The post block is laid out the way the source platform lays it out: the
+ * author in a row above the picture, then the picture unobstructed, then the
+ * caption. Nothing is drawn on top of the photograph any more — the overlay
+ * that carried the handle covered the top-left of every thumbnail, which on a
+ * food photo is usually part of the dish, and the source link has moved out of
+ * the picture's corner to the right end of that same author row.
+ *
+ * The platform's name is no longer a line of its own under the picture. It was
+ * already said twice on the same screen — by the source link's label and by
+ * the author's avatar — and a bare "인스타그램" between the picture and the
+ * caption read as a heading for the caption.
+ *
  * The places are a plain vertical list, one card per row. A horizontal
  * scroller lived here first to save height, but it cost more than it saved:
  * every card was clipped to 78% of the viewport so its address wrapped to
@@ -83,7 +100,11 @@ export default function PostDetailClient({
   }
 
   return (
-    <div className="flex w-full flex-col pb-8">
+    // The grey is the page, exactly as on /settings: the sections are white
+    // and the gap between them lets the page through, which is what makes
+    // 게시글 and 매장 정보 read as two blocks rather than one long column.
+    // `min-h-screen` so the band below the last card reaches the bottom.
+    <div className="flex min-h-screen w-full flex-col bg-neutral-50 pb-8">
       <div className="relative">
         <SettingsHeader
           href="/links"
@@ -102,81 +123,60 @@ export default function PostDetailClient({
         </div>
       </div>
 
-      <article className="flex flex-col gap-4">
+      {/* One white block, edge to edge, the way a /settings RowGroup is. */}
+      <article className="flex flex-col gap-3 border-b border-border/60 bg-background pb-4">
+        {/* Above the picture, not over it: this is how the platforms
+            themselves label a post — Instagram's own header is an avatar and a
+            handle in a row of their own, and the photograph underneath is left
+            unobstructed. The overlay that used to sit at eleven o'clock
+            covered the top-left of every thumbnail, which on a food photo is
+            usually part of the dish.
+
+            The source link shares that row, pushed to the opposite edge. It
+            belongs with the attribution — both answer "where did this come
+            from" — and putting it here costs no vertical space at all, where
+            a row of its own under the picture pushed the caption down by the
+            height of a button on every post. `justify-between` rather than
+            `ml-auto` so the link still sits at the right edge on a post whose
+            author is missing. */}
+        <div className="flex min-h-9 items-center justify-between gap-3 px-4 pt-3">
+          {post.author ? (
+            <AuthorLink
+              author={post.author}
+              authorImage={post.authorImage}
+              platform={post.platform}
+            />
+          ) : (
+            <span aria-hidden />
+          )}
+          <SourceLink post={post} />
+        </div>
+
         {/* Square rather than the image's own ratio: the grid this opens from
             is square, so a detail view that reflowed to 4:5 would read as a
-            different picture arriving.
-
-            The source link sits on the picture's lower-right corner rather
-            than below the caption: the picture *is* the post, so the way back
-            to it belongs on it, and a caption long enough to need the "더보기"
-            toggle below would otherwise push the link off the first screen. */}
+            different picture arriving. */}
         {post.thumbnail && (
-          <div className="relative">
-            <PostThumbnail
-              key={post.thumbnail}
-              src={post.thumbnail}
-              alt=""
-              className="aspect-square w-full bg-muted object-cover"
-              fallback={
-                <div
-                  aria-hidden
-                  className="flex aspect-square w-full items-center justify-center bg-muted text-sm text-muted-foreground"
-                >
-                  {platformLabel(post.platform)}
-                </div>
-              }
-            />
-            {/* Eleven o'clock, mirroring how the platforms themselves label a
-                post: the author sits over the top-left of the media, the way
-                Instagram's own header does, so the picture arrives already
-                attributed instead of the handle being a line of metadata
-                underneath it. The source link keeps the opposite corner, so
-                the two overlays never collide however long the handle is. */}
-            {post.author && (
-              <div className="absolute top-3 left-3">
-                <AuthorLink
-                  author={post.author}
-                  authorImage={post.authorImage}
-                  platform={post.platform}
-                  variant="overlay"
-                />
+          <PostThumbnail
+            key={post.thumbnail}
+            src={post.thumbnail}
+            alt=""
+            className="aspect-square w-full bg-muted object-cover"
+            fallback={
+              <div
+                aria-hidden
+                className="flex aspect-square w-full items-center justify-center bg-muted text-sm text-muted-foreground"
+              >
+                {platformLabel(post.platform)}
               </div>
-            )}
-            <div className="absolute right-3 bottom-3">
-              <SourceLink post={post} />
-            </div>
-          </div>
+            }
+          />
         )}
 
-        <div
-          className={`flex flex-col gap-3 px-4 ${post.thumbnail ? "" : "pt-4"}`}
-        >
-          {/* The author is drawn over the picture, so this line carries only
-              the platform — repeating the handle directly beneath its own
-              overlay would read as two different authors. A post with no
-              picture has no overlay to carry it, so it gets the link here
-              instead; that is the same condition SourceLink below tests. */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="text-xs text-muted-foreground">
-              {platformLabel(post.platform)}
-            </p>
-            {!post.thumbnail && post.author && (
-              <AuthorLink
-                author={post.author}
-                authorImage={post.authorImage}
-                platform={post.platform}
-              />
-            )}
+        {caption && (
+          <div className="px-4">
+            <Caption text={caption} />
           </div>
-
-          {caption && <Caption text={caption} />}
-
-          {/* Only when there is no picture to hang it on: otherwise the link
-              already sits in the thumbnail's corner and a second copy here
-              would read as a different destination. */}
-          {!post.thumbnail && <SourceLink post={post} />}
-        </div>
+        )}
       </article>
 
       {places.length > 0 && (
@@ -185,7 +185,7 @@ export default function PostDetailClient({
           post={post}
           mapProvider={mapProvider}
           onFocus={focusOnMap}
-          className="mt-4"
+          className="mt-2.5"
         />
       )}
     </div>
@@ -209,10 +209,7 @@ function SourceLink({ post }: { post: SavedPostDTO }) {
       }
       variant="outline"
       size="sm"
-      // Over a photograph the token background is not a guaranteed contrast,
-      // so the pill carries its own opaque surface and a shadow to lift it off
-      // whatever pixels happen to be under that corner.
-      className="w-fit bg-background shadow-sm"
+      className="w-fit"
     >
       <ExternalLink aria-hidden />
       {platformLabel(post.platform)}
@@ -306,7 +303,7 @@ function PlaceList({
 }) {
   return (
     <section
-      className={`flex flex-col gap-2 ${className ?? ""}`}
+      className={`flex flex-col gap-2 border-y border-border/60 bg-background py-4 ${className ?? ""}`}
       aria-labelledby="places-heading"
     >
       <div className="flex items-center px-4">
