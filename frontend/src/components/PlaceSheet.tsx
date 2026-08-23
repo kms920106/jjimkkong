@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, ExternalLink, MapPin, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Copy, MapPin, X } from "lucide-react";
 import { toast } from "sonner";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -11,14 +11,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { MapAppLinks } from "@/components/map/MapAppLinks";
 import { PostThumbnail } from "@/components/PostThumbnail";
-import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
-import type {
-  MapProvider,
-  PlaceSourceDTO,
-  SavedPlaceDTO,
-} from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { MapProvider, PlaceSourceDTO, SavedPlaceDTO } from "@/lib/types";
 
 /**
  * A post that mentions this place, flattened to just what the sheet renders.
@@ -74,7 +69,6 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
   // that key is ever dropped, a stale check would claim the *new* address had
   // been copied — the key is load-bearing, not a rendering nicety.
 
-  const apps = useMemo(() => mapAppsFor(mapProvider), [mapProvider]);
   // Only a map-provider post carries an exact permalink, and only for its own
   // provider. Everything else searches by name.
   //
@@ -173,25 +167,12 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
         {/* 지도앱에서 열기: 네이버맵 · 카카오맵 · 구글맵을 전부 나열한다.
             Scrolls on a narrow phone rather than wrapping into a second line
             that pushes the source list below the fold. */}
-        <div className="-mx-5 mt-3 flex gap-2 overflow-x-auto scrollbar-none px-5">
-          {apps.map((app) => (
-            <a
-              key={app.provider}
-              href={hrefForApp(app, place, exactSourceFor(app.provider))}
-              // No `target="_blank"`: see the same anchors in PostDetailClient —
-              // in the iOS Home Screen app it opens an in-app browser sheet over
-              // us rather than a tab, hiding the Universal Link hand-off.
-              rel="noreferrer"
-              className={cn(
-                buttonVariants({ variant: "outline", size: "sm" }),
-                "shrink-0 rounded-full",
-              )}
-            >
-              <ExternalLink aria-hidden />
-              {app.label}
-            </a>
-          ))}
-        </div>
+        <MapAppLinks
+          place={place}
+          exactSourceFor={exactSourceFor}
+          mapProvider={mapProvider}
+          className="-mx-5 mt-3 flex-nowrap overflow-x-auto scrollbar-none px-5"
+        />
 
         {/* What this app knows that a map app does not: which of the user's
             own saved posts put this pin here. That is the whole reason the

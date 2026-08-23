@@ -6,6 +6,7 @@ import { ExternalLink, MapPin, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { MapProvider, SavedPlaceDTO, SavedPostDTO } from "@/lib/types";
 import { AuthorLink } from "@/components/AuthorLink";
+import { MapAppLinks } from "@/components/map/MapAppLinks";
 import { PostThumbnail } from "@/components/PostThumbnail";
 import { SettingsHeader } from "@/components/SettingsHeader";
 import {
@@ -20,7 +21,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
 import { formatCategory } from "@/lib/place-category";
 import { platformLabel } from "@/lib/platform-labels";
 import { useBackLink } from "@/lib/use-back-link";
@@ -335,9 +335,6 @@ function PlaceCard({
   onFocus: () => void;
 }) {
   const category = formatCategory(place.category);
-  // The user's own map choice leads; the rest sit beside it as plain links
-  // rather than behind a menu, since a card has the width for all three.
-  const apps = mapAppsFor(mapProvider);
 
   return (
     <li>
@@ -371,23 +368,12 @@ function PlaceCard({
 
         {/* `mt-auto` pins the links to the bottom so cards of differing text
             length still line their actions up across the row. */}
-        <div className="mt-auto flex flex-wrap gap-x-3 gap-y-1 pt-1 text-xs">
-          {apps.map((app) => (
-            <a
-              key={app.provider}
-              href={hrefForApp(app, place, post)}
-              // No `target="_blank"`: from the iOS Home Screen app that opens an
-              // in-app browser sheet over us instead of a tab, which both buries
-              // the Universal Link hand-off to the map app and leaves a sheet to
-              // dismiss. `noopener` is omitted for the same reason — it governs
-              // a new browsing context that no longer exists here.
-              rel="noreferrer"
-              className="text-muted-foreground underline decoration-dotted underline-offset-2"
-            >
-              {app.label}
-            </a>
-          ))}
-        </div>
+        <MapAppLinks
+          place={place}
+          post={post}
+          mapProvider={mapProvider}
+          className="mt-auto pt-1"
+        />
       </div>
     </li>
   );
