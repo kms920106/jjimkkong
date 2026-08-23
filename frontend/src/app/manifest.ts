@@ -3,7 +3,7 @@ import type { MetadataRoute } from "next";
 /**
  * The Home Screen app. This is not decoration: the service is used on iOS by
  * way of "홈 화면에 추가", and that mode changes how links behave — see the
- * standalone notes in the root AGENTS.md and `lib/map/openMapApp.ts`.
+ * standalone notes in the root AGENTS.md and `lib/map/externalLinks.ts`.
  *
  * No service worker and no offline story: `display: standalone` needs neither,
  * and nothing here works without the network anyway.

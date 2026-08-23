@@ -42,52 +42,70 @@ resolve한다. 카카오는 `autoload=false`로 주입되므로 `kakao.maps.load
 
 **외부 지도 링크는 퍼머링크가 아니라 이름 검색이다**(`externalLinks.ts`). 어느 제공자도
 링크 걸 place id를 주지 않고, `place.naverLink`는 지도 페이지가 아니라 업체 홈페이지다.
-예외는 게시글 자체가 지도 링크인 경우(`Platform.NAVER`/`KAKAO`)뿐이고, `targetForApp()`이
-그 퍼머링크를 **자기 제공자 자리에 끼워 넣는다** — 줄을 하나 더 만들면 정확도만 다른
-네이버맵 항목이 둘이 된다. `/links`와 `PlaceSheet`가 같은 함수를 쓴다.
+예외는 게시글 자체가 지도 링크인 경우뿐이고, `hrefForApp()`이 그 퍼머링크를 **자기 제공자
+자리에 끼워 넣는다** — 줄을 하나 더 만들면 정확도만 다른 항목이 둘이 된다. `/links`와
+`PlaceSheet`가 같은 함수를 쓴다.
 
-**그 링크는 URL 문자열이 아니라 `MapTarget`이다. 이유는 iOS 홈화면 앱이다.**
-루트 AGENTS.md의 "이 앱은 iOS 홈화면에 추가해서 쓴다" 절이 근거이고, 요약하면:
-Universal Link는 iOS가 네이티브 앱에 넘기므로 **우리 창이 navigate하지 않아** 보던
-게시글이 남지만, Universal Link가 아닌 https URL은 그냥 웹 페이지로 열려 화면을 덮는다.
-그래서 두 종류를 타입으로 구분한다.
+**그 예외는 카카오에만 있고, 비대칭이 의도된 것이다.** 퍼머링크도 결국 홈화면 앱의 앵커에
+실리므로 **Universal Link가 아니면 게시글을 날린다** — 이 파일이 막으려는 그 실패다.
+`canonicalize()`가 저장하는 형태로 판정한다:
 
-- `kind: "url"` — 카카오·구글·퍼머링크. 앵커 기본 동작에 그대로 맡긴다.
-- `kind: "scheme"` — 네이버 전용. `openMapApp()`이 처리한다.
+| 플랫폼 | 저장되는 퍼머링크 | AASA | 처리 |
+|---|---|---|---|
+| KAKAO | `place.map.kakao.com/<id>` | O (`/*`) | 퍼머링크를 쓴다 |
+| NAVER | `map.naver.com/p/entry/place/<id>` | **X** | 퍼머링크를 버리고 `naverMapUrl()`의 좌표 핀으로 떨어진다 |
 
-**세 제공자의 URL은 임의로 바꾸지 말 것. 각각 실측으로 고른 형태다.**
+네이버 퍼머링크를 "복원"하지 말 것. 사용자가 볼 수 없는 정확도보다 페이지를 잃지 않는 것이
+낫다. `launchApp`에 id로 장소를 여는 형태가 있는지는 **실기기로만 확인된다** — 그 SPA는 아무
+경로에나 200을 돌려주므로 HTTP 상태는 근거가 되지 않는다.
+
+**생성되는 세 URL은 전부 Apple Universal Link이고, iOS 홈화면 앱에서는 그게 설계의 전부다.**
+루트 AGENTS.md의 "이 앱은 iOS 홈화면에 추가해서 쓴다" 절이 근거다. Universal Link는 iOS가
+네이티브 앱에 바로 넘기므로 **우리 창이 navigate하지 않아** 보던 게시글이 그대로 남고, 앱이
+없으면 같은 URL이 제공자의 웹 지도를 띄운다. 그래서 커스텀 스킴도, 우리가 만드는 폴백
+타이머도 필요하지 않다.
+
+**호스트와 경로는 임의로 바꾸지 말 것. 각각 실측으로 고른 형태다.**
 
 | 제공자 | 형태 | 이유 |
 |---|---|---|
-| 카카오 | `m.map.kakao.com/actions/searchView?q=` | **`m.` 필수.** `map.kakao.com`의 AASA는 문자열이 닫히지 않은 **깨진 JSON**이고, 모바일 UA에서 `/?q=`는 `applink.map.kakao.com`(앱 설치 안내 페이지)으로 302된다 — 이 변경이 없애려던 바로 그 화면이다. `m.` 쪽은 정상 JSON이고 `/actions/searchView`가 그 안에 있다. `map.kakao.com/actions/searchView`는 404로 리다이렉트된다(실측) |
-| 구글 | `google.com/maps/search/?api=1&query=` | 공식 문서상 Universal Link. 앱이 없으면 같은 URL이 웹 지도를 띄운다 |
-| 네이버 | `nmap://place?lat=&lng=&name=&appname=` | `map.naver.com`에 **AASA가 아예 없다** → https는 웹으로 열린다. 스킴만이 앱에 직접 닿는다 |
+| 네이버 | `inapp.map.naver.com/launchApp/place?lat=&lng=&name=` | `map.naver.com`에는 AASA가 **없지만** `launchApp/*`에는 있다. `m.` 호스트는 이 호스트로 302하면서 **쿼리스트링을 버리므로**(실측) 앱 없는 사용자가 장소가 아닌 빈 지도로 떨어진다 |
+| 카카오 | `m.map.kakao.com/actions/searchView?q=` | `map.kakao.com`의 AASA는 문자열이 닫히지 않은 **깨진 JSON**이고, 모바일 UA에서 `/?q=`는 `applink.map.kakao.com`(앱 설치 안내 페이지)으로 302된다 |
+| 구글 | `google.com/maps/search/?api=1&query=` | 공식 문서상 Universal Link |
 
-**네이버의 `nmap://`에서 `appname`은 필수 파라미터이고, `place`는 `lat`·`lng`·`name`
-셋 다 요구한다**(공식 문서). 좌표가 이미 `SavedPlaceDTO`에 있으므로 이름 검색보다 정확하다.
+**네이버에 `nmap://` 스킴을 다시 만들지 말 것. 그게 이 파일이 한 번 실패한 지점이다.**
+`map.naver.com`에 AASA가 없는 것만 보고 스킴이 유일한 길이라고 판단해 `nmap://place` +
+1.5초 타이머 폴백을 직접 구현한 적이 있다. 그 폴백이 스킴과 경쟁해서 **이겼고**, 앱은 우리
+폴백의 `/search?query=`를 받아 좌표로 지목한 핀 대신 **이름 검색 결과**
+("위치 정보 없음 / 서울특별시 중구 중심으로 …")를 띄웠다. 앱이 없을 때는 같은 폴백이
+게시글을 웹 지도로 덮었다.
 
-**앵커의 `href`에는 스킴이 아니라 폴백 URL을 넣는다**(`hrefOf()`). JS 없이도, 링크 복사에도
-유효해야 하고, 데스크톱 방문자에게 `nmap://`은 열 수 없는 링크다.
+**타이머로 핸드오프 성공을 감지할 수 없다는 것이 근본 이유다.** standalone 모드에서는 Page
+Visibility API가 잘못된 상태로 발화한다(WebKit
+[#202399](https://bugs.webkit.org/show_bug.cgi?id=202399)) — 취소 신호를 그 API에 걸면 앱이
+정상적으로 떴는데도 폴백이 살아남는다. 네이버 자신의 launch 페이지도 같은 문제를 못 풀어서
+2500ms 타이머 휴리스틱을 쓴다. **정확성을 그 API에 걸지 말 것.**
 
-**지도 버튼에 `target="_blank"`를 다시 붙이지 말 것.** standalone 모드에서 그건 새 탭이
-아니라 **in-app 브라우저 오버레이**이고, 사용자가 닫아야 하는 시트를 하나 더 만들면서
-네이티브 앱 핸드오프를 가린다. (인스타그램 `SourceLink`의 `_blank`는 그대로 둔다 —
-Universal Link라 이미 잘 동작하며 건드릴 이유가 없다.)
+**`appname`과 `fallbackUrl`은 이 URL에서 아무 일도 하지 않는다.** `appname`은 raw `nmap://`의
+필수 파라미터이지만 launch 페이지는 `appSchemeName`(허용값 `nmap`/`navermaps`)만 읽는다.
+`fallbackUrl`은 `^https?://([a-z0-9.]+)\.naver\.com` 검사를 통과해야 하므로 우리 도메인을
+넘길 수 없다 — 앱이 없을 때 찜꽁으로 돌아오게 만들 방법은 없고, 이건 카카오·구글과 같은
+수용한 트레이드오프다.
 
-**`visibilitychange`는 `document`에 걸어야 한다. `window`가 아니다.** 이 이벤트는
-버블링하지 않으므로(실측) window 리스너는 **영원히 발화하지 않고**, 그러면 앱이 정상적으로
-열린 뒤에도 폴백 타이머가 살아남아 우리 페이지를 네이버 웹 지도로 덮는다 — 이 모듈이
-막으려고 존재하는 바로 그 버그다. `pagehide`는 반대로 window 이벤트이니, 두 리스너의
-대상이 서로 다르다는 것 자체가 의도된 것이다(등록과 해제의 대상도 각각 맞춰야 한다).
-
-**진행 중인 시도는 모듈 스코프에 하나만 둔다**(`inFlight`). 게시글 하나가 장소 여섯 곳을
-담을 수 있어서 네이버맵 칩 두 개가 손가락 하나 너비 안에 있고, 첫 탭의 타이머가 살아 있는
-채로 두 번째를 누르면 앱이 없을 때 **두 타이머가 각각 이동을 시도한다** — 사용자가 마지막에
-누른 B가 아니라 A의 지도에 도착할 수 있다. 새 시도가 이전 시도를 무효화한다.
+**지도 버튼에 `target="_blank"`를 붙이지 말 것.** standalone에서 그건 새 탭이 아니라
+**in-app 브라우저 오버레이**이고, 사용자가 닫아야 하는 시트를 만들면서 Universal Link
+핸드오프를 가린다. `rel`도 `noreferrer`만 둔다 — `noopener`는 존재하지 않는 새 browsing
+context를 규율하는 값이라 무의미하고, 남겨두면 `_blank`가 아직 있는 것처럼 읽힌다.
+(인스타그램 `SourceLink`의 `_blank`는 그대로 둔다 — 이미 잘 동작한다.)
 
 **두 렌더 지점은 반드시 함께 움직인다**: `components/PostDetailClient.tsx`의 `PlaceCard`와
-`components/PlaceSheet.tsx`. 둘 다 `targetForApp()` + `hrefOf()` + `onClick`의 같은 삼종
-세트를 쓴다.
+`components/PlaceSheet.tsx`. 둘 다 `hrefForApp()`만 쓰는 단순 앵커다.
+
+**단 퍼머링크를 찾는 방식은 다르고, 달라야 한다.** `PlaceCard`는 게시글 하나를 보는 화면이라
+그 게시글을 그대로 넘긴다. `PlaceSheet`는 **장소** 화면이라 그 핀을 언급한 모든 게시글이
+`sources`에 들어오고 네이버·카카오가 함께 있을 수 있다 — 그래서 앱마다
+`exactSourceFor(app.provider)`로 찾는다. 하나를 골라 시트 전체에 쓰면 먼저 정렬된 쪽이
+이기고 다른 제공자 버튼은 조용히 퍼머링크를 잃는다.
 
 ### Testing Requirements
 각 지도 콘솔의 허용 도메인에 `http://localhost:4000`과 배포 도메인이 등록되어 있어야
