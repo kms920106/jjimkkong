@@ -20,10 +20,10 @@ import { platformLabel } from "@/lib/platform-labels";
  */
 export function PostGrid({ posts }: { posts: SavedPostDTO[] }) {
   return (
-    // `gap-px` on a muted background, not `gap-0`: the hairline between
+    // `gap-px` on a white background, not `gap-0`: the hairline between
     // cells is what keeps two adjacent dark thumbnails from reading as one
     // image, and it costs no layout the way a border would.
-    <ul className="grid grid-cols-3 gap-px bg-border">
+    <ul className="grid grid-cols-3 gap-px bg-background">
       {posts.map((post) => (
         <PostCell key={post.id} post={post} />
       ))}
@@ -69,14 +69,14 @@ function PostCell({ post }: { post: SavedPostDTO }) {
           key={post.thumbnail}
           src={post.thumbnail}
           alt=""
-          className="size-full bg-muted object-cover"
+          className="size-full bg-background object-cover"
           fallback={
             // No picture is a normal state, not an error: a map link has no
             // thumbnail at all. The cell still has to fill its square or the
             // grid develops holes, so it names the platform instead.
             <span
               aria-hidden
-              className="flex size-full items-center justify-center bg-muted p-1 text-center text-[10px] leading-tight text-muted-foreground"
+              className="flex size-full items-center justify-center bg-background p-1 text-center text-[10px] leading-tight text-muted-foreground"
             >
               {platformLabel(post.platform)}
             </span>

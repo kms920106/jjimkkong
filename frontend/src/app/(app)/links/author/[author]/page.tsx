@@ -97,10 +97,6 @@ export default async function AuthorPostsPage({
 
         <div className="flex flex-col items-center gap-1">
           <h2 className="text-lg font-medium break-all">{author}</h2>
-          <p className="text-xs text-muted-foreground">
-            {platform ? `${platformLabel(platform)} · ` : ""}
-            저장한 링크 {dtos.length}개
-          </p>
         </div>
 
         {/* Only when we can name the account with certainty — see
