@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
 import { formatCategory } from "@/lib/place-category";
 import { platformLabel } from "@/lib/platform-labels";
+import { useBackLink } from "@/lib/use-back-link";
 
 /**
  * One saved post in full: its picture, its caption, and the places it named.
@@ -45,6 +46,12 @@ export default function PostDetailClient({
 }) {
   const router = useRouter();
   const places = post.places;
+
+  /**
+   * Back to the grid. Popping rather than pushing is what makes the second
+   * back press leave /links instead of returning here — see useBackLink.
+   */
+  const { onBackClick: goBack } = useBackLink();
 
   /**
    * Removing this post destroys the page we are on, so it returns to the grid
@@ -79,7 +86,12 @@ export default function PostDetailClient({
   return (
     <div className="flex w-full flex-col pb-8">
       <div className="relative">
-        <SettingsHeader href="/links" ariaLabel="링크 목록으로" title="링크" />
+        <SettingsHeader
+          href="/links"
+          ariaLabel="링크 목록으로"
+          title="링크"
+          onBackClick={goBack}
+        />
         {/* Absolutely placed rather than a fourth grid column: SettingsHeader's
             three columns are what centre the title, and adding one would shift
             it off centre on every other page that shares the header. */}

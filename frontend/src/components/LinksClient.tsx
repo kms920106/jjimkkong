@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Copy, MapPin } from "lucide-react";
 import type { Platform, SavedPostDTO } from "@/lib/types";
 import { PostThumbnail } from "@/components/PostThumbnail";
@@ -12,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import LoginDrawer from "@/components/LoginDrawer";
 import { SettingsHeader } from "@/components/SettingsHeader";
 import { platformLabel } from "@/lib/platform-labels";
+import { useBackLink } from "@/lib/use-back-link";
 
 /**
  * "전체" is not a Platform value, so the filter is widened rather than typed
@@ -45,7 +45,6 @@ export default function LinksClient({
   initialPosts: SavedPostDTO[];
   signedIn: boolean;
 }) {
-  const router = useRouter();
   const [posts] = useState(initialPosts);
   const [filter, setFilter] = useState<Filter>("ALL");
   const [loginOpen, setLoginOpen] = useState(false);
@@ -69,77 +68,10 @@ export default function LinksClient({
     filter === "ALL" ? posts : posts.filter((post) => post.platform === filter);
 
   /**
-   * True when this page was reached by a client-side navigation from inside
-   * the app, i.e. there is an entry of ours behind it that back() can pop.
-   * False on a cold entry — a refresh, a bookmark, or a link from outside.
-   *
-   * Determined from the Navigation API's own history when the browser has it
-   * (Chromium), because `navigation.entries()` only ever contains entries from
-   * this document's session and `currentEntry.index > 0` therefore means
-   * exactly what we need. Elsewhere (Safari, Firefox as of writing) it falls
-   * back to false and the button stays a plain link.
-   *
-   * Deliberately NOT `history.state.idx`: that is a Pages Router field. The App
-   * Router only copies `__NA` and `__PRIVATE_NEXTJS_INTERNALS_TREE` onto its
-   * entries, and `__NA` is stamped on the very first one too, so neither can
-   * distinguish "came from the map" from "opened /links directly".
-   *
-   * Also not `history.length`: that counts the whole tab. A reused tab reports
-   * a long history belonging to other sites, and back() would leave the app.
-   *
-   * Read at click time rather than held in state: nothing in the render output
-   * depends on it — the button looks and reads the same either way — and the
-   * answer can change while the page is open, since opening a post pushes a new
-   * entry. A value captured on mount would be stale by then.
-   *
-   * A delete disqualifies the page too. Deleting now happens on the detail
-   * page, which calls router.refresh(), and refresh invalidates the bfcache
-   * (refresh-reducer.js: "During a refresh, invalidate the BFCache, which may
-   * contain dynamic data") — correctly, since the map must stop showing the
-   * pins of a post that no longer exists. Returning here from that delete
-   * therefore lands with the flag already set by the navigation, so the guard
-   * stays for the case where this page is revisited within one session.
+   * Back to the map. See useBackLink: this pops the map's own entry when the
+   * user arrived from it, and stays a plain link to "/" otherwise.
    */
-  function canPopBack() {
-    if (didMutate.current) return false;
-    const index = window.navigation?.currentEntry?.index;
-    return typeof index === "number" && index > 0;
-  }
-
-  // Kept for the same reason the old list held it: something that invalidated
-  // the home page's cached entry must stop the back button from popping to it.
-  const didMutate = useRef(false);
-
-  /**
-   * Back to the map. Stays an <a href="/"> so middle-click, ctrl-click, "open
-   * in new tab" and keyboard activation all keep working; only a plain left
-   * click on a page we can pop is turned into a history pop.
-   *
-   * The difference is not cosmetic. `/` is `force-dynamic`, so pushing it is a
-   * fresh server round trip every time — getUser(), the savedPost join, then a
-   * map SDK boot on arrival. Popping it restores the map the browser already
-   * has. loading.tsx covers the push path; this removes the wait entirely for
-   * the common case of someone who arrived here from the map.
-   */
-  function goBack(event: React.MouseEvent<HTMLAnchorElement>) {
-    // Let the browser handle anything that isn't a plain left click: modified
-    // clicks mean "somewhere else", not "back".
-    if (
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
-    ) {
-      return;
-    }
-
-    if (!canPopBack()) return; // nothing of ours behind: fall through to href="/"
-
-    event.preventDefault();
-    router.back();
-  }
+  const { onBackClick: goBack } = useBackLink();
 
   return (
     <div className="flex w-full flex-col gap-4">

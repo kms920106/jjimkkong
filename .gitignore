@@ -22,3 +22,6 @@ Thumbs.db
 
 # Playwright MCP
 .playwright-mcp/
+
+# Stray nested Next.js build output (dev server cwd mismatch)
+frontend/frontend/
