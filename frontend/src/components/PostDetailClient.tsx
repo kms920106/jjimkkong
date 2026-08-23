@@ -81,8 +81,6 @@ export default function PostDetailClient({
     router.push(`/?place=${placeIds.map(encodeURIComponent).join(",")}`);
   }
 
-  const title = post.title ?? places[0]?.name ?? post.sourceUrl;
-
   return (
     <div className="flex w-full flex-col pb-8">
       <div className="relative">
@@ -96,7 +94,10 @@ export default function PostDetailClient({
             three columns are what centre the title, and adding one would shift
             it off centre on every other page that shares the header. */}
         <div className="absolute inset-y-0 right-1 flex items-center">
-          <RemoveButton label={title} onRemove={handleRemove} />
+          <RemoveButton
+            label={platformLabel(post.platform)}
+            onRemove={handleRemove}
+          />
         </div>
       </div>
 
@@ -135,7 +136,6 @@ export default function PostDetailClient({
           className={`flex flex-col gap-3 px-4 ${post.thumbnail ? "" : "pt-4"}`}
         >
           <div className="flex flex-col gap-1">
-            <h2 className="text-base font-medium">{title}</h2>
             <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
               <span>{platformLabel(post.platform)}</span>
               {post.author && (
@@ -378,7 +378,7 @@ function RemoveButton({
   label,
   onRemove,
 }: {
-  /** The post this acts on, so the icon button is not one of N bare "삭제"s. */
+  /** The platform this post is from, so the icon button is not a bare "삭제". */
   label: string;
   onRemove: () => void;
 }) {
