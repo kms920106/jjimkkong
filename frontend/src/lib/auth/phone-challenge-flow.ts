@@ -161,7 +161,7 @@ export async function handleChallengeVerify(
     // separate requests. This one exists so the user hears it while there is still
     // a screen to go back from, instead of hitting a spent-proof dead end.
     if (intent === "signup") {
-      const owner = await prisma.userProfile.findFirst({
+      const owner = await prisma.member.findFirst({
         where: { phoneHash: blindIndex(phone), withdrawnAt: null },
         select: { passwordHash: true },
       });

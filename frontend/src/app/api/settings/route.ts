@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { requireUser } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
 import { toErrorResponse } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { MapProvider } from "@/generated/prisma/enums";
@@ -22,10 +22,10 @@ const BodySchema = z
 
 export async function PATCH(request: NextRequest) {
   try {
-    const user = await requireUser();
+    const user = await requireMember();
     const body = BodySchema.parse(await request.json());
 
-    const updated = await prisma.userProfile.update({
+    const updated = await prisma.member.update({
       where: { id: user.id },
       data: {
         ...(body.mapProvider !== undefined && {

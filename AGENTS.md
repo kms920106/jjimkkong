@@ -11,8 +11,12 @@
 
 ```
 링크 붙여넣기 → 게시글 메타데이터 수집 → LLM이 장소 이름 추출 → 네이버가 좌표 조회
-             → 게시글 + 장소 저장 → 지도에 핀 렌더링
+             → 게시물 + 장소 저장 → 내 찜 생성 → 지도에 핀 렌더링
 ```
+
+**그런데 이 파이프라인은 게시물당 한 번만 돈다.** 누군가 이미 저장한 링크를
+붙여넣으면 가운데 세 단계(크롤링·LLM·지오코딩)가 전부 건너뛰어지고 저장된
+`Post`를 그대로 쓴다 — 아래 "게시물과 찜은 다른 것이다" 참고.
 
 브라우저 확장도, share-target 연동도 없다. 사용자가 직접 다른 앱에서 URL을 복사해 `/`의
 입력 폼에 붙여넣는다. 받아들이는 링크는 인스타그램 post/reel, 유튜브 watch/shorts,
@@ -38,8 +42,9 @@ Vercel의 Root Directory도 `frontend`다.
 ```
 frontend/src/
   app/
-    (app)/          모든 페이지 — 홈(붙여넣기 + 지도 + 목록), 링크 목록, 프로필 수정,
-                    설정(+비밀번호 변경), 약관·개인정보
+    (app)/          모든 페이지 — 홈(붙여넣기 + 지도 + 목록), 링크 목록,
+                    링크 상세(/links/<내 순번>), 작성자별 목록(/author/<id>),
+                    프로필 수정, 설정(+비밀번호 변경), 약관·개인정보
     api/            ingest, posts, settings, account
     api/auth/       [provider]/start·callback, phone/send·verify, logout
     verify-phone/   휴대폰 인증 — 모든 첫 로그인이 반드시 거치는 관문
@@ -49,14 +54,14 @@ frontend/src/
     ingest/         metadata.ts → extract.ts → geocode.ts  (파이프라인, 이 순서대로)
     map/            SDK 로더, 지도 공용 타입, 마커 조회 훅
     auth/           세션·OAuth·계정연결·SMS 인증 (아래 "인증" 절)
-    auth.ts         requireUser() — 모든 라우트의 소유권 게이트
+    auth.ts         requireMember() — 모든 라우트의 소유권 게이트
   generated/prisma/ Prisma 클라이언트 생성물 — 생성 파일, gitignore, 직접 수정 금지
 ```
 
 **페이지는 전부 로그인 없이 열린다.** 로그인 페이지도, proxy(미들웨어)도 없다. 페이지는
-`requireUser()` 대신 `getUser()`를 부르고, 세션이 없으면 빈 지도·빈 목록을 렌더링한 뒤
+`requireMember()` 대신 `getMember()`를 부르고, 세션이 없으면 빈 지도·빈 목록을 렌더링한 뒤
 `LoginDrawer`로 로그인을 권한다. 저장·삭제 같은 실제 동작은 여전히 API가 막는다 — 라우트
-핸들러의 `requireUser()`가 유일한 게이트다.
+핸들러의 `requireMember()`가 유일한 게이트다.
 
 유일한 예외가 `/verify-phone`이다. 이건 로그인 진입점이 아니라 이미 시작된 로그인의 후반부라서,
 pending 쿠키가 없으면 홈으로 돌려보낸다. 세션을 요구하는 게 아니므로 위 원칙과 충돌하지 않는다.
@@ -77,8 +82,11 @@ npm run db:studio
 # db:push는 없다. 스키마에 맞추려고 컬럼을 떨어뜨리고 이 저장소의 DATABASE_URL은
 # 라이브 Supabase를 가리킨다 — 아래 "db:push는 삭제됐다" 참고. 다시 추가하지 말 것.
 
-# 하드 삭제 차단 훅의 테스트(51 케이스). 이것만 저장소 루트에서 실행한다.
+# 하드 삭제 차단 훅의 테스트(52 케이스). 이것만 저장소 루트에서 실행한다.
 cd .. && node .claude/hooks/block-hard-delete.test.mjs && cd frontend
+
+# 소프트 삭제와 되살리기를 라이브 DB에 대고 확인한다(프로브 행을 남긴다).
+npx tsx --env-file=.env scripts/verify-soft-delete.ts
 
 # 일회성: 평문으로 남은 전화번호를 암호화한다. 아래 "전화번호 암호화 마이그레이션" 참고.
 npx tsx --env-file=.env scripts/backfill-phone-encryption.ts
@@ -274,7 +282,7 @@ worker·web-push가 전부 없으며, iOS Safari의 Web Push는 사용자가 홈
 만들어도 정작 주 사용자층에 닿지 않는다. 그러면 "접수만 하고 결과는 아무도 모르는" 상태가
 되어 지금보다 나빠진다. 링크 저장은 앱을 떠나는 작업이 아니라 그 자리에서 지도를 보는
 작업이므로 **토스트가 푸시보다 정확한 채널이다.** 네이티브 앱이 생기거나 ingest가 분 단위로
-길어지면 그때 `SavedPost.status` + 큐로 갈 것.
+길어지면 그때 `Post.status` + 큐로 갈 것.
 
 **썸네일 백업은 await하지 않고 시작해 모델·지오코딩과 겹친다.** 아무것도 `thumbnail`을 읽지
 않기 때문이다(`extractPlaces`는 title/caption, `geocodeCandidates`는 이름). **`after()`로
@@ -285,17 +293,67 @@ worker·web-push가 전부 없으며, iOS Safari의 Web Push는 사용자가 홈
 `matched: false`와 `lookupFailed: true`는 서로 다른 뜻이고 UI도 각각 다른 문구를 보여준다
 — "지도에 없음"과 "검색이 일시적으로 죽음"은 다르다. 합치지 말 것.
 
+## 게시물과 찜은 다른 것이다
+
+**`Post`는 플랫폼이 게시한 그것이고 전역 공유다. `Bookmark`는 한 사람의 저장이다.**
+예전에는 `SavedPost` 한 행이 둘을 겸했고, 그래서 같은 릴스를 붙여넣는 사용자마다 크롤링·LLM·
+지오코딩을 전부 다시 지불해서 **이미 다른 행에 있는 값에 도달했다.**
+
+```
+A가 어떤 릴스를 저장  → 크롤링 + LLM + 지오코딩 → Post 생성 + A의 Bookmark
+B가 같은 릴스를 저장  → (아무것도 안 함)        →           + B의 Bookmark
+```
+
+건너뛰기는 두 라우트에 각각 있다. `POST /api/ingest`는 첫 단계에서 저장된 `Post`를 그대로
+돌려주고(`findExistingPost()`), `POST /api/posts`는 지오코딩을 건너뛰고 `Bookmark`만 만든다.
+둘 다 판정 키는 정규화된 `sourceUrl`이다.
+
+**`Post`는 최초 1회만 쓰이고 그 뒤로는 불변이다. 이게 공유를 안전하게 만드는 유일한 장치다.**
+이 행은 서로 아무 관계 없는 사용자들이 함께 읽으므로, 나중 저장이 고칠 수 있으면 **한 사용자의
+재저장이 다른 사용자가 보는 캡션·썸네일·장소 목록을 바꾼다.** 클라이언트 좌표를 거부하는 것과
+정확히 같은 판단이다.
+
+대가는 실재하고 감수한 것이다 — 인스타가 차단 중일 때 인제스트된 게시물은 그 시도의 결과
+(썸네일 없음, 장소 없음)에 고정되고 **사용자가 다시 저장해도 고쳐지지 않는다.** 고치는 경로는
+그 행을 겨냥한 백필뿐이다.
+
+**소유의 경계가 곧 컬럼의 경계다.** `sourceUrl`·`caption`·`thumbnail`·`author`·`position`은
+창작자가 만든 것이니 `Post`/`PostPlace`로, `deletedAt`·`memberSeq`·메모는 저장한 사람의 것이니
+`Bookmark`/`BookmarkMemo`로 갔다. 새 컬럼을 어디에 둘지 헷갈리면 **"이 값이 두 사용자에게
+같아야 하나"**를 물을 것.
+
+**URL은 사용자별 순번을 쓴다: `/links/1`은 `Bookmark.memberSeq`다.** 전역 카운터가 아닌 이유는
+미관이 아니라 프라이버시다 — 전역 번호를 URL에 두면 서비스 전체가 링크를 몇 개 보관하는지
+공표하고, id를 찍어보며 특정 게시물의 존재 여부를 캐낼 수 있다. **`Post.id`는 URL에 절대
+등장하지 않는다.** Postgres 시퀀스는 전역이라 쓸 수 없으므로 저장 트랜잭션 안에서 `MAX+1`로
+계산하고, 경합의 심판은 `@@unique([memberId, memberSeq])`다. 소프트 삭제된 행도 자기 번호를
+들고 있으므로 그 계산에서 **`deletedAt`으로 걸러내지 말 것** — 걸러내면 이미 쓰인 번호를 다시
+발급해 매번 unique를 위반한다.
+
+**API는 `Bookmark.id`(cuid)로 주소를 잡는다.** `DELETE /api/posts/[id]`가 그것이다. 순번은
+표시용 어포던스이고, 쓰기를 그걸로 라우팅하면 "내 세 번째 찜"을 어느 행인지 모르고 겨냥할 수
+있게 된다.
+
+**작성자도 행이다.** `/author/1`이 `Author.id`를 가리킨다. 이 테이블이 생긴 이유가 그 URL이고,
+없을 때는 `/links/author/<핸들>?platform=INSTAGRAM`이어야 했다 — 위 "데이터 모델" 절 참고.
+구 경로는 리다이렉트 없이 삭제했다. 이 앱의 모든 작성자 링크는 서버가 방금 보낸 데이터로
+`AuthorLink`가 만들므로 앱 밖에 옛 형태를 들고 있는 것이 없었다.
+
 ## 반드시 지켜야 할 것
 
 **소유권 검사는 DB가 아니라 애플리케이션에서 한다.** Prisma는 테이블 소유자로 접속하므로
-Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 호출하고 반환된 `userId`로
-쿼리를 한정해야 한다. **한정 없는 쓰기는 그 행을 모든 사용자에게 조용히 여는 것이다** —
-`deleteMany({ where: { id, userId } })`를 `delete({ where: { id } })`로 줄이면 그렇게 된다.
-이 관용구는 **하드 삭제가 허용된 네 모델에만 남아 있다**(아래 "하드 삭제는 이제 런타임에서
-막힌다"). `SavedPost` 같은 소프트 삭제 모델에서는 같은 검사가
-`findFirst({ where: { id, userId, deletedAt: null } })` + `update`로 옮겨갔다 — 형태가
-바뀌었을 뿐 규칙은 그대로다. `where`에 `userId`가 빠졌는데 그걸 잡아 줄 장치는 여전히 없다.
+Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireMember()`를 호출하고 반환된
+`memberId`로 쿼리를 한정해야 한다. **한정 없는 쓰기는 그 행을 모든 사용자에게 조용히 여는
+것이다.** `Bookmark`에서 그 검사는
+`findFirst({ where: { id, memberId, deletedAt: null } })` + `update`의 형태다.
+`where`에 `memberId`가 빠졌는데 그걸 잡아 줄 장치는 여전히 없다 —
 `withDeleteGuard()`는 삭제를 막을 뿐 **잘못 범위 잡힌 update를 막지 못한다.**
+
+**단 이 규칙은 소유자가 있는 모델에만 적용된다.** `Bookmark`·`Session`·`AuthIdentity`가
+그것이고, `Post`·`Author`·`Place`는 전역 공유라 한정할 `memberId`가 아예 없다. 분리 이후로
+소유자 없는 모델이 셋으로 늘었으므로 이 규칙이 덮지 못하는 면적도 그만큼 넓어졌고, 그 자리를
+지키는 것은 **`Post`의 불변성**과 **"클라이언트 좌표를 믿지 않는다"** 둘이다. 아래 두 절
+참고.
 
 **하드 삭제는 이제 런타임에서 막힌다. 이 저장소에서 기계적으로 강제되는 첫 불변조건이다.**
 그 전까지 이 문서의 모든 규칙은 산문뿐이었다 — "탈퇴는 삭제가 아니라 상태 변경이다"를 어긴
@@ -317,7 +375,7 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
    `.claude/settings.json`의 `permissions.deny`. 사는 이유는 *타이밍*이다 — 잘못된 코드가
    쓰인 뒤 잡히는 것이 아니라 **쓰이기 전에** 거부된다. 막으려는 실패 양상이 "에이전트가
    자신 있게 행을 지우고 성공을 보고하는 것"이기 때문이다. 테스트는
-   `node .claude/hooks/block-hard-delete.test.mjs`(51 케이스).
+   `node .claude/hooks/block-hard-delete.test.mjs`(52 케이스).
 
 **훅에는 예외 경로가 셋 있고, 셋 다 구현 중에 훅이 정당한 작업을 막아서 생겼다.**
 지우지 말 것 — 각각이 없으면 훅이 자기 자신을 유지 불가능하게 만든다.
@@ -353,12 +411,17 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 테스트는 45→51 케이스가 됐다. 새 6개가 이 경계를 양쪽에서 고정한다: 클래스는 통과,
 따옴표·대문자·`TABLE`·`IF EXISTS`가 붙은 진짜 SQL은 여전히 차단.
 
+**게시물/찜 분리로 52가 됐다.** allowlist가 좁아진 만큼 케이스도 뒤집혔다: 예전에
+"`savedPostPlace`는 허용"이던 자리에 이제 "`postPlace`·`bookmarkMemo`는 차단",
+"`post-thumbnail.ts`의 `del` import는 허용"이던 자리에 "이제 소유자가 아니다"가 들어 있다.
+allowlist를 되돌리려면 이 케이스들을 먼저 지워야 하고, 그게 의도된 마찰이다.
+
 **세 층의 한계를 정확히 알고 쓸 것.** lint는 구문을 읽으므로 `prisma[model].delete()`는
 그냥 통과한다. 훅과 raw SQL 검사는 텍스트·정규식이라 **실수를 잡을 뿐 작정한 호출자를 막지
 못한다.** 그리고 `onDelete: Cascade`는 **Postgres가 extension 아래에서 실행하므로** 층 1도
-보지 못한다 — `UserProfile`의 세 cascade(`AuthIdentity`·`Session`·`SavedPost`)를 지키는 것은
-`UserProfile`이 allowlist에 **없다**는 사실이다. 삭제가 DB에 닿지 않으므로 cascade가 발화할
-기회 자체가 없다. `UserProfile`을 allowlist에 넣으면 세 개가 한 번에 다시 무장된다.
+보지 못한다 — `Member`의 세 cascade(`AuthIdentity`·`Session`·`Bookmark`)를 지키는 것은
+`Member`가 allowlist에 **없다**는 사실이다. 삭제가 DB에 닿지 않으므로 cascade가 발화할
+기회 자체가 없다. `Member`를 allowlist에 넣으면 세 개가 한 번에 다시 무장된다.
 **절대적인 정지는 층 4, DELETE 권한 없는 Postgres role뿐이고 아직 적용되지 않았다** —
 절차만 [docs/db-permissions.md](docs/db-permissions.md)에 문서로 있다.
 
@@ -368,15 +431,22 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 즉 가장 위험한 쪽이 무방비로 남는다.** 가드는 가장 좁은 틈만큼만 가치가 있다.
 
 **`HARD_DELETE_ALLOWED`에 모델을 추가하는 것은 "이 행은 사용자 데이터가 아니다"라는 선언이다.**
-지금 넷이고 각각 이유가 코드에 적혀 있다 — `Session`(즉시 무효화. 세션을 자기완결적 JWT가
+지금 **셋**이고 각각 이유가 코드에 적혀 있다 — `Session`(즉시 무효화. 세션을 자기완결적 JWT가
 아니라 DB에 둔 이유 그 자체), `PhoneVerification`(SMS 발송이 throw했을 때의 보상 롤백),
-`PasswordAttempt`(rate-limit 윈도우 청소), `SavedPostPlace`(재저장이 장소 집합을 교체한다).
+`PasswordAttempt`(rate-limit 윈도우 청소).
 **이유를 적지 않은 항목은 스타일 문제가 아니라 리뷰에서 잡아야 하는 버그다.**
 
-**`@vercel/blob`의 `del`은 두 파일에서만 import할 수 있다** — `src/lib/post-thumbnail.ts`와
-`src/lib/profile-image.ts`. 기존 삭제 호출부 셋은 전부 이 래퍼를 지나므로 동작은 바뀌지
-않았다. 이 래퍼들만 **행에서 읽어 온 URL**을 받고, 호출자가 먼저 참조 수를 센다. 새로 만든
-`del()` 호출에는 두 성질이 다 없고, blob URL은 공개라서 남의 이미지를 조준할 수 있다.
+**넷에서 셋으로 줄었다. `SavedPostPlace`가 빠졌고, 이건 가드가 강해진 것이다.**
+거기 있던 유일한 이유가 "재저장이 장소 집합을 교체한다"였는데, 그 교체가 없어졌다 — 장소
+목록은 불변 `Post`에 매달린 `PostPlace`로 갔고 사용자 메모는 `BookmarkMemo`로 갔으며, 둘 다
+쓰기 경로가 생성과 upsert뿐이다. **둘 중 어느 것도 다시 넣지 말 것**; 재인제스트가 필요하면
+그건 특정 행을 겨냥한 백필이고 런타임 경로가 아니다.
+
+**`@vercel/blob`의 `del`은 이제 한 파일에서만 import할 수 있다** — `src/lib/profile-image.ts`.
+`post-thumbnail.ts`가 빠진 이유는 위와 같다: 썸네일이 불변 `Post`로 옮겨가면서 대체되는 blob이
+없어졌고, 참조 카운트와 삭제 함수가 함께 사라졌다. 남은 래퍼만 **행에서 읽어 온 URL**을,
+그것도 대체 트랜잭션 안에서 받는다. 새로 만든 `del()` 호출에는 그 출처가 없고, blob URL은
+공개라서 남의 이미지를 조준할 수 있다.
 
 **`eslint.config.mjs`가 `src/generated/prisma/**`를 명시적으로 ignore한다.** 예전에는 생성
 파일마다 붙은 `/* eslint-disable */` 헤더로만 면제되고 있었는데, 새 규칙들이 그 면제를
@@ -388,34 +458,43 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 (개발)와 `db:deploy`(운영)가 실제 필요를 전부 덮는다. 층 3의 deny 목록에도 같은 이유로
 `db push`·`migrate reset`·`db execute`·`psql`이 들어 있다.
 
-**링크 삭제도 삭제가 아니라 상태 변경이다.** `DELETE /api/posts/[id]`는 `deletedAt`을 찍는다.
-하드 삭제였을 때는 cascade가 그 게시글의 `SavedPostPlace` 행까지 가져갔다 — **사용자가 장소마다
-쓴 메모와, `/links`가 동선으로 번호를 매기는 `position`이 함께 사라졌고 복구할 것이 남지
-않았다.** 그래서 `SavedPostPlace` 행은 소프트 삭제 시 **일부러 그대로 둔다**; 함께 쓸어내면
-이 변경이 존재하는 이유인 복구 가능성이 사라진다.
+**링크 삭제도 삭제가 아니라 상태 변경이다.** `DELETE /api/posts/[id]`는 `Bookmark.deletedAt`을
+찍는다. 하드 삭제였을 때는 cascade가 그 행의 장소 연결까지 가져갔다 — **사용자가 장소마다 쓴
+메모와 `position`이 함께 사라졌고 복구할 것이 남지 않았다.**
 
-이 플래그가 장식이 아니게 만드는 건 **아홉 곳의 읽기 필터**이고, 아홉은 반드시 함께 움직인다:
+**분리 이후로 이 소프트 삭제가 실제로 복구를 한다.** 예전에는 행만 남기고 재저장은 그 옆에
+새 행을 만들었으므로 "복구 가능성"이 원리상의 이야기였다. 지금은 `[memberId, postId]`가 진짜
+unique이고 재저장이 **그 행을 되살린다**(`deletedAt`을 null로) — 메모도
+`/links/<memberSeq>` URL도 그대로 돌아온다.
+
+이 플래그가 장식이 아니게 만드는 건 **일곱 곳의 읽기 필터**이고, 일곱은 반드시 함께 움직인다:
 
 1. `src/app/(app)/page.tsx` — 홈 지도의 핀.
 2. `src/app/(app)/links/page.tsx` — 링크 그리드.
 3. `src/app/(app)/settings/page.tsx` — 저장한 링크 개수.
 4. `GET /api/posts` — 목록 API.
-5. `POST /api/posts`의 `previous` 조회 — 빠지면 재저장이 **소프트 삭제된 행을 되살린다**
-   (사용자가 지운 게시글이 update로 부활한다).
-6. `DELETE /api/posts/[id]`의 `findFirst` — 빠지면 이미 지운 링크를 다시 지우면서
+5. `DELETE /api/posts/[id]`의 `findFirst` — 빠지면 이미 지운 링크를 다시 지우면서
    `deletedAt`을 새 시각으로 갱신하고 204를 돌려준다.
-7. **`GET /api/places/[id]/sources` — 빠뜨릴 자리는 여기다.** 이 쿼리는 `SavedPostPlace`를
-   읽으므로 컬럼이 자기 테이블에 없고 **relation 필터**(`post: { deletedAt: null }`)가
-   필요하다. 게다가 이 라우트는 **인증 없이 모든 사용자의 게시글을 돌려준다** — 필터가
-   빠지면 사용자가 지운 링크가 낯선 사람에게 계속 보인다. 미관 문제가 아니라 프라이버시
-   버그다.
-8. `src/app/(app)/links/[id]/page.tsx` — 게시글 상세. 빠지면 **지운 링크가 자기 URL에서
+6. `src/app/(app)/links/[id]/page.tsx` — 링크 상세. 빠지면 **지운 링크가 자기 URL에서
    계속 열린다.** 그리드에서 사라지는 것과 URL이 죽는 것은 다르고, 사용자가 삭제로
    기대하는 것은 후자다.
-9. `src/app/(app)/links/author/[author]/page.tsx` — 작성자별 목록. 빠지면 그리드에서
-   사라진 링크가 **작성자 페이지에는 그대로 남는다.** 게다가 이 페이지는 목록이 비면
-   404를 내므로, 지운 링크가 마지막 한 개였을 때 필터가 없으면 죽어야 할 URL이 계속
-   살아 있다.
+7. `src/app/(app)/author/[id]/page.tsx` — 작성자별 목록. 빠지면 그리드에서 사라진 링크가
+   **작성자 페이지에는 그대로 남는다.** 게다가 이 페이지는 목록이 비면 404를 내므로, 지운
+   링크가 마지막 한 개였을 때 필터가 없으면 죽어야 할 URL이 계속 살아 있다.
+
+**아홉에서 일곱으로 줄었고, 사라진 둘은 고쳐진 것이 아니라 없어진 것이다:**
+
+- **`POST /api/posts`의 `previous` 조회.** 예전에는 이 필터가 빠지면 재저장이 소프트 삭제된
+  행을 되살렸고 **그게 버그였다**. 지금은 되살리는 것이 명세다. 필터를 뺄 자리 자체가 없다.
+- **`GET /api/places/[id]/sources`.** "빠뜨릴 자리는 여기다"라고 적혀 있던 그 자리다 —
+  per-member 조인 테이블을 읽으므로 컬럼이 자기 테이블에 없어 relation 필터가 필요했고,
+  이 라우트는 인증 없이 모든 사용자의 게시글을 돌려주므로 누락이 프라이버시 버그였다.
+  지금은 `PostPlace`를 읽는다: 공유 `Post`에 매달려 있어 member도 `deletedAt`도 없다.
+  **누락할 필터가 존재하지 않으므로 그 버그는 발생할 수 없다.**
+
+  대신 성질이 하나 바뀐다. 모든 사용자가 찜을 해제한 뒤에도 그 장소의 출처 목록에는
+  게시물이 남는다. 의도한 것이다 — 핀이 공유물이므로 시트는 "이 장소를 언급한 게시물"을
+  답하고, "지금 누가 그걸 찜하고 있나"를 답하지 않는다.
 
 **썸네일 blob 참조 카운트에는 `deletedAt` 필터를 넣지 말 것.** 소프트 삭제된 행도 여전히
 자기 blob을 가리키고 있고 복원되면 다시 렌더해야 하므로, **그건 참조다.** 걸러내면 다른
@@ -433,21 +512,21 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
 하기 때문이다.
 
 **리다이렉트로 페이지를 막지 말 것.** proxy(미들웨어)는 삭제됐다. 페이지를 세션으로 걷어내던
-장치가 없어졌으니, 인가는 전부 라우트 핸들러의 `requireUser()` 한 곳에서만 일어난다. 페이지에
-`requireUser()`를 다시 넣으면 로그인 없이 접속 가능하다는 전제가 깨지고, 미들웨어를 되살리면
+장치가 없어졌으니, 인가는 전부 라우트 핸들러의 `requireMember()` 한 곳에서만 일어난다. 페이지에
+`requireMember()`를 다시 넣으면 로그인 없이 접속 가능하다는 전제가 깨지고, 미들웨어를 되살리면
 세션이 만료된 `fetch()`가 401 대신 로그인 페이지 HTML을 받아 `res.json()`이 깨진다.
 
 **페이지가 비어 보이는 것과 막히는 것은 다르다.** 로그아웃 상태의 홈은 핀이 없고 목록은
-비어 있지만, 그건 `getUser()`가 null을 돌려줘서 조회할 `userId`가 없기 때문이다. 저장·삭제·
+비어 있지만, 그건 `getMember()`가 null을 돌려줘서 조회할 `memberId`가 없기 때문이다. 저장·삭제·
 설정 변경은 그대로 401이다. 클라이언트의 `signedIn` 플래그는 UI를 고르는 값일 뿐 권한이
 아니다 — 이걸 근거로 서버 검사를 생략하지 말 것.
 
 **회원탈퇴는 삭제가 아니라 상태 변경이다.** `DELETE /api/account`는 아무것도 지우지 않는다 —
-`UserProfile`·`AuthIdentity`·`SavedPost`는 전부 남고 `withdrawnAt`만 찍힌다(`Session`만 예외로
-삭제한다. 남겨두면 살아 있는 쿠키가 탈퇴 계정을 가리킨 채 `requireUser()` 검사 하나에만 의존하게
+`Member`·`AuthIdentity`·`Bookmark`는 전부 남고 `withdrawnAt`만 찍힌다(`Session`만 예외로
+삭제한다. 남겨두면 살아 있는 쿠키가 탈퇴 계정을 가리킨 채 `requireMember()` 검사 하나에만 의존하게
 된다). 이 플래그가 장식이 아니게 만드는 건 **세 곳의 필터**이고, 셋은 반드시 함께 움직인다:
 
-1. `requireUser()`가 `withdrawnAt: null`로 조회한다 — 하드 삭제와 달리 행이 남아 있으므로,
+1. `requireMember()`가 `withdrawnAt: null`로 조회한다 — 하드 삭제와 달리 행이 남아 있으므로,
    이 필터를 빼면 탈퇴 계정이 그대로 정상 로그인 상태가 된다.
 2. `linkProviderIdentity()`의 identity 조회가 탈퇴 행을 건너뛴다 — 여기서 걸러지지 않으면
    탈퇴 계정이 재방문 로그인으로 세션을 받는다. (예전에는 여기에 phone 조회도 있었지만,
@@ -457,20 +536,20 @@ Postgres RLS를 우회한다. 모든 라우트 핸들러는 `requireUser()`를 �
    재사용이냐를 가르는 지점이다.
 
 **unique는 살아 있는 행에만 걸린다.** 탈퇴 행이 전화번호와 제공자 id를 그대로 들고 있으므로,
-`UserProfile.phoneHash`와 `AuthIdentity[provider, providerUserId]`의 전역 unique를 그대로 두면 같은
+`Member.phoneHash`와 `AuthIdentity[provider, providerUserId]`의 전역 unique를 그대로 두면 같은
 사람이 다시 가입할 수 없다. 둘 다 **partial unique index**(`WHERE "withdrawnAt" IS NULL`)로
 바뀌었고, Prisma 스키마 언어로는 표현할 수 없어서 마이그레이션 raw SQL에만 있다. 그래서
 스키마에는 `@unique`가 아니라 평범한 `@@index`가 적혀 있다 — **다시 `@unique`로 되돌리면
 탈퇴한 사용자가 영구히 재가입 불가가 된다.** 전화번호로 `findUnique`를 쓸 수 없게 된 것도
 의도된 것이다(컴파일이 깨진다). 반드시 `findFirst` + `withdrawnAt: null`을 쓸 것.
 
-**재로그인하면 새 `UserProfile`이 생긴다.** 탈퇴 계정은 그대로 보존되고, 같은 네이버 계정으로
-다시 들어와도 이전 링크는 보이지 않는다. `AuthIdentity.withdrawnAt`은 `UserProfile`의 것을
+**재로그인하면 새 `Member`가 생긴다.** 탈퇴 계정은 그대로 보존되고, 같은 네이버 계정으로
+다시 들어와도 이전 링크는 보이지 않는다. `AuthIdentity.withdrawnAt`은 `Member`의 것을
 비정규화한 값이다 — partial unique index가 자기 테이블 컬럼만 읽을 수 있어서 필요하고, 같은
 트랜잭션에서 함께 쓰므로 어긋날 수 없다.
 
 **탈퇴를 되돌리는 경로는 없다.** 로그인이 닿는 조회는 전부 `withdrawnAt: null`로 걸러지므로,
-탈퇴한 계정으로 다시 들어오면 새 `UserProfile`이 생기고 이전 데이터는 보이지 않는다.
+탈퇴한 계정으로 다시 들어오면 새 `Member`가 생기고 이전 데이터는 보이지 않는다.
 
 탈퇴를 되돌릴 수 있는 유일한 형태는 **이미 아는 프로필 id에 대고 직접 `upsert`/`update`를
 하는 것**이고, 지금 그런 호출부는 없다. 예전에는 있었다 — 테스트 로그인이 고정 uuid를
@@ -518,7 +597,7 @@ HEIC를 남겨 둔다(아이폰 사진 대부분이 HEIC라 빼면 선택이 막
 둘 다 없으면 손대지 않는다. "파일이 없으면 삭제"로 줄이지 말 것 — 닉네임만 고친 저장이 매번
 사진을 조용히 지운다.
 
-**지울 blob의 URL은 update와 같은 트랜잭션 안에서 다시 읽는다.** `requireUser()`가 준 행은
+**지울 blob의 URL은 update와 같은 트랜잭션 안에서 다시 읽는다.** `requireMember()`가 준 행은
 업로드 *전에* 읽은 값이라서, 동시에 두 번 저장하면(더블탭, 탭 두 개) 둘 다 같은 옛 URL을 보고
 그것만 지운다 — 서로가 대체한 blob은 아무도 지우지 않고 참조 없는 과금 대상으로 남는다.
 
@@ -540,7 +619,7 @@ best effort로 지우고 컬럼은 `null`로 만든다.
 관리자를 열거나 다른 앱으로 나갔다 돌아오는데, 그때 패널이 열려 있다는 보장이 없으면 첫 화면에서
 서버 왕복 한 번으로 얻은 진행 상태를 잃는다. `/profile`을 페이지로 만든 것과 같은 판단이며,
 거기서는 파일 선택기가 같은 역할을 한다.
-**둘 다 `requireUser()`를 쓰지 않는다** — 약관·개인정보 행은 로그아웃 상태에서도 살아 있어야
+**둘 다 `requireMember()`를 쓰지 않는다** — 약관·개인정보 행은 로그아웃 상태에서도 살아 있어야
 하고, 게이트는 언제나처럼 API다.
 
 **인스타그램 썸네일은 만료된다.** `scontent-*.cdninstagram.com` URL은 서명 URL이고
@@ -574,32 +653,32 @@ allowlist가 첫 홉에만 걸린 셈이 된다.
 **만료될 URL로 저장하는 것이 저장하지 못하는 것보다 언제나 낫다.** `lib/api.ts`에 이 경로의
 에러 클래스를 추가하지 말 것.
 
-**재저장은 썸네일이 null이면 컬럼을 건드리지 않는다.** 다른 필드는 `?? null`로 덮어쓰지만
-이것만 조건부다 — 인스타가 차단 중일 때의 재인제스트는 `thumbnail: null`을 들고 오고,
-덮어쓰면 여전히 유효한 blob을 잃고 그 blob은 미참조로 남는다. 사용자가 썸네일을 *지우는*
-경로는 없으므로 null을 "지워라"로 읽지 말 것.
+**썸네일 blob은 이제 지우지 않는다. 참조 카운트도 없다.** 이 절이 예전에 아주 길었던 이유와
+지금 짧은 이유가 같은 사실에서 나온다: `thumbnail`이 **`Post`로 옮겨갔고 `Post`는 불변**이다.
 
-**썸네일 blob을 지우기 전에 참조 수를 센다. 이게 blob의 소유권 검사다.**
-`thumbnail`은 요청 본문으로 오고, **썸네일 blob URL은 공개다** — `SavedPostDTO`에 실려 나가고
-`GET /api/places/[id]/sources`는 인증 없이 모든 사용자의 게시글을 돌려준다. 그래서 로그인한
-누구든 **남의 썸네일 URL을 자기 게시글에 저장할 수 있다.** 정상적인 첫 저장의 blob은 방금
-인제스트가 만들어 아직 어떤 행에도 없으므로, 저장 시점에는 "이미 참조된 것"과 "남의 것"이
-구별되지 않는다. 그래서 저장 경로에서 거부하지 않고 **삭제 직전에** 다른 행이 그 URL을
-참조하는지 세고 0일 때만 지운다. 남의 blob은 주인의 행이 여전히 참조하므로 삭제되지 않는다.
+예전에는 이랬다 — `thumbnail`이 요청 본문으로 오고 blob URL은 공개(`SavedPostDTO`에 실려
+나가고 `GET /api/places/[id]/sources`는 인증 없이 응답)이므로, 로그인한 누구든 **남의 썸네일
+URL을 자기 게시글에 저장할 수 있었다.** 정상적인 첫 저장의 blob은 방금 인제스트가 만들어 아직
+어떤 행에도 없으니 저장 시점에는 "이미 참조된 것"과 "남의 것"이 구별되지 않았고, 그래서 저장
+경로에서 거부하는 대신 **삭제 직전에** 다른 행이 그 URL을 참조하는지 세야 했다.
 
-`isOwnThumbnailBlob()`은 이 검사의 **절반일 뿐이다.** "우리 스토어의 썸네일인가"만 답하고
-"이 사용자의 것인가"는 답하지 못한다. **이것만 보고 지우지 말 것.** 호스트는 실제 서빙 형태인
+지금은 blob을 가리키는 행이 정확히 하나이고(공유 `Post`), 그 행은 한 번 쓰인 뒤 갱신되지
+않으므로 **대체되는 blob이 없다.** 찜 해제도 blob을 건드리지 않는다 — 그 사진은 다른 사용자가
+아직 찜하고 있을 수 있는 게시물의 것이고, 한 사람이 찜을 푸는 것이 모두의 그림을 깨뜨릴 수는
+없다.
+
+**`isOwnThumbnailBlob()`은 남아 있고 여전히 필요하다.** 지금 하는 일은 `thumbnailSource`를
+기록할지 판정하는 것이다 — 요청 본문의 URL이 진짜 우리 blob일 때만 "백업됨"이라고 적어야
+컬럼이 플랫폼 CDN URL을 백업됐다고 주장하지 않는다. 호스트는 실제 서빙 형태인
 `<store>.public.blob.vercel-storage.com`으로 좁혀야 한다 — `.blob.vercel-storage.com`까지
 넓히면 다른 Vercel 고객의 스토어도 우리 것으로 오판한다. 경로 prefix(`/post-thumbnail/`)도
-필요하다: 같은 스토어에 프로필 사진이 `/profile/`로 들어 있어서, 잘못 지우면 아바타가 사라진다.
+필요하다: 같은 스토어에 프로필 사진이 `/profile/`로 들어 있다.
 
-이 참조 카운트가 매 저장·삭제마다 돌기 때문에 `SavedPost.thumbnail`에 인덱스가 있다.
-장식이 아니다 — 빼면 저장할 때마다 풀스캔이다.
+`Post.thumbnail`의 인덱스도 남겨 뒀다. 참조 카운트가 매 저장마다 돌기 때문이었던 이유는
+사라졌지만, 백필 스크립트가 이 컬럼으로 조회한다.
 
-대체·삭제 시 **지울 URL은 `profile-image`와 같이 트랜잭션 안에서 읽어** 커밋 후에 지운다.
-저장 경로에는 남은 경합이 하나 있다: 새 링크를 동시에 두 번 저장하면 둘 다 `previous`를
-null로 읽어 한쪽이 자기가 대체한 blob을 모른 채 넘어가 **blob 하나가 누수된다.** 닫으려면
-`SELECT … FOR UPDATE`나 serializable이 필요하고, 대가는 이미지 하나의 저장공간이라 감수했다.
+**프로필 사진 쪽은 아무것도 바뀌지 않았다.** 거기는 여전히 사용자 소유이고, 대체 시 트랜잭션
+안에서 URL을 다시 읽어 커밋 후에 지운다.
 
 **작성자 아바타도 같은 이유로 백업하지만, 삭제 경로는 일부러 없다.** 인스타그램은 프로필
 사진을 게시물 이미지와 **같은 서명 CDN**으로 서빙하므로 그대로 저장하면 며칠 뒤 똑같이
@@ -619,14 +698,15 @@ null로 읽어 한쪽이 자기가 대체한 blob을 모른 채 넘어가 **blob
 않는 이유가 이것이고, 그래서 lint의 `no-blob-del-import` allowlist도 두 파일 그대로다.
 
 **prefix는 셋으로 갈린다: `post-thumbnail/`·`post-author/`·`profile/`.** 같은 스토어를
-쓰므로 이 prefix가 서로를 구별하는 유일한 수단이고, 아바타가 썸네일 prefix로 들어가면
-썸네일 삭제 경로의 사정권에 들어간다 — 절대 지우면 안 되는 것이 지워진다.
+쓰므로 이 prefix가 서로를 구별하는 유일한 수단이다. 썸네일 삭제 경로가 없어졌으므로 예전만큼
+날카로운 위험은 아니지만, `profile/`은 여전히 삭제되는 유일한 prefix다 — 다른 두 개가 거기로
+들어가면 그 사정권에 놓인다.
 
 **탈퇴 시 썸네일 blob은 지우지 않는다.** 프로필 사진은 지운다. 판단이 다른 이유는 프로필
 사진이 **본인의 얼굴**이고 탈퇴가 약속하는 것이 "나를 더 이상 찾을 수 없게 한다"라는 것이기
 때문이다. 게시글 썸네일은 인스타그램이 이미 전 세계에 공개한 남의 게시물 이미지의 사본이고
-사용자에 대해 아무것도 말하지 않는다. 게다가 탈퇴는 소프트 삭제라서 `SavedPost` 행 자체가
-남는다 — 행을 남기고 이미지만 지우면 복원 가능성만 잃고 프라이버시는 얻지 못한다.
+사용자에 대해 아무것도 말하지 않는다. 게다가 썸네일은 이제 **공유 `Post`의 것**이라 그 사용자만의
+것도 아니다 — 다른 사람이 아직 찜하고 있을 수 있는 게시물의 그림을 탈퇴가 지우면 안 된다.
 
 **`src/generated/prisma/`는 생성물이다.** gitignore되어 있고 `prisma generate`가 다시 쓴다.
 대신 `prisma/schema.prisma`를 수정한다.
@@ -763,7 +843,7 @@ cuid라 추측 가능해서, 확인 없이 지우면 남을 강제 로그아웃�
 전부 반드시 함께 움직인다.** 하나라도 빼면 탈퇴 계정이 그 경로로 그대로 살아난다.
 
 **로그인 경로는 이제 셋이다: 제공자, 휴대폰+비밀번호, 그리고 휴대폰 SMS(제공자 첫 로그인의 후반부).**
-휴대폰+비밀번호는 `UserProfile.passwordHash`(scrypt, `s1.<salt>.<derived>`)를 쓴다.
+휴대폰+비밀번호는 `Member.passwordHash`(scrypt, `s1.<salt>.<derived>`)를 쓴다.
 
 **비밀번호는 번호가 아니라 계정에 걸린다.** `phoneHash`는 병합 키다 — 번호에 credential을
 매달면 그 번호가 나중에 병합되는 계정으로 비밀번호가 따라가고, 통신사가 번호를 재활용하면
@@ -890,7 +970,7 @@ challenge 쿠키를 버리면 새 nonce가 나오고 예산이 리셋된다. OAu
 
 **`AuthIdentity.phone`은 암호화하지 않고 삭제했다.** 아무도 읽지 않는 support용 데이터였고,
 쓰이는 자리가 두 곳(제공자 원본 / 정규화된 값)이라 형식이 이미 어긋나 있었다. 키 없이 읽을 수
-없는 디버그 데이터는 디버그 데이터가 아니다. 복구 가능한 사본은 `UserProfile.phoneEnc` 하나다.
+없는 디버그 데이터는 디버그 데이터가 아니다. 복구 가능한 사본은 `Member.phoneEnc` 하나다.
 
 **키 회전은 구현되어 있지 않다.** `phoneEnc` 쪽은 원리상 싸지만 `phoneHash` 쪽은 아니다 — 모든
 해시가 바뀌고, 두 세대가 공존하는 동안 한 사람의 구·신 해시가 서로 다른 값이라서 partial unique
@@ -945,7 +1025,7 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 
 ## 데이터 모델
 
-`UserProfile`은 사람 하나다. 제공자별 필드는 들고 있지 않다 — 한 사람이 여러 제공자로
+`Member`는 사람 하나다. 제공자별 필드는 들고 있지 않다 — 한 사람이 여러 제공자로
 로그인할 수 있기 때문이다. `phoneHash`가 살아 있는 행 사이에서 유니크이고 계정 병합의 키다
 (`phoneEnc`가 같은 번호의 복호화 가능한 사본 — 위 "전화번호는 두 컬럼에" 참고). 사용자가 고른
 `mapProvider`도 여기에 담는다.
@@ -957,58 +1037,74 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 `imageUrl`은 이미지 바이트가 아니라 **Vercel Blob의 절대 URL**이다. 사진은 blob CDN에서
 바로 나가므로 이 행도, 라우트 핸들러도 거치지 않는다.
 
-`AuthIdentity`는 `UserProfile`에 붙은 소셜 로그인 하나다. `[provider, providerUserId]`에
+`AuthIdentity`는 `Member`에 붙은 소셜 로그인 하나다. `[provider, providerUserId]`에
 유니크가 걸려 있다 — 제공자 id는 그 제공자 안에서만 유일하므로 `providerUserId` 단독
 유니크는 카카오 id와 네이버 id가 충돌할 수 있다. 네이버와 카카오를 둘 다 연결한 사람은
-여기 두 행, `UserProfile` 한 행이다.
+여기 두 행, `Member` 한 행이다.
 
 `Session`은 로그인한 브라우저 하나, `PhoneVerification`은 진행 중인 SMS 인증 하나다.
 
-`SavedPost.thumbnail`은 **항상 렌더 가능한 URL**이다. 인스타그램 행은 우리 Blob을,
+`Post.thumbnail`은 **항상 렌더 가능한 URL**이다. 인스타그램 행은 우리 Blob을,
 나머지는 플랫폼 CDN을 가리킨다. `thumbnailSource`는 백업 전 원본이고 백업된 행에서만
 non-null이다 — 위 "인스타그램 썸네일은 만료된다" 참고.
 
-`authorImage`/`authorImageSource`는 작성자 아바타에 대해 정확히 같은 쌍이다. **작성자
-테이블을 만들지 않고 게시글마다 비정규화해 둔 것**인데, 이 앱에 작성자라는 엔티티가 없기
-때문이다 — `author`는 인제스트가 페이지에서 읽어 온 핸들 문자열이지 누가 소유한 행이 아니고,
-테이블을 만들어 봐야 조인과 두 번째 쓰기 경로가 늘 뿐이다. 대신 아바타가 바뀐 핸들은 재저장한
-게시글부터 하나씩 수렴한다(사진이라 감수할 만하다). 삭제 경로가 없는 이유는 위 "작성자
-아바타도 같은 이유로 백업하지만" 참고.
+`Author.image`/`Author.imageSource`는 작성자 아바타에 대해 정확히 같은 쌍이다.
 
-`SavedPost.deletedAt`은 `UserProfile.withdrawnAt`과 같은 성질의 컬럼이다 — 링크 삭제는
+**작성자는 이제 테이블이다.** 예전에는 `author` 핸들 문자열과 아바타 URL이 저장 행마다
+비정규화돼 있었고, 그 판단의 근거는 "이 앱에 작성자라는 엔티티가 없다"였다. `/author/<id>`가
+그 근거를 뒤집었다 — 가리킬 id가 필요해졌고, 없으면 URL이
+`/links/author/<핸들>?platform=INSTAGRAM`이 되어야 한다. 유튜브의 `author`는 채널 *제목*
+(공백·한글이 들어가는 자유 문자열)이라 인코딩이 필요했고, `platform`은 두 플랫폼의 같은
+핸들이 한 사람으로 합쳐지는 걸 막으려고 쿼리스트링에 실려 있었다. 둘 다 식별자가 없다는
+사실의 증상이었다.
+
+부수 효과로 아바타 중복 백업도 없어졌다. 예전에는 같은 사람의 사진이 그 사람의 게시물을
+누가 저장할 때마다 새 blob이 됐다 — 그래서 참조 카운트를 걸 수 없었고(정상 케이스에서
+발화하면서 공유 케이스는 누수), 그래서 아바타 blob은 영영 지우지 않는다는 결론이었다.
+이제 핸들당 한 행이므로 blob도 핸들당 하나다. **삭제 경로는 여전히 없다** — 없어서 생기는
+누수가 사라졌을 뿐 지울 이유가 생긴 것은 아니고, `Post`가 불변이라 아바타를 바꾸는 경로도
+최초 생성뿐이다.
+
+`Bookmark.deletedAt`은 `Member.withdrawnAt`과 같은 성질의 컬럼이다 — 링크 삭제는
 행을 지우지 않고 이 값을 찍는다. 위 "링크 삭제도 삭제가 아니라 상태 변경이다" 참고.
 
-`SavedPost`의 `[userId, sourceUrl]` 유니크는 **살아 있는 행 사이에서만** 성립한다. 소프트
-삭제된 행이 자기 `sourceUrl`을 그대로 들고 있으므로, 전역 unique를 그대로 두면 한 번 지운
-링크를 **영구히 다시 저장할 수 없다.** `withdrawnAt` 쪽과 똑같이 **partial unique index**
-(`WHERE "deletedAt" IS NULL`)로 바뀌었고, Prisma 스키마 언어로는 표현할 수 없어서
-마이그레이션 raw SQL(`20260822150000_soft_delete_saved_post`)에만 있다. 스키마에는
-`@@unique`가 아니라 평범한 `@@index([userId, sourceUrl])`이 적혀 있다 — **되돌리면 재저장이
-막히고, 그와 동시에 그 키의 `findUnique`/`upsert`가 조용히 다시 컴파일된다.** 그 컴파일
-에러를 잃는 것이 `deletedAt` 필터가 사라지는 경로다. 실제로 이 변경은 `api/posts/route.ts`의
-`userId_sourceUrl` 호출부 두 곳을 컴파일 에러로 깨뜨렸고, `upsert`는 `findFirst` +
-`create`/`update`로 쪼개졌다. `@@index([userId, createdAt])`도
-`@@index([userId, deletedAt, createdAt])`로 바뀌었다 — 모든 목록 읽기가
-`(userId, deletedAt IS NULL)` 필터를 지나기 때문이다.
+`Bookmark`의 `[memberId, postId]` 유니크는 **진짜 unique다.** 이게 예전과 정반대라는 점이
+중요하다: `[userId, sourceUrl]`은 partial unique index(`WHERE "deletedAt" IS NULL`)여야 했고,
+살아 있는 행에만 걸어야 했던 이유는 소프트 삭제된 행이 자기 `sourceUrl`을 들고 있어서 전역
+unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없었기** 때문이다.
 
-같은 링크를 다시 저장하면(살아 있는 행이 있을 때) 중복되지 않고 갱신된다. 재저장은 장소 집합을
-덧붙이는 게 아니라 **교체**하므로, 다시 인제스트했을 때 장소가 줄어들어도 고아 행이 남지
-않는다. 한 번 지운 링크를 다시 저장하면 지운 행은 그대로 남고 **그 옆에 새 행이 생긴다.**
+분리가 그 제약을 없앴다. 재저장이 **그 행을 되살리므로**(`deletedAt`을 null로) 두 번째 행이
+필요하지 않고, 따라서 유일성을 살아 있는 행으로 좁힐 이유도 없다. `findUnique`/`upsert`가 이
+키에 다시 쓸 수 있게 된 것도 의도된 것이다 — 컴파일 에러로 강제할 것이 이제 없다.
 
-`Place`는 전역 공유이고 `[name, address]`에 유니크가 걸려 있다. `SavedPostPlace`가 둘을
-잇고 선택적 메모를 들고 있다. 저장 트랜잭션 안에서는 장소를 정렬한 뒤 upsert하는데,
-동시에 실행되는 트랜잭션들이 락을 같은 순서로 잡게 하기 위해서다.
+`[memberId, memberSeq]`도 진짜 unique이고, 이건 `/links/1` URL을 뒷받침하면서 동시에
+`MAX+1` 경합의 심판이다. `@@index([memberId, deletedAt, createdAt])`는 그대로다 — 모든 목록
+읽기가 `(memberId, deletedAt IS NULL)` 필터를 지나기 때문이다.
 
-**그 정렬은 사용자가 보는 순서가 아니다.** `SavedPostPlace.position`이 게시글이 장소를
-언급한 원래 순서를 들고 있고, `savedPostInclude`가 `orderBy: { position: "asc" }`로 읽는다.
-둘 중 하나라도 빼면 행은 복합 PK 순서(=무작위 cuid 순)로 돌아오고, `/links`가 장소에 매기는
-1·2·3 번호가 **존재하지 않는 동선을 사실처럼 제시한다** — 데이트코스는 순서가 의미인
-게시글이라 이게 그냥 미관 문제가 아니다. `position`은 이름/주소 키로 찾으므로(락 정렬용
-`localeCompare`와 같은 NUL 구분자를 쓴다) 서로 다른 질의 둘이 한 `Place`로 합쳐져도
-번호에 구멍이 나지 않는다.
+`Post`의 `sourceUrl`은 소프트 삭제가 없으므로 그냥 `@unique`다. 좁힐 대상이 없다.
 
-기존 행은 전부 `position` 기본값 0이다. 즉 이 컬럼이 생기기 전에 저장된 게시글은 다시
-저장할 때까지 순서가 여전히 임의다.
+같은 링크를 다시 저장하면 `Post`는 손대지 않고 자기 `Bookmark`만 되살아난다. 메모와
+`memberSeq`가 그대로 돌아온다.
+
+`Place`는 전역 공유이고 `[name, address]`에 유니크가 걸려 있다. `PostPlace`가 게시물과
+장소를 잇고, 사용자의 메모는 `BookmarkMemo`가 따로 들고 있다 — 주인이 다르기 때문이다.
+저장 트랜잭션 안에서는 장소를 정렬한 뒤 upsert하는데, 동시에 실행되는 트랜잭션들이 락을
+같은 순서로 잡게 하기 위해서다.
+
+**그 정렬은 사용자가 보는 순서가 아니다.** `PostPlace.position`이 게시물이 장소를 언급한
+원래 순서를 들고 있고, `bookmarkInclude`가 `orderBy: { position: "asc" }`로 읽는다.
+둘 중 하나라도 빼면 행은 복합 PK 순서로 돌아오고, `/links`가 장소에 매기는 1·2·3 번호가
+**존재하지 않는 동선을 사실처럼 제시한다** — 데이트코스는 순서가 의미인 게시물이라 이게
+그냥 미관 문제가 아니다. `position`은 이름/주소 키로 찾으므로(락 정렬용 `localeCompare`와
+같은 NUL 구분자를 쓴다) 서로 다른 질의 둘이 한 `Place`로 합쳐져도 번호에 구멍이 나지 않는다.
+
+**`position`이 `PostPlace`에 있는 것은 사용자별이 아니라 게시물별이라는 선언이다.** 그 순서는
+창작자가 캡션에 쓴 것이고, 따라서 그 게시물을 저장한 모든 사용자에게 같다. 사용자마다 다른
+순서를 갖게 하려면 `BookmarkMemo` 쪽에 컬럼을 두어야 한다.
+
+분리 전에 저장된 행은 `position`을 그대로 이관받았다. 여러 사용자의 저장이 한 `Post`로
+합쳐질 때는 가장 작은 값을 골랐다 — 순서는 창작자의 것이라 원래 모든 저장에서 같아야 하고,
+어긋났다면 장소를 덜 찾은 재인제스트의 흔적이므로 더 완전한 쪽을 남기는 것이 맞다.
 
 ## 지도
 
@@ -1089,7 +1185,7 @@ non-null이다 — 위 "인스타그램 썸네일은 만료된다" 참고.
 | [frontend/](frontend/AGENTS.md) | 코드 전부. 명령·설정·검증 방법 |
 | [frontend/src/](frontend/src/AGENTS.md) | 앱 코드의 세 층(app / components / lib) |
 | [frontend/src/app/](frontend/src/app/AGENTS.md) | 라우트 트리 |
-| [frontend/src/app/(app)/](frontend/src/app/(app)/AGENTS.md) | 로그인 없이 열리는 페이지들 |
+| [frontend/src/app/(app)/](frontend/src/app/(app)/AGENTS.md) | 로그인 없이 열리는 페이지들. `/links/<내 순번>`, `/author/<id>` |
 | [frontend/src/app/api/](frontend/src/app/api/AGENTS.md) | 인가가 실제로 일어나는 유일한 층 |
 | [frontend/src/app/api/auth/](frontend/src/app/api/auth/AGENTS.md) | OAuth·SMS·로그아웃 라우트 |
 | [frontend/src/app/verify-phone/](frontend/src/app/verify-phone/AGENTS.md) | 첫 로그인의 관문 |

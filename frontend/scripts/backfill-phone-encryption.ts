@@ -64,7 +64,7 @@ async function assertKeyIsUsable(): Promise<void> {
   }
 
   const already = await prisma.$queryRaw<{ phoneEnc: string }[]>`
-    SELECT "phoneEnc" FROM "UserProfile" WHERE "phoneEnc" IS NOT NULL LIMIT 1
+    SELECT "phoneEnc" FROM "Member" WHERE "phoneEnc" IS NOT NULL LIMIT 1
   `;
   if (already.length > 0 && decryptPhone(already[0].phoneEnc) === null) {
     throw new Error(
@@ -84,12 +84,12 @@ async function main() {
   const [{ present }] = await prisma.$queryRaw<{ present: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'UserProfile' AND column_name = 'phone'
+      WHERE table_name = 'Member' AND column_name = 'phone'
     ) AS present
   `;
   if (!present) {
     console.log(
-      "UserProfile.phone 컬럼이 이미 삭제되었습니다. 백필은 완료된 상태이며 할 일이 없습니다.",
+      "Member.phone 컬럼이 이미 삭제되었습니다. 백필은 완료된 상태이며 할 일이 없습니다.",
     );
     return;
   }
@@ -98,7 +98,7 @@ async function main() {
   // still exists in the database until the follow-up migration drops it, but the
   // generated client cannot see it.
   const rows = await prisma.$queryRaw<LegacyRow[]>`
-    SELECT "id", "phone" FROM "UserProfile"
+    SELECT "id", "phone" FROM "Member"
     WHERE "phone" IS NOT NULL AND "phoneHash" IS NULL
   `;
 
@@ -130,7 +130,7 @@ async function main() {
 
     const { hash, enc } = sealPhone(local);
     await prisma.$executeRaw`
-      UPDATE "UserProfile"
+      UPDATE "Member"
       SET "phoneHash" = ${hash}, "phoneEnc" = ${enc}
       WHERE "id" = ${row.id}::uuid
     `;

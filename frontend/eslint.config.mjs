@@ -10,6 +10,11 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    // The same tree at any depth. `.next/**` is anchored at the config's
+    // directory, so a build that ran with the wrong cwd — leaving a nested
+    // `frontend/.next` — gets linted: tens of thousands of problems in bundled
+    // vendor code, which buries the real ones and fails `--max-warnings 0`.
+    "**/.next/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

@@ -109,7 +109,7 @@ export async function GET(
     // session in the victim's browser for its full 30-day TTL.
     await destroySession(request.cookies.get(SESSION_COOKIE)?.value);
 
-    const cookie = await createSession(outcome.user.id, {
+    const cookie = await createSession(outcome.member.id, {
       userAgent: request.headers.get("user-agent"),
     });
     const response = NextResponse.redirect(new URL(returnTo, origin).toString());

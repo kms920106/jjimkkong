@@ -99,7 +99,7 @@ authority를 찾기 *전에* 떼어낸다. 그래서 `/\evil.com`과 `/<TAB>/evi
 의도적으로 재사용 가능하므로, 번호별 제한만 두면 OAuth 왕복 한 번으로 30초마다 새 번호에
 문자를 보낼 수 있다. **한쪽만 남기지 말 것.**
 
-**탈퇴 필터 세 곳은 함께 움직인다:** `resolveSessionWithUser()`(`requireUser()`가 쓴다),
+**탈퇴 필터 세 곳은 함께 움직인다:** `resolveSessionWithUser()`(`requireMember()`가 쓴다),
 `linkProviderIdentity()`의 identity 조회, `attachIdentity()` 트랜잭션 안의 owner 조회.
 셋 다 `withdrawnAt: null`이다. **고정 id를 `upsert`하는 코드를 넣지 말 것** — 그게
 탈퇴를 되돌리는 유일한 형태이고, 삭제된 테스트 로그인이 정확히 그 구멍이었다.
@@ -108,9 +108,9 @@ authority를 찾기 *전에* 떼어낸다. 그래서 `/\evil.com`과 `/<TAB>/evi
 **`findUnique`를 쓸 수 없다.** partial unique index라서 컴파일이 깨진다.
 `findFirst` + `withdrawnAt: null`이 정답이다.
 
-**세션 조회는 프로필을 조인해서 한 번에 가져온다.** `requireUser()`는
+**세션 조회는 프로필을 조인해서 한 번에 가져온다.** `requireMember()`는
 `resolveSessionWithUser()`를 부른다 — 예전에는 `session.findUnique` 다음에
-`userProfile.findFirst`를 부르는 **직렬 두 왕복**이었고, 외래키를 따라가는 사슬이라 두 번째는
+`member.findFirst`를 부르는 **직렬 두 왕복**이었고, 외래키를 따라가는 사슬이라 두 번째는
 첫 번째가 끝나야 시작할 수 있었다. Vercel 함수에서 풀링된 Supabase로 나가는 왕복이라 그 비용이
 모든 인증된 렌더에 붙었고, `/links`는 그걸 그대로 지불하고 있었다. **다시 두 쿼리로 쪼개지 말 것.**
 
@@ -141,7 +141,7 @@ POST로 고정 uuid가 될 수 있는 우회로였고, "로컬에서만"을 강�
 ## Dependencies
 
 ### Internal
-- `../auth.ts` — `requireUser()`/`getUser()`
+- `../auth.ts` — `requireMember()`/`getMember()`
 - `../prisma.ts`, `../../generated/prisma/`
 - `../../app/api/auth/**`, `../../app/verify-phone/` — 호출자
 

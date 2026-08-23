@@ -280,17 +280,20 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     const byId = new Map<string, PlaceDetail>();
     for (const post of posts) {
       for (const place of post.places) {
+        // The shared post id, not the bookmark id: the sheet merges these with
+        // other members' sources for the same pin and dedupes across both, so
+        // both halves have to identify a post by the same key.
+        //
+        // No `memo` here even though `place.memo` is right there — the merged
+        // list includes posts this member never saved, which have no note of
+        // theirs to show, so the sheet does not render one for anybody.
         const source = {
-          postId: post.id,
+          postId: post.postId,
           sourceUrl: post.sourceUrl,
           platform: post.platform,
           title: post.title,
           thumbnail: post.thumbnail,
           author: post.author,
-          authorImage: post.authorImage,
-          // The memo belongs to this post's link to the place, not to the
-          // shared place row, so it travels with the source.
-          memo: place.memo,
         };
         const existing = byId.get(place.id);
         if (existing) existing.sources.push(source);
@@ -448,12 +451,15 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         throw new Error(await readError(res, "저장하지 못했습니다."));
       }
 
-      const { id } = (await res.json()) as { id: string };
+      const { id, reusedPost } = (await res.json()) as {
+        id: string;
+        reusedPost: boolean;
+      };
       // Returned so the caller can count what the row actually holds. The
       // server re-geocodes, so its matched set can be smaller than the one
       // ingest reported — reporting the ingest count would recreate the
       // silence this toast exists to end, one round later.
-      return { id, posts: await refreshPosts() };
+      return { id, reusedPost, posts: await refreshPosts() };
     },
     [refreshPosts],
   );
@@ -589,7 +595,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           );
 
         try {
-          const { id, posts: refreshed } = await save(merged);
+          const { id, reusedPost, posts: refreshed } = await save(merged);
           // Dropped only after refreshPosts() inside save() has returned, so
           // the real rows are already in `posts` — clearing any earlier would
           // blink the pins off the map and back on.
@@ -604,7 +610,17 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           // reported its own error.
           const saved = refreshed?.find((post) => post.id === id);
           const savedCount = saved?.places.length ?? matched.length;
-          const missing = merged.candidates.length - savedCount;
+
+          // Only counted when this request actually geocoded the places being
+          // reported. For a link somebody already saved, the row carries the
+          // *shared* post's place list and this run resolved nothing — the
+          // difference between the two numbers would then say nothing about a
+          // failed lookup, and "N곳은 지도에서 찾지 못했어요" would be a claim
+          // about a round that never ran. (It can also come out negative there,
+          // when the first save found more places than this caption did.)
+          const missing = reusedPost
+            ? 0
+            : merged.candidates.length - savedCount;
           toast.success(
             missing > 0
               ? `${savedCount}곳을 저장했어요. ${missing}곳은 지도에서 찾지 못했어요.`

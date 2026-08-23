@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Same reason the sibling routes have one: this page is `force-dynamic`, so
- * its HTML cannot exist until getUser() and the post query come back, and a
+ * its HTML cannot exist until getMember() and the post query come back, and a
  * prefetch has nothing to pre-build. Without this file the post detail page
  * just sits there for the whole server round trip after the author is tapped,
  * which reads as the tap not having registered.

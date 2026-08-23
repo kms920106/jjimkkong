@@ -21,14 +21,15 @@ const ALLOWED_MODELS = new Set([
   "session",
   "phoneVerification",
   "passwordAttempt",
-  "savedPostPlace",
 ]);
 
 /** Where `del` from @vercel/blob may be imported. */
-const BLOB_DELETE_OWNERS = [
-  "src/lib/post-thumbnail.ts",
-  "src/lib/profile-image.ts",
-];
+// One file, down from two. `post-thumbnail.ts` left when the thumbnail column
+// moved to the shared, immutable `Post`: nothing displaces a thumbnail blob any
+// more, so there is no delete to own. Adding a file back here means re-arguing
+// why a `del()` in it cannot be aimed at another user's image — blob URLs are
+// public, so the reasoning has to be about the URL's provenance, not its shape.
+const BLOB_DELETE_OWNERS = ["src/lib/profile-image.ts"];
 
 const DESTRUCTIVE_SQL =
   /\b(?:DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?|DROP\s+(?:TABLE|DATABASE|SCHEMA|TYPE))\b/i;
@@ -124,7 +125,7 @@ const noBlobDelImport = {
     schema: [],
     messages: {
       blocked:
-        "Import `del` from @vercel/blob only in src/lib/post-thumbnail.ts or src/lib/profile-image.ts. Those wrappers are only ever handed a URL read back out of a DB row, and every caller counts references first — a fresh del() call has neither property, and blob URLs are public, so it can be aimed at another user's image.",
+        "Import `del` from @vercel/blob only in src/lib/profile-image.ts. That wrapper is only ever handed a URL read back out of the row being replaced, inside the same transaction — a fresh del() call has no such provenance, and blob URLs are public, so it can be aimed at another user's image.",
     },
   },
   create(context) {

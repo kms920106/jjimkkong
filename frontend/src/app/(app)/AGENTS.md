@@ -11,12 +11,12 @@
 | File | Description |
 |------|-------------|
 | `layout.tsx` | 공용 크롬 없음(의도). 홈은 전체화면 지도가 자기 버튼을 띄우고, 나머지 페이지는 각자 헤더를 들고 온다 |
-| `page.tsx` | 홈 `/` — 붙여넣기 입력 + 지도 + 목록. `getUser()`로 세션을 읽고 `HomeClient`에 넘긴다 |
+| `page.tsx` | 홈 `/` — 붙여넣기 입력 + 지도 + 목록. `getMember()`로 세션을 읽고 `HomeClient`에 넘긴다 |
 | `links/page.tsx` | `/links` — 저장한 링크 그리드. 플랫폼 탭으로 갈린다 |
-| `links/[id]/page.tsx` | `/links/[id]` — 게시글 상세. 썸네일·캡션 + 장소 swiper. 여기만 `notFound()`를 쓴다 |
+| `links/[id]/page.tsx` | `/links/[id]` — 게시글 상세. `[id]`는 cuid가 아니라 그 회원 자신의 `Bookmark.memberSeq`(정수)다. 썸네일·캡션 + 장소 swiper. 여기만 `notFound()`를 쓴다 |
 | `links/[id]/loading.tsx` | 위와 같은 이유의 스켈레톤. 그리드는 눌린 티가 안 나므로 특히 필요하다 |
-| `links/author/[author]/page.tsx` | `/links/author/[author]` — 한 작성자에게서 저장한 링크들. `[id]`와 같은 이유로 `notFound()`를 쓴다 |
-| `links/author/[author]/loading.tsx` | 위와 같은 이유의 스켈레톤 |
+| `author/[id]/page.tsx` | `/author/[id]` — 한 작성자에게서 저장한 링크들. `[id]`는 `Author.id`(정수)다. `links/[id]`와 같은 이유로 `notFound()`를 쓴다 |
+| `author/[id]/loading.tsx` | 위와 같은 이유의 스켈레톤 |
 | `profile/page.tsx` | `/profile` — 프로필 수정(사진·닉네임·상태메세지). drawer의 연필이 여기로 온다 |
 | `profile/loading.tsx` | 위와 같은 이유의 스켈레톤. 아래 "`/links`는 `loading.tsx`가 필요하다" 참고 |
 | `settings/page.tsx` | `/settings` — 설정 목록. 비밀번호·약관·지도·로그아웃·회원탈퇴 |
@@ -30,6 +30,7 @@
 | Directory | Purpose |
 |-----------|---------|
 | `links/` | 저장 링크 그리드와 게시글 상세(`[id]/`) |
+| `author/` | 작성자별 목록 페이지(`[id]/`) |
 | `profile/` | 프로필 수정 페이지 |
 | `settings/` | 설정 목록과 비밀번호 변경 페이지 |
 | `terms/`, `privacy/` | 법적 고지 — 정적 산문, 서버 컴포넌트 |
@@ -38,11 +39,11 @@
 
 ### Working In This Directory
 
-**`requireUser()`를 페이지에 넣지 말 것.** 페이지는 `getUser()`를 부르고, 세션이 없으면
+**`requireMember()`를 페이지에 넣지 말 것.** 페이지는 `getMember()`를 부르고, 세션이 없으면
 빈 지도·빈 목록을 렌더링한 뒤 `LoginDrawer`로 로그인을 권한다. 실제 게이트는 API다.
 
 **세션 쿠키를 읽으므로 `dynamic = "force-dynamic"`이 필요하다.** 홈과 링크 목록에 이미
-걸려 있다. 새 페이지가 `getUser()`를 부르면 여기도 붙인다.
+걸려 있다. 새 페이지가 `getMember()`를 부르면 여기도 붙인다.
 
 **`layout.tsx`에 공용 헤더를 넣지 말 것.** 홈이 전체화면 지도라서 그렇다. 헤더가 필요한
 페이지는 `LegalPage` 같은 자기 크롬을 쓴다.
@@ -63,7 +64,7 @@
 ## Dependencies
 
 ### Internal
-- `../../lib/auth.ts` (`getUser`), `../../lib/serialize.ts`, `../../lib/legal.ts`
+- `../../lib/auth.ts` (`getMember`), `../../lib/serialize.ts`, `../../lib/legal.ts`
 - `../../components/HomeClient.tsx`, `LinksClient.tsx`, `LegalPage.tsx`
 
 ### External
@@ -102,14 +103,20 @@
 
 **`/links/[id]`는 이 디렉터리에서 유일하게 `notFound()`를 쓴다.** 위의 "페이지는 로그인 없이
 열린다"에 대한 예외처럼 보이지만 아니다 — 게시글은 소유자에게 묶여 있어서 세션이 없으면
-**조회할 `userId` 자체가 없다.** 로그아웃 상태의 홈 지도에 핀이 없는 것과 같은 상태이지,
+**조회할 `memberId` 자체가 없다.** 로그아웃 상태의 홈 지도에 핀이 없는 것과 같은 상태이지,
 로그인으로 걷어내는 것이 아니다. **리다이렉트로 바꾸지 말 것.** 남의 게시글도 없는 게시글과
 똑같이 404여야 한다 — 구분하면 어떤 id가 존재하는지 누설된다.
 
 `deletedAt: null` 필터가 여기에도 있어야 한다. 루트 AGENTS.md가 "함께 움직인다"고 적은
 읽기 필터 목록에 이 라우트가 추가됐다 — 빠지면 지운 링크가 자기 URL에서 계속 열린다.
 
-## 작성자는 사진 위 11시에 있고, 누르면 `/links/author/[author]`다
+**`[id]`는 행 id가 아니라 그 회원 자신의 북마크 번호(`Bookmark.memberSeq`)다.**
+`/links/1`이 그 사람의 첫 저장이다. 회원별 번호인 이유는 전역 카운터를 URL에 두면 서비스가
+가진 링크 수가 그대로 드러나고, id를 찍어 보는 것으로 특정 게시글의 존재를 확인할 수 있기
+때문이다. 공유 `Post.id`는 URL에 아예 등장하지 않는다 — 내부 키이자 인제스트의 중복 판정
+키다.
+
+## 작성자는 사진 위 11시에 있고, 누르면 `/author/[id]`다
 
 상세 페이지의 작성자는 캡션 밑의 메타 한 줄이 아니라 **사진 좌상단에 얹힌 오버레이**다
 (`components/AuthorLink.tsx`). 플랫폼들이 자기 게시물을 그렇게 라벨링하므로 — 인스타그램의
@@ -124,18 +131,34 @@
 **스크림은 사진 전체가 아니라 알약 하나에만 있다.** 음식 사진 위에 전체 그라디언트를 깔면
 사용자가 보러 온 바로 그것이 탁해진다. 대비가 필요한 곳은 글자가 실제로 앉는 자리뿐이다.
 
+**아바타는 이제 `Author` 행에서 온다.** 예전에는 저장 행마다 복사돼 있어서 그중 아바타를
+가진 최신 게시글을 찾아 쓰는 코드가 있었고, 사본들이 서로 어긋날 수 있었다. 작성자당 한
+행이 그걸 끝낸다.
+
 **아바타의 기본값은 이니셜이고, 그게 예외가 아니라 다수다.** 유튜브·지도 행에는 아바타가
 아예 없고(그쪽 API는 채널 제목만 준다), 인스타그램 행도 embed가 막혔을 때 저장됐으면 없다.
 Base UI의 `Avatar`가 `src`가 없을 때와 **로드에 실패했을 때** 둘 다 fallback으로 넘어가므로,
 백업이 안 된 채 원본 URL이 만료된 행도 깨진 이미지가 아니라 이니셜이 된다.
 
 **작성자 페이지는 목록이 비면 404다.** 이 사용자가 저장한 적 없는 사람의 URL이므로 보여줄
-페이지가 없다 — 빈 그리드로 두면 저장한 게시글이 삭제된 것처럼 보인다.
+페이지가 없다 — 빈 그리드로 두면 저장한 게시글이 삭제된 것처럼 보인다. `Author` 행 자체는
+**다른** 회원이 저장해서 존재할 수 있지만, 그건 이 회원의 페이지가 아니다. 같은 이유로
+이 목록에도 `deletedAt: null`이 필요하다 — 마지막 북마크를 지웠으면 이 URL은 살아 있으면
+안 된다.
 
-**`platform`은 경로가 아니라 쿼리스트링으로 간다.** 목록을 좁히기는 하지만 그 페이지를
-식별하지는 않기 때문이다. 그리고 **enum으로 검증해서 넘긴다** — 쿼리스트링으로 오는 값이라
-모르는 값은 Prisma에 잘못된 enum 멤버로 닿는 대신 필터를 아예 걸지 않는 쪽으로 떨어져야
-한다.
+**URL은 `Author.id` 하나다. 예전에는
+`/links/author/<handle>?platform=INSTAGRAM`이었다.** 핸들을 퍼센트 인코딩해야 했던 이유는
+유튜브의 `author`가 채널 **제목**, 즉 공백과 한글이 들어간 자유 문자열이라서였고,
+`platform`이 쿼리스트링에 실려야 했던 이유는 핸들이 자기 플랫폼 안에서만 유일해서
+두 플랫폼을 섞은 페이지가 서로 다른 두 사람을 한 사람처럼 보여주기 때문이었다. 두 문제
+모두 식별자가 없다는 것의 증상이었고, `Author` 행에는 그것이 있다(`[platform, handle]`이
+유니크). 그래서 경로 세그먼트는 정수 하나이고 `platform` 쿼리스트링은 사라졌다.
+
+**세그먼트는 그대로 넘기지 않고 파싱한다.** `links/[id]`와 같은 이유다 — 자유 문자열이므로
+숫자가 아닌 값은 잘못된 `Int`로 Prisma에 닿는 대신 404가 되어야 한다.
+
+**옛 경로는 리다이렉트 없이 사라졌다.** 이 앱의 작성자 링크는 전부 `AuthorLink`가 서버가
+방금 보낸 데이터로 만들므로, 옛 형태를 들고 있는 외부 참조가 없었다.
 
 **플랫폼 프로필로 나가는 버튼은 인스타그램에서만 뜬다**
 (`lib/author-profile-url.ts`). 유튜브의 `author`는 채널 id도 `@handle`도 아닌 **표시용
@@ -174,7 +197,7 @@ JS 없이 첫 페인트부터 동작하며, 라이브러리는 평범한 스크�
 스켈레톤 컨테이너는 `ProfileEditClient`의 최상위(`mx-auto flex w-full max-w-md flex-col
 gap-6 px-4 py-6`)와 정확히 같아야 한다.
 
-**이 페이지도 `requireUser()`를 쓰지 않는다.** 로그아웃 상태에서는 폼이 disabled로 렌더되고
+**이 페이지도 `requireMember()`를 쓰지 않는다.** 로그아웃 상태에서는 폼이 disabled로 렌더되고
 안내 문구가 뜬다. 실제 게이트는 `PATCH /api/settings/profile`이고, 그쪽은 401을 준다.
 
 ## `/settings`와 `/settings/password`도 `loading.tsx`를 갖는다
@@ -185,7 +208,7 @@ flex-col gap-6 py-6` — 행이 화면 끝까지 닿아야 해서 가로 패딩�
 `PasswordSettingPageClient`의 최상위(`mx-auto flex w-full max-w-md flex-col gap-6 px-4 py-6`)와
 정확히 같아야 한다.
 
-**둘 다 `requireUser()`를 쓰지 않는다.** `/settings`는 로그아웃 상태에서 약관·개인정보 행을
+**둘 다 `requireMember()`를 쓰지 않는다.** `/settings`는 로그아웃 상태에서 약관·개인정보 행을
 그대로 살려 두고(법적 고지는 로그인 뒤로 숨길 수 없다) 계정 행만 disabled로 그린다.
 `/settings/password`는 폼 대신 안내 문구를 그린다. 게이트는 `PATCH /api/settings`,
 `DELETE /api/account`, `POST /api/settings/password`다.

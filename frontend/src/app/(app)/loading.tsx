@@ -2,7 +2,7 @@ import { Menu, Plus } from "lucide-react";
 
 /**
  * The home page is `force-dynamic`: it reads the session cookie, so its HTML
- * cannot exist until getUser() and the savedPost query come back and the
+ * cannot exist until getMember() and the bookmark query come back and the
  * router cannot prefetch it either. Without this file a navigation here — the
  * back button on /links is the common one — paints nothing on click and the
  * previous page just sits there for the whole server round trip, which reads

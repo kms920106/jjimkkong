@@ -1,4 +1,4 @@
-import { getUser } from "@/lib/auth";
+import { getMember } from "@/lib/auth";
 import PasswordSettingPageClient from "@/components/PasswordSettingPageClient";
 
 // Reads the session cookie, so this page is always rendered per request.
@@ -9,9 +9,9 @@ export const metadata = {
 };
 
 export default async function PasswordSettingPage() {
-  // Public like every other page: no redirect, no requireUser(). Signed out the
+  // Public like every other page: no redirect, no requireMember(). Signed out the
   // form is replaced by a prompt, and POST /api/settings/password is 401 anyway.
-  const user = await getUser();
+  const user = await getMember();
 
   return (
     <PasswordSettingPageClient

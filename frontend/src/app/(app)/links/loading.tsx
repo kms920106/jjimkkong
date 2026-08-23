@@ -4,8 +4,8 @@ import { ChevronIcon } from "@/components/ChevronIcon";
 import { cn } from "@/lib/utils";
 
 /**
- * The page is `force-dynamic`: its HTML cannot exist until getUser() and the
- * savedPost query come back, so a prefetch cannot pre-build it either. Without
+ * The page is `force-dynamic`: its HTML cannot exist until getMember() and the
+ * bookmark query come back, so a prefetch cannot pre-build it either. Without
  * this file the router has nothing to paint on click and the old page just sits
  * there for the whole server round trip — the navigation reads as broken rather
  * than slow. This renders instantly from the client bundle so the header and

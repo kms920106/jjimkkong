@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { requireUser } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
 import { requireSameOrigin, toErrorResponse } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import {
@@ -46,7 +46,7 @@ const FieldsSchema = z.object({
 export async function PATCH(request: NextRequest) {
   try {
     requireSameOrigin(request);
-    const user = await requireUser();
+    const user = await requireMember();
 
     // Sheds an obviously oversized upload before formData() buffers the whole
     // body into memory. Content-Length is caller-supplied and therefore not a
@@ -80,17 +80,17 @@ export async function PATCH(request: NextRequest) {
     }
 
     // The previous URL is re-read inside the transaction rather than taken from
-    // the `user` row requireUser() returned, which was fetched before the
+    // the `user` row requireMember() returned, which was fetched before the
     // upload. Two saves racing (a double-tap, two tabs) both read the same
     // stale value there, so both would delete that one blob and neither would
     // delete the one the other superseded — leaking a billable object with
     // nothing referencing it.
     const { previous, updated } = await prisma.$transaction(async (tx) => {
-      const before = await tx.userProfile.findUniqueOrThrow({
+      const before = await tx.member.findUniqueOrThrow({
         where: { id: user.id },
         select: { imageUrl: true },
       });
-      const row = await tx.userProfile.update({
+      const row = await tx.member.update({
         where: { id: user.id },
         data: {
           // Empty clears back to null so the display falls through to the email

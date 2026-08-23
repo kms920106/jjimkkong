@@ -78,7 +78,7 @@ type SkipReason =
   // fetchMetadata threw. Counts toward the consecutive-block stop.
   | "fetch_error";
 
-type Candidate = { id: string; sourceUrl: string };
+type Candidate = { id: number; sourceUrl: string };
 
 function numericFlag(name: string, fallback: number): number {
   const raw = process.argv
@@ -120,7 +120,7 @@ async function main() {
     return;
   }
 
-  const rows = await prisma.savedPost.findMany({
+  const rows = await prisma.post.findMany({
     where: {
       platform: Platform.INSTAGRAM,
       // The predicate for "not yet backed up". Deliberately not a string match
@@ -130,9 +130,13 @@ async function main() {
       // would mean more Instagram requests for a UX improvement, not a repair —
       // and more requests is exactly what raises the odds of being blocked.
       thumbnail: { not: null },
-      // A withdrawn account's posts are unreachable in the app, so spending
-      // Instagram requests and storage on them buys nothing.
-      user: { withdrawnAt: null },
+      // At least one live bookmark. Thumbnails moved to the shared Post in the
+      // post/bookmark split, so this is no longer a `withdrawnAt` filter on the
+      // row's own owner — a Post has no owner. The question is whether anybody
+      // can still see it: a post every member has un-bookmarked, or whose only
+      // members have withdrawn, is unreachable in the app, and spending
+      // Instagram requests and storage on it buys nothing.
+      saves: { some: { deletedAt: null, member: { withdrawnAt: null } } },
     },
     select: { id: true, sourceUrl: true },
     orderBy: { createdAt: "asc" },
@@ -211,7 +215,7 @@ async function main() {
       continue;
     }
 
-    await prisma.savedPost.update({
+    await prisma.post.update({
       where: { id: row.id },
       // The old `thumbnail` was Instagram's URL, never a blob of ours, so
       // there is nothing to delete as it is replaced.

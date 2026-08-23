@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { resolveSessionWithUser, SESSION_COOKIE } from "@/lib/auth/session";
-import type { UserProfile } from "@/generated/prisma/client";
+import type { Member } from "@/generated/prisma/client";
 
 /**
  * Thrown when a request has no valid session. API routes catch this and
@@ -14,7 +14,7 @@ export class UnauthorizedError extends Error {
 }
 
 /**
- * Verifies the request's session and returns the signed-in UserProfile.
+ * Verifies the request's session and returns the signed-in Member.
  *
  * Every API route must call this and scope its queries by the returned id —
  * Prisma connects as the table owner and therefore bypasses row-level
@@ -29,22 +29,22 @@ export class UnauthorizedError extends Error {
  * and a fully working session. Dropping it from this query silently un-withdraws
  * every account in the system.
  */
-export async function requireUser(): Promise<UserProfile> {
+export async function requireMember(): Promise<Member> {
   const store = await cookies();
   // One query, not two: the profile comes back joined onto the session, and it
   // is already filtered by `withdrawnAt` there. Splitting this back into a
   // findUnique plus a findFirst costs an extra serial round trip on every
   // authenticated render.
   const session = await resolveSessionWithUser(store.get(SESSION_COOKIE)?.value);
-  if (!session?.user) throw new UnauthorizedError();
+  if (!session?.member) throw new UnauthorizedError();
 
-  return session.user;
+  return session.member;
 }
 
-/** Like requireUser(), but returns null instead of throwing. */
-export async function getUser(): Promise<UserProfile | null> {
+/** Like requireMember(), but returns null instead of throwing. */
+export async function getMember(): Promise<Member | null> {
   try {
-    return await requireUser();
+    return await requireMember();
   } catch {
     return null;
   }

@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
-import { requireUser } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { describeError, toErrorResponse } from "@/lib/api";
 import { describePost, fetchMetadata } from "@/lib/ingest/metadata";
 import { extractPlaces } from "@/lib/ingest/extract";
@@ -8,7 +9,7 @@ import { geocodeCandidates } from "@/lib/ingest/geocode";
 import { backupThumbnail } from "@/lib/post-thumbnail";
 import { backupAuthorImage } from "@/lib/post-author-image";
 import { Platform } from "@/generated/prisma/enums";
-import type { IngestEvent } from "@/lib/types";
+import type { IngestEvent, IngestResponse } from "@/lib/types";
 
 // Metadata fetch + the model + geocoding runs well past Vercel's 10s default on
 // longer captions. The thumbnail backup no longer adds to that total — it runs
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
   // than by message.
   let body: z.infer<typeof BodySchema>;
   try {
-    await requireUser();
+    await requireMember();
     body = BodySchema.parse(await request.json());
   } catch (error) {
     return toErrorResponse(error);
@@ -88,6 +89,28 @@ export async function POST(request: NextRequest) {
         const { url, manualCaption } = body;
 
         send({ type: "progress", stage: "fetching" });
+
+        // Already ingested by whoever saved this link first, so none of the
+        // pipeline below has to run again: no crawl of a source that blocks us,
+        // no model call, no round of Naver lookups. This short-circuit is the
+        // reason Post was split out of the per-member row — the values were
+        // always going to be identical, and paying for them a second time only
+        // spent the Instagram request budget that gets us blocked.
+        //
+        // Nothing is written here. The bookmark is created by POST /api/posts,
+        // which resolves the same URL to the same row; this route only answers
+        // what the confirm sheet needs to render.
+        //
+        // A manual caption is deliberately not a reason to skip this. The user
+        // pastes one because *their* fetch came back empty, but a post already in
+        // the table was read successfully by someone — the stored caption is the
+        // better of the two, and re-extracting from theirs would produce a second
+        // opinion about a shared row this route may not change.
+        const known = await findExistingPost(url);
+        if (known) {
+          send({ type: "result", result: known });
+          return;
+        }
 
         // A pasted caption is authoritative: the user supplies it precisely
         // because the fetch came back empty or blocked. On the Instagram retry
@@ -231,4 +254,65 @@ export async function POST(request: NextRequest) {
       "X-Accel-Buffering": "no",
     },
   });
+}
+
+/**
+ * The ingest result for a link somebody has already saved, or null if new.
+ *
+ * Returns the shape POST /api/ingest would have produced, assembled from the
+ * stored row instead of the network. Every candidate comes back `matched: true`
+ * with real coordinates because these places were geocoded once and kept — the
+ * confirm sheet renders them exactly as it would a fresh run.
+ *
+ * `describePost()` rather than the raw string: `sourceUrl` is the identity of the
+ * shared row, so the lookup has to use the same canonical form the first save
+ * stored — otherwise a tracking parameter would make an existing post look new
+ * and the whole pipeline would run for nothing.
+ *
+ * Unsupported URLs throw out of `describePost()`, which is correct here: this
+ * runs before the stream opens, so it still becomes a real 400.
+ */
+async function findExistingPost(url: string): Promise<IngestResponse | null> {
+  const { sourceUrl } = describePost(url);
+
+  const post = await prisma.post.findUnique({
+    where: { sourceUrl },
+    include: {
+      author: true,
+      places: { include: { place: true }, orderBy: { position: "asc" } },
+    },
+  });
+  if (!post) return null;
+
+  return {
+    post: {
+      sourceUrl: post.sourceUrl,
+      platform: post.platform,
+      title: post.title,
+      caption: post.caption,
+      thumbnail: post.thumbnail,
+      thumbnailSource: post.thumbnailSource,
+      author: post.author?.handle ?? null,
+      authorImage: post.author?.image ?? null,
+      authorImageSource: post.author?.imageSource ?? null,
+    },
+    candidates: post.places.map(({ place }) => ({
+      // The stored name, not the original query: that query was one member's
+      // extraction and is not kept. The resolved name is what the row means.
+      query: place.name,
+      hint: null,
+      matched: true,
+      lookupFailed: false,
+      name: place.name,
+      address: place.address,
+      lat: place.lat,
+      lng: place.lng,
+      category: place.category,
+      naverLink: place.naverLink,
+    })),
+    // A stored post has whatever caption the first ingest managed to read. Even
+    // if that was null, asking this member to paste one would be asking them to
+    // supply input for a row nobody may rewrite.
+    needsManualCaption: false,
+  };
 }

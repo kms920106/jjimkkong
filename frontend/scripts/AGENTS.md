@@ -12,6 +12,8 @@
 |------|-------------|
 | `backfill-phone-encryption.ts` | 평문으로 남은 전화번호를 `phoneHash`/`phoneEnc` 쌍으로 봉인. `encrypt_phone`과 `drop_phone_plaintext` 마이그레이션 **사이**에 한 번 실행 |
 | `backfill-thumbnail-backup.ts` | 백업 도입 전에 저장된 인스타그램 썸네일을 Blob으로 복구. `saved_post_thumbnail_backup` 마이그레이션 **적용 후** 실행 |
+| `reingest-post.ts` | 지정한 `Post` 행을 다시 인제스트해 덮어쓴다. **생성 이후 `Post`를 고칠 수 있는 유일한 쓰기 경로.** 아래 참고 |
+| `verify-soft-delete.ts` | 소프트 삭제와 재저장 되살리기를 라이브 DB에 대고 확인. 프로브 행을 남긴다 |
 
 ## For AI Agents
 
@@ -47,13 +49,40 @@ npx tsx --env-file=.env scripts/backfill-thumbnail-backup.ts
 스크립트 맨 위 블록 주석에 (1) 무엇을 하는지, (2) 어느 마이그레이션 사이에 끼는지,
 (3) 어떤 환경변수가 필요한지, (4) idempotent 여부를 적는다.
 
+## `reingest-post.ts`가 특별한 이유
+
+`Post`는 저장한 모든 회원이 함께 읽으므로 **생성 이후 어떤 요청도 고칠 수 없다** —
+나중 저장이 고칠 수 있으면 한 회원의 재저장이 다른 회원이 보는 내용을 바꾼다. 대가는
+인스타가 차단 중일 때 인제스트된 게시물이 그 결과(썸네일 없음, 캡션 없음)에 고정되고
+**사용자가 다시 저장해도 고쳐지지 않는다**는 것이다. 게다가 이후 저장자는 파이프라인을
+건너뛰므로 손상이 퍼지기만 하고 낫지 않는다.
+
+이 스크립트가 그 탈출구이고, 규칙이 셋이다:
+
+1. **id를 명시적으로 받는다. "전부 고치기" 모드는 없다.** 재스크레이핑할 행을 조건으로
+   고르는 것은 인스타 요청 예산을 한 번에 Meta에 쏟는 것이고, 그게 바로 고치려는 손상을
+   만든 실패다. 후보를 찾는 SQL이 파일 주석에 있다 — 보고 나서 고를 것.
+2. **`--dry-run`을 먼저 돌린다.** fetch가 비어서 돌아올 수 있고, 쓸 만한 행을 차단된
+   읽기로 덮는 것이 아무것도 안 하는 것보다 나쁘다. 캡션과 썸네일이 둘 다 없으면
+   스크립트가 스스로 쓰기를 거부한다.
+3. **장소는 추가만 하고 제거하지 않는다.** 장소가 줄어든 재인제스트는 교정이라기보다
+   잘린 읽기일 가능성이 훨씬 높고, `PostPlace` 행 제거는 애초에 허용되지 않는다
+   (`HARD_DELETE_ALLOWED`에 없다). 기존 행의 `position`도 건드리지 않는다 — 부분
+   재읽기가 창작자가 쓴 동선을 다시 번호 매기면 안 된다.
+
+**라우트 핸들러에 이 능력을 주지 말 것.** "저장이 공유 행을 고칠 수 있다"는 것이
+게시물/찜 분리가 부정하려고 존재하는 바로 그 성질이다.
+
 ## Dependencies
 
 ### Internal
 - `../src/lib/auth/phone.ts` — `normalizeKoreanMobile()`
 - `../src/lib/auth/phone-crypto.ts` — `sealPhone()`, `decryptPhone()`
 - `../src/lib/ingest/metadata.ts` — `fetchMetadata()` (썸네일 백필의 재스크레이핑)
-- `../src/lib/post-thumbnail.ts` — `fetchAndPutThumbnail()`
+- `../src/lib/post-thumbnail.ts` — `fetchAndPutThumbnail()`, `backupThumbnail()`, `isOwnThumbnailBlob()`
+- `../src/lib/post-author-image.ts` — `backupAuthorImage()`, `isOwnAuthorImageBlob()`
+- `../src/lib/ingest/extract.ts` / `geocode.ts` — 재인제스트가 파이프라인 전체를 다시 돈다
+- `../src/lib/prisma-guard.ts` — `withDeleteGuard()`. **모든 스크립트가 자기 클라이언트를 이걸로 감싼다**
 - `../src/generated/prisma/client`
 - `../prisma/migrations/` — 실행 시점이 마이그레이션 순서에 묶여 있다
 

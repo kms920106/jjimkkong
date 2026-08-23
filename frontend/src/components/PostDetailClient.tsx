@@ -141,11 +141,7 @@ export default function PostDetailClient({
             author is missing. */}
         <div className="flex min-h-9 items-center justify-between gap-3 px-4 pt-3">
           {post.author ? (
-            <AuthorLink
-              author={post.author}
-              authorImage={post.authorImage}
-              platform={post.platform}
-            />
+            <AuthorLink author={post.author} />
           ) : (
             <span aria-hidden />
           )}

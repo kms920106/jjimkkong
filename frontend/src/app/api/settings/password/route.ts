@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { requireSameOrigin, toErrorResponse } from "@/lib/api";
-import { requireUser } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import {
   clearPasswordAttempts,
@@ -40,7 +40,7 @@ const BodySchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     requireSameOrigin(request);
-    const user = await requireUser();
+    const user = await requireMember();
 
     const { password, currentPassword } = BodySchema.parse(await request.json());
 
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
     const passwordHash = await hashPassword(password);
 
-    await prisma.userProfile.update({
+    await prisma.member.update({
       where: { id: user.id },
       data: { passwordHash },
     });

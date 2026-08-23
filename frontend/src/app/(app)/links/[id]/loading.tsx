@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Same reason /links has one: this page is `force-dynamic`, so its HTML cannot
- * exist until getUser() and the post query come back and a prefetch has nothing
+ * exist until getMember() and the post query come back and a prefetch has nothing
  * to pre-build. Without this file the grid just sits there for the whole server
  * round trip after a tap, which reads as the cell not having been pressed.
  *

@@ -25,10 +25,11 @@ const ALLOWED_MODELS = new Set([
   "session",
   "phoneVerification",
   "passwordAttempt",
-  "savedPostPlace",
 ]);
 
-const BLOB_DELETE_OWNERS = ["post-thumbnail.ts", "profile-image.ts"];
+// Must match BLOB_DELETE_OWNERS in frontend/eslint-rules/no-hard-delete.mjs.
+// One file, down from two — see the note there.
+const BLOB_DELETE_OWNERS = ["profile-image.ts"];
 
 /** `<client>.<model>.delete(` / `.deleteMany(` — the Prisma delegate shape. */
 const PRISMA_DELETE = /(?:\w+)\.(\w+)\s*\.\s*(delete|deleteMany)\s*\(/g;
@@ -228,10 +229,11 @@ if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {
     !BLOB_DELETE_OWNERS.some((owner) => path.endsWith(owner))
   ) {
     deny(
-      `Blocked: import del from @vercel/blob only in src/lib/post-thumbnail.ts ` +
-        `or src/lib/profile-image.ts. Blob URLs are public and go out in API ` +
-        `responses, so a delete must be preceded by a reference count — those ` +
-        `two wrappers are the only callers that have one.`,
+      `Blocked: import del from @vercel/blob only in src/lib/profile-image.ts. ` +
+        `That wrapper is only ever handed a URL read back out of the row being ` +
+        `replaced, inside the same transaction. A fresh del() call has no such ` +
+        `provenance, and blob URLs are public, so it can be aimed at another ` +
+        `user's image.`,
     );
   }
 }

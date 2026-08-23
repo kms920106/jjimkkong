@@ -11,15 +11,15 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
 ## Key Files
 | File | Description |
 |------|-------------|
-| `auth.ts` | `requireUser()` / `getUser()` — 모든 라우트의 소유권 게이트, `UnauthorizedError` |
+| `auth.ts` | `requireMember()` / `getMember()` — 모든 라우트의 소유권 게이트, `UnauthorizedError` |
 | `api.ts` | `requireSameOrigin()`, `toErrorResponse()` — 알려진 에러 클래스를 상태 코드로 매핑하고 나머지는 500 뒤로 감춘다 |
 | `prisma.ts` | Prisma 싱글턴. 풀링된 `DATABASE_URL` + `PrismaPg` 어댑터, hot reload용 globalThis 캐시. **`withDeleteGuard()`로 감싼다** |
 | `prisma-guard.ts` | `withDeleteGuard()` — 하드 삭제를 Postgres에 닿기 전에 막는 Prisma Client Extension. `HARD_DELETE_ALLOWED`, `HardDeleteBlockedError`, `DestructiveSqlBlockedError` |
 | `types.ts` | 클라이언트와 공유하는 DTO(`SavedPostDTO`, `IngestResponse`, `ProfileDTO` 등) |
-| `serialize.ts` | Prisma 행 → DTO 변환과 `savedPostInclude` |
+| `serialize.ts` | Prisma 행 → DTO 변환과 `bookmarkInclude` |
 | `legal.ts` | 약관·개인정보처리방침이 읽는 운영자 정보와 시행일 |
 | `profile-image.ts` | 프로필 사진 Vercel Blob 업로드·삭제. `file.type` 일치 검사 + `MAX_UPLOAD_BYTES`, `ProfileImageError`. **실패하면 throw한다** |
-| `post-thumbnail.ts` | 인스타그램 썸네일을 Blob으로 백업. `backupThumbnail()` / `deleteThumbnailBlob()`. **절대 throw하지 않는다** — 실패 시 원본 URL로 폴백 |
+| `post-thumbnail.ts` | 인스타그램 썸네일을 Blob으로 백업. `backupThumbnail()` / `isOwnThumbnailBlob()`. **삭제 함수는 없다** — 썸네일이 불변 `Post`로 옮겨가면서 대체되는 blob이 없어졌다. **절대 throw하지 않는다** — 실패 시 원본 URL로 폴백 |
 | `post-author-image.ts` | 작성자 아바타를 Blob으로 백업. `backupAuthorImage()`. **삭제 경로가 없다** — 아바타는 한 작성자의 모든 게시글이 공유하므로 참조 카운트가 성립하지 않는다. 역시 throw하지 않는다 |
 | `cdn-image-backup.ts` | 위 둘이 공유하는 fetch·sniff·put 단계. 리다이렉트 거부·매직바이트 판정·크기 상한이 여기 한 곳에 있다 |
 | `author-profile-url.ts` | 작성자의 플랫폼 프로필 URL. 인스타그램만 non-null — 유튜브의 `author`는 채널 제목이라 URL을 지을 수 없다 |
@@ -40,9 +40,9 @@ DB에 닿는 코드가 전부 여기 있고, `app/`의 라우트는 이것들을
 ### Working In This Directory
 - **에러는 `toErrorResponse()` 한 곳에서 상태 코드가 된다.** 라우트마다 에러 형태를
   새로 만들지 말고 여기에 분기를 추가한다. `ZodError`는 400이 된다.
-- `requireUser()`는 `withdrawnAt: null`로 조회한다. 탈퇴는 소프트 삭제라 행이 남아
+- `requireMember()`는 `withdrawnAt: null`로 조회한다. 탈퇴는 소프트 삭제라 행이 남아
   있으므로, 이 필터를 빼면 탈퇴 계정이 그대로 정상 로그인 상태가 된다.
-- 페이지는 `requireUser()`가 아니라 `getUser()`를 부른다. 로그아웃 상태에서도
+- 페이지는 `requireMember()`가 아니라 `getMember()`를 부른다. 로그아웃 상태에서도
   페이지는 열리고(빈 지도·빈 목록), 실제 게이트는 라우트 핸들러뿐이다.
 - `prisma.ts`는 **풀링된 `DATABASE_URL`**을 쓴다. 마이그레이션용 `DIRECT_URL`을
   여기에 넣지 말 것.
@@ -116,14 +116,19 @@ allowlist도 유지한다. `image/`로 시작하는지 보는 방식으로 바�
 **싱글턴만 감싸면 손으로 라이브 데이터에 돌리는 쪽이 무방비로 남는다.**
 
 **`HARD_DELETE_ALLOWED`에 모델을 추가하는 것은 "이 행은 사용자 데이터가 아니다"라는 선언이고,
-이유를 주석으로 적어야 한다.** 지금 넷 — `Session`·`PhoneVerification`·`PasswordAttempt`·
-`SavedPostPlace`. 이 목록은 `eslint-rules/no-hard-delete.mjs`(camelCase delegate 이름),
+이유를 주석으로 적어야 한다.** 지금 셋 — `Session`·`PhoneVerification`·`PasswordAttempt`.
+이 목록은 `eslint-rules/no-hard-delete.mjs`(camelCase delegate 이름),
 `.claude/hooks/block-hard-delete.mjs`, `docs/db-permissions.md`의 표에 각각 복제되어 있다 —
-**넷은 함께 움직인다.** 판단 근거는 여기에만 적고 나머지는 목록만 든다(복제하면 어긋난다).
+**셋은 함께 움직인다.** 판단 근거는 여기에만 적고 나머지는 목록만 든다(복제하면 어긋난다).
 
-**`UserProfile`을 여기 넣지 말 것.** `onDelete: Cascade`는 **Postgres가 이 extension 아래에서
-실행하므로** 여기서 볼 수 없다. `UserProfile`에 걸린 세 cascade(`AuthIdentity`·`Session`·
-`SavedPost`)를 지키는 것은 삭제가 애초에 DB에 닿지 않는다는 사실이고, allowlist에 넣으면
+**`SavedPostPlace`가 여기 있었고, 빠진 것이 allowlist가 짧아진 것이다.** 재저장이 장소
+집합을 통째로 교체했으므로 옛 행을 지워야 했지만, post/bookmark 분리가 그걸 끝냈다 —
+장소 목록과 그 순서는 이제 공유 `Post`에 매달린 `PostPlace`에 있고 **첫 저장이 쓴 뒤 바뀌지
+않으므로** 교체할 집합이 없다. 회원 자신의 메모는 `BookmarkMemo`로 옮겨가 `upsert`만 받는다.
+
+**`Member`를 여기 넣지 말 것.** `onDelete: Cascade`는 **Postgres가 이 extension 아래에서
+실행하므로** 여기서 볼 수 없다. `Member`에 걸린 세 cascade(`AuthIdentity`·`Session`·
+`Bookmark`)를 지키는 것은 삭제가 애초에 DB에 닿지 않는다는 사실이고, allowlist에 넣으면
 셋이 한 번에 다시 무장된다.
 
 **raw SQL 검사는 모델 훅과 별개로 필요하다.** Prisma는 raw 쿼리에 보고할 모델이 없어서

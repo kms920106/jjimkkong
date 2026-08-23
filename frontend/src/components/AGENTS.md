@@ -12,7 +12,7 @@ React 컴포넌트. 제품의 상호작용이 사실상 `HomeClient` 하나에 �
 |------|-------------|
 | `HomeClient.tsx` | 메인 플로우 전체. 인제스트 요청, 후보 상태, 저장, 지도 포커스, 로그인 drawer 오픈 |
 | `LinksClient.tsx` | `/links`의 썸네일 3열 그리드·플랫폼 탭. 셀 하나가 `/links/[id]` 링크다 |
-| `PostGrid.tsx` | 그 3열 그리드 본체. `/links`와 `/links/author/[author]`가 공유한다 — 복사하면 두 그리드가 갈라진다 |
+| `PostGrid.tsx` | 그 3열 그리드 본체. `/links`와 `/author/[id]`가 공유한다 — 복사하면 두 그리드가 갈라진다 |
 | `AuthorLink.tsx` | 작성자 아바타 + 핸들. 상세 페이지에서는 사진 11시에 얹히는 `overlay`, 그 외에는 `plain` |
 | `PostDetailClient.tsx` | `/links/[id]` — 썸네일·캡션·원본 링크 + 장소 가로 swiper·삭제 |
 | `UrlSheet.tsx` | 링크 붙여넣기 시트 |
@@ -158,7 +158,7 @@ drawer의 이점을 쓰지 못한다. 도착하자마자 닫아야 하는 패널
 깨지고, 그 색이 나르려는 경고는 이미 확인 다이얼로그의 내용 전부다 — 실제로 읽히는 곳은
 거기다.
 
-**`/settings`도 `requireUser()`를 쓰지 않는다.** 로그아웃 상태에서는 약관·개인정보 행이
+**`/settings`도 `requireMember()`를 쓰지 않는다.** 로그아웃 상태에서는 약관·개인정보 행이
 그대로 동작하고(법적 고지는 로그인 뒤에 숨기면 안 된다) 계정 관련 행만 disabled로 그려진다.
 실제 게이트는 `PATCH /api/settings`와 `DELETE /api/account`다.
 

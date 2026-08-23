@@ -1,18 +1,21 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { requireUser } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
 import { toErrorResponse } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
-import { savedPostInclude, toSavedPostDTO } from "@/lib/serialize";
-import { classifyUrl } from "@/lib/ingest/metadata";
+import { bookmarkInclude, toSavedPostDTO } from "@/lib/serialize";
+import { describePost } from "@/lib/ingest/metadata";
 import { geocodeCandidates } from "@/lib/ingest/geocode";
-import { deleteThumbnailBlob, isOwnThumbnailBlob } from "@/lib/post-thumbnail";
+import { isOwnThumbnailBlob } from "@/lib/post-thumbnail";
 import { isOwnAuthorImageBlob } from "@/lib/post-author-image";
 import { Platform } from "@/generated/prisma/enums";
 
 // Re-geocoding each confirmed place server-side costs one Naver call apiece,
 // though POST /api/ingest has usually just warmed the cache for these same
 // names — the lookup is cached, never the decision to re-derive it here.
+//
+// Only paid on a link nobody has saved yet. A post that already exists is
+// bookmarked without any of it: no geocoding, no model, no crawl.
 export const maxDuration = 60;
 
 const httpUrl = z.string().refine((value) => {
@@ -37,15 +40,12 @@ const BodySchema = z.object({
     // It used to gate the blob delete, and that was a real hole — blob URLs are
     // public and go out in SavedPostDTO, so a caller who could assert "this URL
     // is my backup" could name any blob in our store and have the next save
-    // delete it while another user's row still pointed at it. The gate is now
-    // isOwnThumbnailBlob(), which reads the URL instead of trusting a claim
-    // about it. Do not make this field load-bearing again.
+    // delete it while another row still pointed at it. Do not make this field
+    // load-bearing again.
     thumbnailSource: httpUrl.nullable().optional(),
-    author: z.string().max(200).nullable().optional(),
+    author: z.string().trim().max(200).nullable().optional(),
     authorImage: httpUrl.nullable().optional(),
-    // Record only, exactly like `thumbnailSource` above — nothing fetches it
-    // and no delete decision reads it. Avatars have no delete path at all
-    // (see lib/post-author-image.ts), so this one is purely descriptive.
+    // Record only, exactly like `thumbnailSource` above.
     authorImageSource: httpUrl.nullable().optional(),
   }),
   // Only the name and the area hint are taken from the client; every other
@@ -64,15 +64,15 @@ const BodySchema = z.object({
 
 export async function GET() {
   try {
-    const user = await requireUser();
+    const member = await requireMember();
 
-    const posts = await prisma.savedPost.findMany({
-      where: { userId: user.id, deletedAt: null },
+    const bookmarks = await prisma.bookmark.findMany({
+      where: { memberId: member.id, deletedAt: null },
       orderBy: { createdAt: "desc" },
-      include: savedPostInclude,
+      include: bookmarkInclude,
     });
 
-    return NextResponse.json({ posts: posts.map(toSavedPostDTO) });
+    return NextResponse.json({ posts: bookmarks.map(toSavedPostDTO) });
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -80,229 +80,427 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireUser();
+    const member = await requireMember();
     const { post, places } = BodySchema.parse(await request.json());
 
     // Throws UnsupportedUrlError (→400) if the body names a host the ingest
-    // path would never have produced.
-    classifyUrl(post.sourceUrl);
+    // path would never have produced, and re-derives the canonical URL rather
+    // than trusting the one in the body. That re-derivation matters more than it
+    // used to: `sourceUrl` is now the identity of the shared Post row, so an
+    // un-normalised variant would give the same post a second row and lose the
+    // sharing this split exists for.
+    const { sourceUrl } = describePost(post.sourceUrl);
 
-    // Place rows are shared across users and keyed on [name, address], so a
-    // client-supplied coordinate would let one user move another user's pin.
-    // Resolving them here means the row only ever holds server-derived values.
-    const resolved = await geocodeCandidates(
-      places.map(({ name, hint }) => ({ name, hint: hint ?? null })),
-    );
+    // Whether anyone has ever saved this link. Read before the transaction
+    // because it decides whether we need to geocode at all, and geocoding is
+    // seconds of network that must not happen inside a transaction.
+    const existing = await prisma.post.findUnique({
+      where: { sourceUrl },
+      select: { id: true },
+    });
+
+    // The expensive half, skipped entirely for a post that already exists —
+    // that skip is the reason for the split. Its places, caption and thumbnail
+    // were resolved once by whoever saved it first and are shared as they are.
+    const resolved = existing
+      ? []
+      : await geocodeCandidates(
+          places.map(({ name, hint }) => ({ name, hint: hint ?? null })),
+        );
 
     const matched = resolved
       .map((place, index) => ({ ...place, memo: places[index].memo ?? null }))
       .filter((place) => place.matched);
 
-    if (matched.length === 0) {
+    // Refusing here keeps a useless row from becoming the canonical one. `Post`
+    // is immutable and shared, so whatever this first save stores is what every
+    // later member gets — a post created with no places is not just a bad save,
+    // it is a permanently bad post that no re-save can repair. The 422 sends the
+    // member back to a sheet that stays open.
+    //
+    // Only checked for a new post: an existing one already has whatever places
+    // the first save resolved, and this request geocoded nothing.
+    if (!existing && matched.length === 0) {
       return NextResponse.json(
         { error: "지도에서 찾은 장소가 없어 저장하지 못했습니다." },
         { status: 422 },
       );
     }
 
-    const saved = await prisma.$transaction(async (tx) => {
-      // Read inside the transaction, not from a value fetched before the
-      // upload: two concurrent saves of the same post (a double tap, two tabs)
-      // would otherwise both hold the same stale URL, and one could mistake
-      // the URL its rival had just written for the old one and delete a live
-      // blob. Same reasoning as the profile picture route.
-      //
-      // Not airtight for a *first* save of a post: both requests read null,
-      // both insert, and whichever loses the unique race replaces a blob while
-      // believing it displaced nothing — leaking one blob. Accepted rather than
-      // fixed, because closing it needs SELECT … FOR UPDATE or serializable
-      // isolation on the hot save path, and the cost of the race is storage for
-      // one image, only under a double tap on a brand-new link. The partial
-      // unique index still decides that race; it is scoped to live rows now.
-      //
-      // findFirst, not findUnique: uniqueness on [userId, sourceUrl] holds only
-      // among live rows now (a partial unique index — see the migration), so
-      // there is no unique key to look up by. That lost key is what made this
-      // rewrite compile-fail rather than silently keep matching soft-deleted
-      // rows, and the `deletedAt: null` here is the whole point of the change.
-      // A previously deleted save of the same link stays deleted and a fresh
-      // row is created beside it.
-      const previous = await tx.savedPost.findFirst({
-        where: { userId: user.id, sourceUrl: post.sourceUrl, deletedAt: null },
-        select: { id: true, thumbnail: true },
+    // Notes keyed by the **resolved** place name, which is what `Place.name`
+    // holds and therefore the only key `memosFor()` can match against.
+    //
+    // Never by index. For an existing post the shared place list is whatever the
+    // first save resolved, in the creator's order — this request's array is a
+    // separate list built from this member's own ingest run, and the two differ
+    // in length and order. Pairing them positionally attaches a note to the wrong
+    // pin.
+    //
+    // The two paths need different keys, and conflating them silently drops
+    // notes:
+    //
+    // - **New post.** This request geocoded the places, so `matched[i]` carries
+    //   both what was searched (`query`, the client's string) and what Naver
+    //   returned (`name`, the value stored on the row). The note came in beside
+    //   the query, so it has to be re-keyed onto the resolved name — Naver
+    //   routinely answers `성수동 대림창고` with a different official name, and
+    //   keying on the query would match nothing.
+    // - **Existing post.** Nothing was geocoded, so there is no resolved name to
+    //   map through; the client's string is all we have and `memosFor()` matches
+    //   it against the stored names directly. An unmatched note is dropped, which
+    //   is right: a note on the wrong pin is worse than a missing one.
+    //
+    // Almost always empty in practice — no screen writes a memo today
+    // (`SavedPlaceDTO.memo` is render-only, and the existing rows date from a
+    // version that had an editor). The field stays because the column is real and
+    // a client may legitimately send one; dropping it would discard data rather
+    // than store it.
+    const memoByName = new Map(
+      existing
+        ? places
+            .filter((place) => place.memo)
+            .map((place) => [place.name, place.memo ?? null] as const)
+        : matched
+            .filter((place) => place.memo)
+            .map((place) => [place.name, place.memo ?? null] as const),
+    );
+
+    // Retried on a unique violation, which is the whole concurrency story of
+    // this route. Two writes race here and both are ordinary, not abusive:
+    //
+    // - `Post_sourceUrl_key` — two members saving the same brand-new link. Both
+    //   read "new" outside the transaction and both try to create the post.
+    // - `Bookmark_memberId_memberSeq_key` — one member saving two links at once
+    //   (two tabs). `memberSeq` is MAX+1 rather than a sequence because it must
+    //   be per-member, so the read and the insert are not atomic together and
+    //   this index is the arbiter.
+    //
+    // Both are self-healing on a second attempt: the post now exists, and MAX+1
+    // now returns a free number. Without the retry the loser answered a generic
+    // 500 — indistinguishable from a real fault — and on the first-save path it
+    // also threw away seconds of Naver geocoding. `matched` is computed above
+    // and reused, so a retry costs one more transaction, not another round of
+    // lookups.
+    const saved = await withUniqueRetry(() => prisma.$transaction(async (tx) => {
+      // Resolved inside the transaction rather than reusing `existing.id`. The
+      // read above decides only whether to *geocode*; by the time we get here
+      // another request may have created this post, and two members saving the
+      // same brand-new link within a few seconds is exactly the workload this
+      // split was built for. Left as a bare create, the loser violated
+      // `Post_sourceUrl_key` and its save answered 500 for something that should
+      // simply have shared the winner's row.
+      const postId = await ensurePost(tx, { post, sourceUrl, matched });
+
+      // findUnique on a real unique again: [memberId, postId] holds across all
+      // rows, not just live ones, because a re-save now revives the row it
+      // finds. That revival is the whole point — it brings back the memos the
+      // member wrote and keeps the /links/<seq> URL they may have bookmarked.
+      const previous = await tx.bookmark.findUnique({
+        where: { memberId_postId: { memberId: member.id, postId } },
+        select: { id: true, deletedAt: true },
       });
 
-      // Recorded only alongside a thumbnail that really is one of our blobs, so
-      // the column never claims a platform CDN URL was backed up. Purely
-      // descriptive — no delete decision reads it.
-      //
-      // Nothing here rejects a thumbnail URL belonging to another user's post.
-      // It cannot: the blob a legitimate first save points at was uploaded by
-      // POST /api/ingest moments earlier and is not in any row yet, so "already
-      // referenced" and "someone else's" look identical at this point. What
-      // stops an adopted URL from doing harm is the reference count guarding
-      // every delete — an adopted blob is still referenced by its real owner's
-      // row, so it is never the one that gets removed.
-      const thumbnailSource = isOwnThumbnailBlob(post.thumbnail ?? null)
-        ? (post.thumbnailSource ?? null)
-        : null;
-
-      // Same rule for the avatar: only record a source alongside a URL that
-      // really is one of our blobs, so the column never claims a platform CDN
-      // URL was backed up.
-      const authorImageSource = isOwnAuthorImageBlob(post.authorImage ?? null)
-        ? (post.authorImageSource ?? null)
-        : null;
-
-      // Split out of what was one upsert, for the same reason `previous` is now
-      // a findFirst: the composite unique key upsert dispatched on no longer
-      // exists. The branch is on the live row this transaction just read, so a
-      // soft-deleted save of the same link never gets resurrected by an update.
-      const savedPost = previous
-        ? await tx.savedPost.update({
+      const bookmark = previous
+        ? await tx.bookmark.update({
             where: { id: previous.id },
-            data: {
-              title: post.title ?? null,
-              caption: post.caption ?? null,
-              author: post.author ?? null,
-              // The thumbnail alone is left untouched when null, unlike the
-              // fields above. What this column points at may be a blob we own:
-              // a re-ingest while Instagram is blocking us arrives with
-              // `thumbnail: null`, and overwriting would discard an image that
-              // is still perfectly good while orphaning its blob. There is no
-              // path by which a user asks to *remove* a thumbnail, so null here
-              // never means "clear it". If one is ever added it needs an
-              // explicit sentinel — this line will silently ignore a null.
-              ...(post.thumbnail
-                ? { thumbnail: post.thumbnail, thumbnailSource }
-                : {}),
-              // Conditional for the same reason the thumbnail is: a re-ingest
-              // while Instagram is blocking us arrives with `authorImage:
-              // null`, and overwriting would drop a perfectly good avatar. No
-              // path lets a user *clear* an avatar, so null never means
-              // "remove it".
-              ...(post.authorImage
-                ? { authorImage: post.authorImage, authorImageSource }
-                : {}),
-            },
+            // Clearing deletedAt is the revive. `memberSeq` is deliberately
+            // untouched: it is the URL this bookmark has always had.
+            data: { deletedAt: null },
           })
-        : await tx.savedPost.create({
+        : await tx.bookmark.create({
             data: {
-              userId: user.id,
-              sourceUrl: post.sourceUrl,
-              platform: post.platform,
-              title: post.title ?? null,
-              caption: post.caption ?? null,
-              thumbnail: post.thumbnail ?? null,
-              thumbnailSource,
-              author: post.author ?? null,
-              authorImage: post.authorImage ?? null,
-              authorImageSource,
+              memberId: member.id,
+              postId,
+              memberSeq: await nextMemberSeq(tx, member.id),
             },
           });
 
-      // The blob this write displaced, if it was one of ours and nothing else
-      // still points at it.
-      //
-      // The reference count is the part that matters, and it is not
-      // bookkeeping — it is the ownership check. `thumbnail` arrives in the
-      // request body, and blob URLs are public: they go out in SavedPostDTO,
-      // and GET /api/places/[id]/sources hands out every user's posts without
-      // authentication. So a signed-in caller can save someone else's
-      // thumbnail URL onto their own post and re-save to displace it. Testing
-      // the URL shape alone would then delete a blob the victim's row still
-      // renders. Asking whether any row still references it is what makes that
-      // attack a no-op, and it is also what keeps two of our own rows sharing
-      // a URL from deleting each other's image.
-      const candidate =
-        previous?.thumbnail &&
-        previous.thumbnail !== savedPost.thumbnail &&
-        isOwnThumbnailBlob(previous.thumbnail)
-          ? previous.thumbnail
-          : null;
-
-      const stillReferenced = candidate
-        ? await tx.savedPost.count({
-            where: { thumbnail: candidate, id: { not: savedPost.id } },
-          })
-        : 0;
-
-      const superseded = stillReferenced === 0 ? candidate : null;
-
-      // Re-saving the same post replaces its place set rather than appending,
-      // so a re-ingest that extracts fewer places leaves no orphans behind.
-      await tx.savedPostPlace.deleteMany({ where: { postId: savedPost.id } });
-
-      // The order the caption named them in, captured before the sort below
-      // reorders the writes. `/links` numbers these rows as a route, so the
-      // creator's sequence is what has to survive: reading the rows back in
-      // insertion order would hand the user the alphabetical order instead,
-      // or whatever order the query planner happens to pick.
-      //
-      // Keyed with the same NUL separator the sort below uses, so a name
-      // containing whitespace cannot collide with the next field.
-      const captionOrder = new Map(
-        matched.map((place, index) => [
-          `${place.name} ${place.address}`,
-          index,
-        ]),
-      );
-
-      // Sorting makes the lock acquisition order deterministic across
-      // concurrent transactions touching an overlapping set of shared rows.
-      // It deliberately does not decide the order the user sees --
-      // `position` does.
-      const ordered = [...matched].sort((a, b) =>
-        `${a.name} ${a.address}`.localeCompare(
-          `${b.name} ${b.address}`,
-        ),
-      );
-
-      const linked = new Set<string>();
-      for (const place of ordered) {
-        const stored = await tx.place.upsert({
-          where: { name_address: { name: place.name, address: place.address } },
-          create: {
-            name: place.name,
-            address: place.address,
-            lat: place.lat,
-            lng: place.lng,
-            category: place.category,
-            naverLink: place.naverLink,
-          },
-          // An existing row is shared with other users' posts; leave it alone.
-          update: {},
-        });
-
-        // Two distinct queries can resolve to one Naver record, and
-        // SavedPostPlace is keyed on [postId, placeId].
-        if (linked.has(stored.id)) continue;
-        linked.add(stored.id);
-
-        await tx.savedPostPlace.create({
-          data: {
-            postId: savedPost.id,
-            placeId: stored.id,
-            // From the queried name/address rather than the loop index:
-            // two distinct queries can dedupe to one Place (the `linked`
-            // guard above), which would leave gaps in the sequence.
-            position:
-              captionOrder.get(`${place.name} ${place.address}`) ?? 0,
-            memo: place.memo,
-          },
+      // Written after the row exists, and only for places the member annotated.
+      // upsert rather than a wipe-and-insert: nothing here may remove rows (see
+      // prisma-guard.ts — BookmarkMemo is not on the allowlist), and a re-save
+      // should update a note rather than drop the ones it does not mention.
+      for (const { placeId, memo } of await memosFor(tx, postId, memoByName)) {
+        await tx.bookmarkMemo.upsert({
+          where: { bookmarkId_placeId: { bookmarkId: bookmark.id, placeId } },
+          create: { bookmarkId: bookmark.id, placeId, memo },
+          update: { memo },
         });
       }
 
-      return { savedPost, superseded };
-    });
+      return tx.bookmark.findUniqueOrThrow({
+        where: { id: bookmark.id },
+        include: bookmarkInclude,
+      });
+    }));
 
-    // After the commit, so a failed update never leaves the row pointing at a
-    // blob that no longer exists. Best effort — a leaked blob costs storage,
-    // a thrown error would fail a save that already succeeded.
-    await deleteThumbnailBlob(saved.superseded);
-
-    return NextResponse.json({ id: saved.savedPost.id }, { status: 201 });
+    return NextResponse.json(
+      {
+        id: saved.id,
+        seq: saved.memberSeq,
+        post: toSavedPostDTO(saved),
+        // Whether this request geocoded anything, so the client knows what its
+        // own candidate count is comparable to. For a post that already existed
+        // the row carries the *shared* place list and this request resolved
+        // nothing — comparing the two numbers would report lookup failures for a
+        // round that never ran.
+        reusedPost: existing !== null,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     return toErrorResponse(error);
   }
+}
+
+type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/** Prisma's unique-constraint violation. */
+const UNIQUE_VIOLATION = "P2002";
+
+/**
+ * Runs `attempt` again if it lost a unique-constraint race.
+ *
+ * Bounded at three tries, and the bound matters: a retry only helps when the
+ * conflict is transient — someone else won a create, or took the number this
+ * request had computed. A conflict that survives three attempts is not a race
+ * but a real constraint problem, and looping on it would turn a 500 into a hung
+ * request holding a database connection.
+ *
+ * Deliberately narrow. Only P2002 is retried; every other error propagates
+ * untouched to `toErrorResponse()`, because retrying an unknown failure is how a
+ * one-off becomes three identical writes.
+ */
+async function withUniqueRetry<T>(attempt: () => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (let tries = 0; tries < 3; tries++) {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (
+        !(
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          error.code === UNIQUE_VIOLATION
+        )
+      ) {
+        throw error;
+      }
+      last = error;
+    }
+  }
+  throw last;
+}
+
+/**
+ * The member's next bookmark number.
+ *
+ * MAX+1 rather than a sequence, because Postgres sequences are global and this
+ * number is per member — a global counter in the URL would publish how many
+ * links the whole service holds. The read and the insert are not atomic
+ * together, so two concurrent saves can compute the same value; the unique on
+ * [memberId, memberSeq] is what decides that race, and the loser's transaction
+ * fails rather than silently taking another bookmark's URL.
+ *
+ * Counts soft-deleted rows too (no `deletedAt` filter): a deleted bookmark keeps
+ * its number, so skipping them would hand a new bookmark a number that is
+ * already taken and fail the unique every time.
+ */
+async function nextMemberSeq(tx: Tx, memberId: string): Promise<number> {
+  const highest = await tx.bookmark.aggregate({
+    where: { memberId },
+    _max: { memberSeq: true },
+  });
+  return (highest._max.memberSeq ?? 0) + 1;
+}
+
+/**
+ * The shared Post for this `sourceUrl`, created only if nobody has saved it yet.
+ *
+ * Returns an existing row's id untouched. Post is immutable after creation: it
+ * is read by members who have no relationship to whoever saved it first, so
+ * letting a later save rewrite it would let one member change what another sees.
+ *
+ * The create is guarded by the unique on `sourceUrl` rather than by the earlier
+ * read, because that read is outside this transaction. Concurrent first saves of
+ * one link both see "new" and both arrive here; the loser catches its own unique
+ * violation and re-reads, so both end up sharing the winner's post instead of one
+ * of them failing.
+ */
+async function ensurePost(
+  tx: Tx,
+  {
+    post,
+    sourceUrl,
+    matched,
+  }: {
+    post: z.infer<typeof BodySchema>["post"];
+    sourceUrl: string;
+    matched: Array<{
+      name: string;
+      address: string;
+      lat: number;
+      lng: number;
+      category: string | null;
+      naverLink: string | null;
+    }>;
+  },
+): Promise<number> {
+  const already = await tx.post.findUnique({
+    where: { sourceUrl },
+    select: { id: true },
+  });
+  if (already) return already.id;
+
+  // Recorded only alongside a thumbnail that really is one of our blobs, so the
+  // column never claims a platform CDN URL was backed up. Purely descriptive.
+  const thumbnailSource = isOwnThumbnailBlob(post.thumbnail ?? null)
+    ? (post.thumbnailSource ?? null)
+    : null;
+
+  const authorId = post.author
+    ? await upsertAuthor(tx, {
+        platform: post.platform,
+        handle: post.author,
+        image: post.authorImage ?? null,
+        imageSource: isOwnAuthorImageBlob(post.authorImage ?? null)
+          ? (post.authorImageSource ?? null)
+          : null,
+      })
+    : null;
+
+  const created = await tx.post.create({
+    data: {
+      sourceUrl,
+      platform: post.platform,
+      title: post.title ?? null,
+      caption: post.caption ?? null,
+      thumbnail: post.thumbnail ?? null,
+      thumbnailSource,
+      authorId,
+    },
+    select: { id: true },
+  });
+
+  // The order the caption named them in, captured before the sort below
+  // reorders the writes. `/links` numbers these rows as a route, so the
+  // creator's sequence is what has to survive: reading the rows back in
+  // insertion order would hand the user the alphabetical order instead.
+  //
+  // Keyed with the same NUL separator the sort uses, so a name containing
+  // whitespace cannot collide with the next field.
+  const captionOrder = new Map(
+    matched.map((place, index) => [`${place.name} ${place.address}`, index]),
+  );
+
+  // Sorting makes lock acquisition order deterministic across concurrent
+  // transactions touching an overlapping set of shared Place rows. It
+  // deliberately does not decide the order the user sees — `position` does.
+  const ordered = [...matched].sort((a, b) =>
+    `${a.name} ${a.address}`.localeCompare(`${b.name} ${b.address}`),
+  );
+
+  const linked = new Set<string>();
+  for (const place of ordered) {
+    const stored = await tx.place.upsert({
+      where: { name_address: { name: place.name, address: place.address } },
+      create: {
+        name: place.name,
+        address: place.address,
+        lat: place.lat,
+        lng: place.lng,
+        category: place.category,
+        naverLink: place.naverLink,
+      },
+      // An existing row is shared with other members' posts; leave it alone.
+      update: {},
+    });
+
+    // Two distinct queries can resolve to one Naver record, and PostPlace is
+    // keyed on [postId, placeId].
+    if (linked.has(stored.id)) continue;
+    linked.add(stored.id);
+
+    await tx.postPlace.create({
+      data: {
+        postId: created.id,
+        placeId: stored.id,
+        // From the queried name/address rather than the loop index: two
+        // distinct queries can dedupe to one Place (the `linked` guard above),
+        // which would leave gaps in the sequence.
+        position: captionOrder.get(`${place.name} ${place.address}`) ?? 0,
+      },
+    });
+  }
+
+  return created.id;
+}
+
+/**
+ * The author row for this handle on this platform, created if new.
+ *
+ * `update` refreshes the avatar but never the handle: [platform, handle] is the
+ * identity, so a different handle is a different author. The avatar is refreshed
+ * because Instagram's expire — a handle whose picture changed converges as its
+ * posts are saved.
+ *
+ * Only reached while creating a Post, i.e. on the first save of a link. A
+ * re-save of an existing post does not come through here, so it cannot touch an
+ * author another member's posts also point at.
+ */
+async function upsertAuthor(
+  tx: Tx,
+  author: {
+    platform: Platform;
+    handle: string;
+    image: string | null;
+    imageSource: string | null;
+  },
+): Promise<number> {
+  const row = await tx.author.upsert({
+    where: {
+      platform_handle: { platform: author.platform, handle: author.handle },
+    },
+    create: author,
+    // Only when this ingest actually produced one: a re-ingest while Instagram
+    // is blocking us arrives with `image: null`, and overwriting would drop a
+    // perfectly good avatar for a broken one.
+    update: author.image
+      ? { image: author.image, imageSource: author.imageSource }
+      : {},
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/**
+ * Pairs the member's notes with the shared post's places, by name.
+ *
+ * Not by index. For an existing post the place list is whatever the first save
+ * resolved, in the creator's order — this request's `places` array is a separate
+ * list the client built from its own ingest run, and the two can differ in
+ * length and order. Matching on the resolved place name is what makes a second
+ * member's memos land on the right pins.
+ *
+ * A note whose name matches nothing is dropped rather than stored against an
+ * arbitrary place: a memo on the wrong pin is worse than a missing one.
+ */
+async function memosFor(
+  tx: Tx,
+  postId: number,
+  memoByName: Map<string, string | null>,
+): Promise<Array<{ placeId: string; memo: string | null }>> {
+  if (memoByName.size === 0) return [];
+
+  const links = await tx.postPlace.findMany({
+    where: { postId },
+    select: { placeId: true, place: { select: { name: true } } },
+  });
+
+  return links
+    .filter((link) => memoByName.has(link.place.name))
+    .map((link) => ({
+      placeId: link.placeId,
+      memo: memoByName.get(link.place.name) ?? null,
+    }));
 }

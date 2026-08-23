@@ -1,4 +1,4 @@
-import type { AuthProvider, UserProfile } from "@/generated/prisma/client";
+import type { AuthProvider, Member } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { blindIndex, sealPhone } from "./phone-crypto";
 import type { LocalMobile } from "./phone";
@@ -16,7 +16,7 @@ import type { ProviderProfile } from "./providers";
  * `linked` therefore only ever means a returning sign-in.
  */
 export type LinkOutcome =
-  | { status: "linked"; user: UserProfile }
+  | { status: "linked"; member: Member }
   | { status: "pendingPhone"; provider: AuthProvider; profile: ProviderProfile };
 
 /**
@@ -52,7 +52,7 @@ export async function linkProviderIdentity(
       providerUserId: profile.providerUserId,
       withdrawnAt: null,
     },
-    include: { user: true },
+    include: { member: true },
   });
 
   if (existing) {
@@ -63,8 +63,8 @@ export async function linkProviderIdentity(
       where: { id: existing.id },
       data: { email: profile.email },
     });
-    const user = await backfillProfile(existing.user, profile);
-    return { status: "linked", user };
+    const member = await backfillProfile(existing.member, profile);
+    return { status: "linked", member };
   }
 
   // Every first-time sign-in goes to the SMS challenge, including the one where
@@ -89,7 +89,7 @@ export async function completeIdentityLink(
   provider: AuthProvider,
   profile: ProviderProfile,
   phone: LocalMobile,
-): Promise<UserProfile> {
+): Promise<Member> {
   return attachIdentity(provider, profile, phone);
 }
 
@@ -99,13 +99,13 @@ export async function completeIdentityLink(
  *
  * The whole thing is one transaction: two concurrent first sign-ins with the
  * same number would otherwise both see "no user" and both insert, and only the
- * unique on UserProfile.phone would stop it — as a 500 rather than a login.
+ * unique on Member.phone would stop it — as a 500 rather than a login.
  */
 async function attachIdentity(
   provider: AuthProvider,
   profile: ProviderProfile,
   phone: LocalMobile,
-): Promise<UserProfile> {
+): Promise<Member> {
   // Sealed once, outside the transaction: encryptPhone() uses a random IV, so
   // calling it twice for one number yields two different ciphertexts. Only one
   // is written here, but deriving the pair in a single place is what keeps the
@@ -118,13 +118,13 @@ async function attachIdentity(
     // withdrawn row is invisible here, so `owner` is null and a brand-new
     // person is created with the same phone — which the index permits, because
     // it only constrains rows where withdrawnAt IS NULL.
-    const owner = await tx.userProfile.findFirst({
+    const owner = await tx.member.findFirst({
       where: { phoneHash: sealed.hash, withdrawnAt: null },
     });
 
     const user =
       owner ??
-      (await tx.userProfile.create({
+      (await tx.member.create({
         data: {
           email: profile.email,
           nickname: profile.name,
@@ -136,7 +136,7 @@ async function attachIdentity(
 
     await tx.authIdentity.create({
       data: {
-        userId: user.id,
+        memberId: user.id,
         provider,
         providerUserId: profile.providerUserId,
         email: profile.email,
@@ -146,7 +146,7 @@ async function attachIdentity(
     // An account that predates this column gets it filled in on the next
     // sign-in, so existing users merge correctly from then on.
     if (owner && !owner.phoneVerifiedAt) {
-      return tx.userProfile.update({
+      return tx.member.update({
         where: { id: owner.id },
         data: { phoneVerifiedAt: new Date() },
       });
@@ -162,15 +162,15 @@ async function attachIdentity(
  * if the provider disagrees with it.
  */
 async function backfillProfile(
-  user: UserProfile,
+  user: Member,
   profile: ProviderProfile,
-): Promise<UserProfile> {
+): Promise<Member> {
   const data: { email?: string; nickname?: string } = {};
   if (!user.email && profile.email) data.email = profile.email;
   if (!user.nickname && profile.name) data.nickname = profile.name;
 
   if (Object.keys(data).length === 0) return user;
-  return prisma.userProfile.update({ where: { id: user.id }, data });
+  return prisma.member.update({ where: { id: user.id }, data });
 }
 
 /**
@@ -217,19 +217,19 @@ export class PhoneAlreadyRegisteredError extends Error {
 export async function upsertPhonePassword(
   phone: LocalMobile,
   passwordHash: string,
-): Promise<UserProfile> {
+): Promise<Member> {
   const sealed = sealPhone(phone);
 
   return prisma.$transaction(async (tx) => {
     // Live rows only, matching the partial unique index. A withdrawn profile
     // holding this number is invisible, so a returning user gets a fresh account
     // rather than their withdrawn one back.
-    const owner = await tx.userProfile.findFirst({
+    const owner = await tx.member.findFirst({
       where: { phoneHash: sealed.hash, withdrawnAt: null },
     });
 
     if (!owner) {
-      return tx.userProfile.create({
+      return tx.member.create({
         data: {
           phoneHash: sealed.hash,
           phoneEnc: sealed.enc,
@@ -244,7 +244,7 @@ export async function upsertPhonePassword(
     // both write one.
     if (owner.passwordHash) throw new PhoneAlreadyRegisteredError();
 
-    return tx.userProfile.update({
+    return tx.member.update({
       where: { id: owner.id },
       data: {
         passwordHash,
@@ -268,16 +268,16 @@ export async function upsertPhonePassword(
 export async function replacePhonePassword(
   phone: LocalMobile,
   passwordHash: string,
-): Promise<UserProfile | null> {
+): Promise<Member | null> {
   const hash = blindIndex(phone);
 
   return prisma.$transaction(async (tx) => {
-    const owner = await tx.userProfile.findFirst({
+    const owner = await tx.member.findFirst({
       where: { phoneHash: hash, withdrawnAt: null },
     });
     if (!owner) return null;
 
-    return tx.userProfile.update({
+    return tx.member.update({
       where: { id: owner.id },
       data: { passwordHash },
     });

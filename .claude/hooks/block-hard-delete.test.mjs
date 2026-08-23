@@ -54,17 +54,26 @@ const cases = [
   ["edit: place.deleteMany", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/lib/x.ts"), new_string: `await prisma.place.${DEL}Many({});` } }, 2],
   ["edit: authIdentity.deleteMany", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/lib/x.ts"), new_string: `await tx.authIdentity.${DEL}Many({});` } }, 2],
   ["edit: raw sql", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/lib/x.ts"), new_string: `prisma.$executeRawUnsafe(\`${DELFROM} "Place"\`)` } }, 2],
+  // post-thumbnail.ts used to be an owner and no longer is: the thumbnail column
+  // moved to the shared, immutable Post, so nothing displaces a blob and there is
+  // no delete to own. This pins that it lost the exemption.
+  ["edit: blob del in post-thumbnail (no longer an owner)", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/post-thumbnail.ts"), content: 'import { del } from "@vercel/blob";' } }, 2],
   ["edit: blob del outside owner", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/other.ts"), content: 'import { del } from "@vercel/blob";' } }, 2],
+  // postPlace and bookmarkMemo replaced savedPostPlace, which used to be on the
+  // allowlist because a re-save rewrote a post's whole place set. The
+  // post/bookmark split made Post immutable, so nothing rewrites either table
+  // and neither qualifies any more. These two pin that: re-adding either to the
+  // allowlist to make some rewrite convenient has to fail here first.
+  ["edit: postPlace.deleteMany", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/app/api/posts/route.ts"), new_string: `await tx.postPlace.${DEL}Many({ where: { postId } });` } }, 2],
+  ["edit: bookmarkMemo.deleteMany", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/app/api/posts/route.ts"), new_string: `await tx.bookmarkMemo.${DEL}Many({ where: { bookmarkId } });` } }, 2],
   ["edit: MultiEdit nested", { tool_name: "MultiEdit", tool_input: { file_path: p("frontend/src/lib/x.ts"), edits: [{ new_string: "const a = 1;" }, { new_string: `prisma.savedPost.${DEL}({})` }] } }, 2],
 
   // ---- Edits: must permit — the allowlist, and the shapes that must not trip ----
   ["allow: session.deleteMany", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/lib/auth/session.ts"), new_string: `await prisma.session.${DEL}Many({ where: { userId } });` } }, 0],
   ["allow: phoneVerification.delete", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/lib/auth/sms.ts"), new_string: `await prisma.phoneVerification.${DEL}({ where: { id } });` } }, 0],
   ["allow: passwordAttempt.deleteMany", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/lib/auth/password-attempts.ts"), new_string: `await prisma.passwordAttempt.${DEL}Many({ where: {} });` } }, 0],
-  ["allow: savedPostPlace.deleteMany", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/app/api/posts/route.ts"), new_string: `await tx.savedPostPlace.${DEL}Many({ where: { postId } });` } }, 0],
   ["allow: Map.delete", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/ingest/geocode.ts"), content: `inFlight.${DEL}(key);` } }, 0],
-  ["allow: soft delete update", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/app/api/posts/[id]/route.ts"), new_string: "await tx.savedPost.update({ where: { id }, data: { deletedAt: new Date() } });" } }, 0],
-  ["allow: blob del in post-thumbnail", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/post-thumbnail.ts"), content: 'import { del } from "@vercel/blob";' } }, 0],
+  ["allow: soft delete update (bookmark)", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/app/api/posts/[id]/route.ts"), new_string: "await tx.bookmark.update({ where: { id }, data: { deletedAt: new Date() } });" } }, 0],
   ["allow: blob del in profile-image", { tool_name: "Write", tool_input: { file_path: p("frontend/src/lib/profile-image.ts"), content: 'import { del } from "@vercel/blob";' } }, 0],
   ["allow: unrelated code", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/components/x.tsx"), new_string: "export function X() { return null; }" } }, 0],
   ["allow: no new content", { tool_name: "Edit", tool_input: { file_path: p("frontend/src/lib/x.ts") } }, 0],

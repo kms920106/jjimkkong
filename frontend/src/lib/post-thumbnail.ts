@@ -1,4 +1,3 @@
-import { del } from "@vercel/blob";
 import { Platform } from "@/generated/prisma/enums";
 import {
   INSTAGRAM_CDN_HOSTS,
@@ -139,20 +138,17 @@ export function isOwnThumbnailBlob(url: string | null): boolean {
   return isOwnBlobUnder(url, BLOB_PREFIX);
 }
 
-/**
- * Deletes a thumbnail blob that nothing references any more, ignoring failures.
- *
- * Best effort for the same reason deleteProfileImage() is: the row has already
- * been written, so a failed delete leaks a blob but never breaks a save. Only
- * ever called with a URL read back out of the row being replaced or removed —
- * never with a value from a request body, which is what keeps it from being
- * aimed at another user's blob.
- */
-export async function deleteThumbnailBlob(url: string | null): Promise<void> {
-  if (!url) return;
-  try {
-    await del(url);
-  } catch (error) {
-    console.error("Failed to delete superseded post thumbnail:", error);
-  }
-}
+// `deleteThumbnailBlob()` used to live here and is gone, along with the
+// reference counting that guarded it. Both existed because `thumbnail` was a
+// per-member column written from a request body: a save could displace a blob,
+// and blob URLs are public, so a caller could point their own row at someone
+// else's thumbnail and have the next save remove it. Counting the rows that
+// still referenced a URL was the ownership check that made that a no-op.
+//
+// The column moved to the shared `Post`, which is written once and never
+// updated. Nothing displaces a blob any more, and un-bookmarking must not touch
+// one — the picture belongs to a post other members may still have saved. There
+// is no delete path left to guard, so there is no delete path.
+//
+// Do not add one back without re-adding the count. The attack it blocked is a
+// property of blob URLs being public, not of the old schema.

@@ -61,7 +61,9 @@ function PostCell({ post }: { post: SavedPostDTO }) {
   return (
     <li className="relative aspect-square">
       <Link
-        href={`/links/${post.id}`}
+        // The member's own bookmark number, not the row id — see the Bookmark
+        // model for why the URL is per-member.
+        href={`/links/${post.seq}`}
         aria-label={count > 0 ? `${title} — 장소 ${count}곳` : title}
         className="block size-full focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >

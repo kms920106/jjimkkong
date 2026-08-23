@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import type { UserProfile } from "@/generated/prisma/client";
+import type { Member } from "@/generated/prisma/client";
 
 export const SESSION_COOKIE = "jjimkkong-session";
 
@@ -43,13 +43,13 @@ function cookieOptions(maxAgeSeconds: number) {
  * The plaintext secret exists only here and in the user's cookie.
  */
 export async function createSession(
-  userId: string,
+  memberId: string,
   { userAgent }: { userAgent?: string | null } = {},
 ): Promise<SessionCookie> {
   const secret = randomBytes(32).toString("base64url");
   const session = await prisma.session.create({
     data: {
-      userId,
+      memberId,
       tokenHash: hashToken(secret),
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
       userAgent: userAgent?.slice(0, 512) ?? null,
@@ -70,17 +70,17 @@ export async function createSession(
  */
 export async function resolveSession(
   cookieValue: string | undefined,
-): Promise<{ userId: string; sessionId: string } | null> {
+): Promise<{ memberId: string; sessionId: string } | null> {
   const resolved = await resolveSessionWithUser(cookieValue);
   if (!resolved) return null;
-  return { userId: resolved.userId, sessionId: resolved.sessionId };
+  return { memberId: resolved.memberId, sessionId: resolved.sessionId };
 }
 
 /**
  * resolveSession plus the owning profile, fetched in the same query.
  *
  * Exists because the caller almost always needs the profile immediately after
- * (requireUser did session.findUnique then userProfile.findFirst), and those two
+ * (requireMember did session.findUnique then member.findFirst), and those two
  * are a strict chain on a foreign key — the second cannot start until the first
  * returns. Against a pooled Supabase connection from a Vercel function that is
  * two serial round trips where one join does the same work, which is the
@@ -89,12 +89,12 @@ export async function resolveSession(
  * `user` is null for a withdrawn account as well as a missing one: the relation
  * is filtered by `withdrawnAt` here so callers cannot forget it. Withdrawal
  * keeps the row, so an unfiltered join would hand back a working session for a
- * withdrawn account — see requireUser.
+ * withdrawn account — see requireMember.
  */
 export async function resolveSessionWithUser(
   cookieValue: string | undefined,
 ): Promise<
-  { userId: string; sessionId: string; user: UserProfile | null } | null
+  { memberId: string; sessionId: string; member: Member | null } | null
 > {
   if (!cookieValue) return null;
 
@@ -106,7 +106,7 @@ export async function resolveSessionWithUser(
 
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    include: { user: true },
+    include: { member: true },
   });
   if (!session) return null;
 
@@ -124,11 +124,11 @@ export async function resolveSessionWithUser(
   }
 
   return {
-    userId: session.userId,
+    memberId: session.memberId,
     sessionId: session.id,
     // The join cannot express `withdrawnAt: null`, so it is applied here to
     // keep the one place that decides it.
-    user: session.user.withdrawnAt === null ? session.user : null,
+    member: session.member.withdrawnAt === null ? session.member : null,
   };
 }
 
@@ -168,6 +168,6 @@ export function clearSessionCookie(response: NextResponse): void {
  * Called before the new session is created, so the caller's fresh cookie is not
  * caught by it.
  */
-export async function destroyAllSessionsForUser(userId: string): Promise<void> {
-  await prisma.session.deleteMany({ where: { userId } });
+export async function destroyAllSessionsForUser(memberId: string): Promise<void> {
+  await prisma.session.deleteMany({ where: { memberId } });
 }

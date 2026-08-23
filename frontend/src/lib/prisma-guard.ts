@@ -22,11 +22,11 @@
  * What this does NOT cover, and why the other layers exist:
  *
  * - **Cascades.** `onDelete: Cascade` is executed by Postgres, below this
- *   extension. `UserProfile` carries three of them (AuthIdentity, Session,
- *   SavedPost), so one `userProfile.delete()` would take an account's entire
- *   history with it. What stops that is `UserProfile` being absent from the
- *   allowlist: the delete never reaches the database, so the cascade never
- *   fires. Adding `UserProfile` here would re-arm all three at once.
+ *   extension. `Member` carries three of them (AuthIdentity, Session,
+ *   Bookmark), so a single removal of a Member row would take an account's
+ *   entire history with it. What stops that is `Member` being absent from the
+ *   allowlist: the statement never reaches the database, so the cascade never
+ *   fires. Adding `Member` here would re-arm all three at once.
  * - **Raw SQL.** `$executeRawUnsafe("DELETE FROM ...")` is a string, and the
  *   check below is a regex. It catches the mistake, not the determined caller.
  * - **The database itself.** Prisma connects as the table owner. The only
@@ -42,9 +42,9 @@
  * data and that losing them costs nothing recoverable. Every entry carries the
  * reason it qualifies; an entry without one is a bug in review, not a style
  * problem. Everything absent from this list is soft-deleted instead —
- * `UserProfile` and `AuthIdentity` via `withdrawnAt`, `SavedPost` via
- * `deletedAt` — and `Place` is never deleted at all because its rows are shared
- * between users.
+ * `Member` and `AuthIdentity` via `withdrawnAt`, `Bookmark` via `deletedAt` —
+ * and `Place` is never removed at all because its rows are shared between
+ * members.
  */
 const HARD_DELETE_ALLOWED = new Set<string>([
   // A logged-in browser. Deleting the row is the immediate revocation that the
@@ -64,13 +64,21 @@ const HARD_DELETE_ALLOWED = new Set<string>([
   // counted and then forgotten.
   "PasswordAttempt",
 
-  // The place set of one post, rewritten on every save. Re-saving a link
-  // *replaces* its places rather than appending, so a re-ingest that extracts
-  // fewer places leaves no orphans behind; that replacement is this deleteMany.
-  // Note this does NOT open a path around SavedPost's soft delete: a
-  // soft-deleted post keeps its links, and nothing sweeps them.
-  "SavedPostPlace",
 ]);
+
+// `SavedPostPlace` used to be here, and its removal is the allowlist getting
+// strictly stronger rather than an oversight.
+//
+// It qualified because a re-save *replaced* a post's place set rather than
+// appending to it, and that replacement was a bulk removal. The post/bookmark
+// split ended that: the place list and its order now live on `PostPlace`, which
+// hangs off the shared immutable `Post`, so a re-save rewrites nothing and there
+// is no set to replace. The member's own notes moved to `BookmarkMemo`, which is
+// keyed per place and updated in place.
+//
+// Neither belongs here. Do not re-add either one to make a rewrite convenient —
+// if a `Post` ever needs re-ingesting, that is a reviewed backfill against a
+// specific row, not a runtime path.
 
 /** Thrown instead of issuing a delete against a model that must not lose rows. */
 export class HardDeleteBlockedError extends Error {

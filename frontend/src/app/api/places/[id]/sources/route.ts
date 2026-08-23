@@ -1,17 +1,30 @@
 import { NextResponse } from "next/server";
 import { toErrorResponse } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { toAuthorDTO } from "@/lib/serialize";
 import type { PlaceSourceDTO } from "@/lib/types";
 
 /**
- * Every saved post that names this place, across every user — not just the
- * caller's own. Place rows are already shared globally (matched on
- * [name, address]), so the map pin itself is already communal; this makes the
- * sheet under it communal too. Read-only: deleting or editing a post still
- * goes through POST /api/posts and DELETE /api/posts/[id], both of which stay
- * scoped to requireUser()'s userId. No auth gate here for the same reason
- * pages render signed out — this only reads what a signed-in visitor could
- * already see on the shared map.
+ * Every post that names this place. Not scoped to the caller: Place rows are
+ * already shared globally (matched on [name, address]), so the map pin itself is
+ * communal and this makes the sheet under it communal too. Read-only — writes
+ * still go through POST /api/posts and DELETE /api/posts/[id], both scoped to
+ * requireMember()'s memberId. No auth gate here for the same reason pages render
+ * signed out: this only reads what a signed-in visitor would already see on the
+ * shared map.
+ *
+ * **This query got simpler and safer with the post/bookmark split, and the
+ * reason is worth keeping.** It used to read the per-member join table, which
+ * meant it returned one row per *member* who had saved the link and needed a
+ * relation filter (`post: { deletedAt: null }`) to keep a member's deleted links
+ * from being listed to strangers — a privacy bug if omitted, and easy to omit
+ * because the column was on another table. Now it reads PostPlace, which hangs
+ * off the shared Post and has no member and no `deletedAt` at all: one row per
+ * post, nothing per-member to leak.
+ *
+ * That also means a place keeps its sources after every member un-bookmarks it.
+ * Correct, and the point: the pin is communal, so the sheet says which posts
+ * name this place — not which members currently keep it.
  */
 export async function GET(
   _request: Request,
@@ -20,15 +33,9 @@ export async function GET(
   try {
     const { id } = await context.params;
 
-    // The relation filter is not optional. This query reads SavedPostPlace, and
-    // a soft-deleted post keeps its place links, so without `post.deletedAt` a
-    // link the user deleted would go on being listed here — and this route
-    // serves every user's posts without authentication, so it would be listed
-    // to strangers. Nothing else in this file would look wrong.
-    const links = await prisma.savedPostPlace.findMany({
-      where: { placeId: id, post: { deletedAt: null } },
+    const links = await prisma.postPlace.findMany({
+      where: { placeId: id },
       select: {
-        memo: true,
         post: {
           select: {
             id: true,
@@ -37,28 +44,26 @@ export async function GET(
             title: true,
             thumbnail: true,
             author: true,
-            authorImage: true,
           },
         },
       },
     });
 
-    // The same post (same sourceUrl) can only be saved once per user
-    // (@@unique([userId, sourceUrl])), but two different users saving the
-    // same link produces two SavedPost rows here — one per user — so the
-    // dedupe has to happen by sourceUrl, not by postId.
+    // Deduped by sourceUrl even though Post.sourceUrl is unique and PostPlace is
+    // keyed on [postId, placeId], so this cannot currently produce a repeat. Kept
+    // because the *identity* being presented is the link, not the row: if two
+    // canonical forms of one post ever coexist, the sheet must still list it
+    // once.
     const bySourceUrl = new Map<string, PlaceSourceDTO>();
-    for (const link of links) {
-      if (bySourceUrl.has(link.post.sourceUrl)) continue;
-      bySourceUrl.set(link.post.sourceUrl, {
-        postId: link.post.id,
-        sourceUrl: link.post.sourceUrl,
-        platform: link.post.platform,
-        title: link.post.title,
-        thumbnail: link.post.thumbnail,
-        author: link.post.author,
-        authorImage: link.post.authorImage,
-        memo: link.memo,
+    for (const { post } of links) {
+      if (bySourceUrl.has(post.sourceUrl)) continue;
+      bySourceUrl.set(post.sourceUrl, {
+        postId: post.id,
+        sourceUrl: post.sourceUrl,
+        platform: post.platform,
+        title: post.title,
+        thumbnail: post.thumbnail,
+        author: toAuthorDTO(post.author),
       });
     }
 

@@ -13,26 +13,64 @@ export type SavedPlaceDTO = {
 };
 
 /**
- * Shape returned by GET /api/places/[id]/sources — every saved post that
- * names a place, across every user, deduped by sourceUrl. Not scoped to the
- * caller: the place pin is already shared across users, so the sheet under
- * it is too. Deliberately missing `createdAt`/`id`-for-the-post beyond what
- * PlaceSheet renders, since this is read-only and never round-trips to a
- * mutation endpoint.
+ * One creator, as the client needs them: an id to link to and a handle to show.
+ *
+ * `id` is what `/author/<id>` addresses. The handle stays in the payload because
+ * that is what the UI renders — it is a display value here, not a key.
+ */
+export type AuthorDTO = {
+  id: number;
+  handle: string;
+  /**
+   * Already a renderable URL — our own blob for Instagram, whose avatar URLs are
+   * signed and expire, and null for platforms that gave us none. `imageSource`
+   * is deliberately not exposed: nothing in the browser needs the pre-backup
+   * URL, and it is the one that goes stale.
+   */
+  image: string | null;
+};
+
+/**
+ * Shape returned by GET /api/places/[id]/sources — every post that names a
+ * place, deduped by sourceUrl. Not scoped to the caller: the place pin is
+ * already shared, so the sheet under it is too.
+ *
+ * `postId` is the shared Post id, and it is deliberately not a link target. A
+ * member's own bookmark is addressed by their per-member sequence, which this
+ * route cannot use because it serves rows across every member — publishing
+ * another member's sequence here would leak how much they have saved. The id is
+ * kept only as the dedupe key.
+ *
+ * `memo` is absent for the same reason it used to be present and now cannot be:
+ * a note belongs to one member's bookmark, and this listing is not scoped to
+ * one member, so there is no single note to show.
  */
 export type PlaceSourceDTO = {
-  postId: string;
+  postId: number;
   sourceUrl: string;
   platform: Platform;
   title: string | null;
   thumbnail: string | null;
-  author: string | null;
-  authorImage: string | null;
-  memo: string | null;
+  author: AuthorDTO | null;
 };
 
 export type SavedPostDTO = {
+  /** The bookmark row's own id, used by the mutation endpoints. */
   id: string;
+  /**
+   * The shared post this bookmarks. Never a link target — `/links/<seq>` is what
+   * addresses a bookmark, and publishing a global id would leak how many links
+   * the service holds. Carried because the place sheet merges the member's own
+   * sources with every other member's, and both halves have to identify a post
+   * by the same key for the dedupe to work.
+   */
+  postId: number;
+  /**
+   * This bookmark's number within the member's collection, and what `/links/1`
+   * addresses. Per-member rather than global so the URL never publishes how many
+   * links the service holds — see the Bookmark model.
+   */
+  seq: number;
   sourceUrl: string;
   platform: Platform;
   title: string | null;
@@ -43,14 +81,7 @@ export type SavedPostDTO = {
    * needs the pre-backup URL, and it is the one that goes stale.
    */
   thumbnail: string | null;
-  author: string | null;
-  /**
-   * The author's avatar, already a renderable URL — our blob for Instagram,
-   * null everywhere else. `authorImageSource` is deliberately not exposed for
-   * the same reason `thumbnailSource` is not: nothing in the browser needs the
-   * pre-backup URL, and it is the one that goes stale.
-   */
-  authorImage: string | null;
+  author: AuthorDTO | null;
   createdAt: string;
   places: SavedPlaceDTO[];
 };
@@ -129,7 +160,7 @@ export type IngestEvent =
   | { type: "result"; result: IngestResponse }
   | { type: "error"; status: number; error: string };
 
-/** The subset of UserProfile the client shell renders. */
+/** The subset of Member the client shell renders. */
 export type ProfileDTO = {
   nickname: string | null;
   /** Free-text line under the nickname; null when never set. */

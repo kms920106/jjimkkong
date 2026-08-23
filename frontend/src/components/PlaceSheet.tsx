@@ -13,24 +13,29 @@ import {
 } from "@/components/ui/sheet";
 import { PostThumbnail } from "@/components/PostThumbnail";
 import { hrefForApp, mapAppsFor } from "@/lib/map/externalLinks";
-import type { MapProvider, Platform, SavedPlaceDTO } from "@/lib/types";
+import type {
+  MapProvider,
+  PlaceSourceDTO,
+  SavedPlaceDTO,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
  * A post that mentions this place, flattened to just what the sheet renders.
  * Full `SavedPostDTO`s would drag every *other* place of those posts in with
  * them, and this sheet is about one place.
+ *
+ * The same shape GET /api/places/[id]/sources returns, deliberately: this sheet
+ * merges the member's own sources with every other member's for the same pin, so
+ * a local shape that carried more than the shared route can supply would be a
+ * type that no merged list could satisfy.
+ *
+ * That is what removed `memo` from it. A note belongs to one member's bookmark,
+ * and the communal half of this list is not scoped to one member — there is no
+ * single note to show for a post someone else saved. The sheet never rendered it
+ * anyway.
  */
-export type PlaceSource = {
-  postId: string;
-  sourceUrl: string;
-  platform: Platform;
-  title: string | null;
-  thumbnail: string | null;
-  author: string | null;
-  /** The user's note on *this* place in *that* post. */
-  memo: string | null;
-};
+export type PlaceSource = PlaceSourceDTO;
 
 /** What the map hands back when a pin is clicked. */
 export type PlaceDetail = {

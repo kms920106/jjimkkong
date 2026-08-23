@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Same reason /links and /profile have one: this page is `force-dynamic`, so
- * its HTML cannot exist until getUser() and the count query return, and a
+ * its HTML cannot exist until getMember() and the count query return, and a
  * prefetch has nothing to pre-build. Without this the drawer closes and the
  * previous screen sits there for the whole server round trip, which reads as
  * the gear not working rather than as slow.

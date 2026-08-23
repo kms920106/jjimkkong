@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
     // only known numbers would make the rate limit itself an oracle.
     await countAccountAttempt(phoneHash);
 
-    const user = await prisma.userProfile.findFirst({
+    const user = await prisma.member.findFirst({
       where: { phoneHash, withdrawnAt: null },
     });
 

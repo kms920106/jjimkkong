@@ -11,7 +11,7 @@ export const metadata = {
  * 보호법 제30조 makes mandatory, and each one is written from a real call site:
  *
  * - 수집 항목 — lib/auth/providers/naver.ts (email, nickname), sms.ts (phone),
- *   session.ts (userAgent), schema.prisma (SavedPost).
+ *   session.ts (userAgent), schema.prisma (Bookmark).
  * - 처리위탁 — geocode.ts (Naver), extract.ts (LLM), sms.ts (Solapi), and the
  *   database/hosting providers.
  * - 파기 — withdrawal is a soft delete, so this says so rather than promising

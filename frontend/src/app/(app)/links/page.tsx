@@ -1,6 +1,6 @@
-import { getUser } from "@/lib/auth";
+import { getMember } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { savedPostInclude, toSavedPostDTO } from "@/lib/serialize";
+import { bookmarkInclude, toSavedPostDTO } from "@/lib/serialize";
 import LinksClient from "@/components/LinksClient";
 
 export const dynamic = "force-dynamic";
@@ -12,13 +12,13 @@ export const metadata = {
 export default async function PostsPage() {
   // Public, like the map: signed out this is an empty list that offers a login
   // rather than a redirect.
-  const user = await getUser();
+  const member = await getMember();
 
-  const posts = user
-    ? await prisma.savedPost.findMany({
-        where: { userId: user.id, deletedAt: null },
+  const posts = member
+    ? await prisma.bookmark.findMany({
+        where: { memberId: member.id, deletedAt: null },
         orderBy: { createdAt: "desc" },
-        include: savedPostInclude,
+        include: bookmarkInclude,
       })
     : [];
 
@@ -28,7 +28,7 @@ export default async function PostsPage() {
     // preference itself.
     <LinksClient
       initialPosts={posts.map(toSavedPostDTO)}
-      signedIn={user !== null}
+      signedIn={member !== null}
     />
   );
 }

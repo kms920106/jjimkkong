@@ -1,4 +1,4 @@
-import { getUser } from "@/lib/auth";
+import { getMember } from "@/lib/auth";
 import ProfileEditClient from "@/components/ProfileEditClient";
 
 // Reads the session cookie, so this page is always rendered per request.
@@ -9,10 +9,10 @@ export const metadata = {
 };
 
 export default async function ProfilePage() {
-  // Public like every other page: no redirect, no requireUser(). Signed out
+  // Public like every other page: no redirect, no requireMember(). Signed out
   // this renders the form disabled with a prompt to sign in, and the PATCH it
   // would submit is 401 anyway — the API is the gate.
-  const user = await getUser();
+  const user = await getMember();
 
   return (
     <ProfileEditClient

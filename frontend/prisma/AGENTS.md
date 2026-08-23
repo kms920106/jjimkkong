@@ -11,7 +11,7 @@
 ## Key Files
 | File | Description |
 |------|-------------|
-| `schema.prisma` | 모델 10개(`UserProfile`, `AuthIdentity`, `Session`, `PhoneVerification`, `SavedPost`, `Place`, `SavedPostPlace`)와 enum 3개(`MapProvider`, `Platform`, `AuthProvider`). `UserProfile`의 `statusMessage`·`imageUrl`은 `/profile`이 쓰는 표시용 필드 |
+| `schema.prisma` | 모델 11개(`Member`, `AuthIdentity`, `Session`, `PhoneVerification`, `PasswordAttempt`, `Author`, `Post`, `PostPlace`, `Bookmark`, `BookmarkMemo`, `Place`)와 enum 3개(`MapProvider`, `Platform`, `AuthProvider`). `Member`의 `statusMessage`·`imageUrl`은 `/profile`이 쓰는 표시용 필드 |
 | `migrations/` | 적용 순서대로의 SQL. Prisma 스키마 언어로 표현 못 하는 제약이 여기에만 있다 |
 | `migrations/migration_lock.toml` | provider 고정(postgresql) |
 
@@ -28,25 +28,27 @@
 있으면 Next.js가 그 파일을 Vercel 함수 번들에 넣지 않는다. 빌드는 통과하고 런타임에
 "could not locate the Query Engine"으로 죽는다.
 
-**`@unique`를 되살리지 말 것. 지금 partial unique index는 셋이다.**
-`UserProfile.phoneHash`, `AuthIdentity[provider, providerUserId]`
-(`WHERE "withdrawnAt" IS NULL`), 그리고 `SavedPost[userId, sourceUrl]`
-(`WHERE "deletedAt" IS NULL`, `20260822150000_soft_delete_saved_post`). 셋 다 Prisma 스키마
-언어로 표현할 수 없어서 마이그레이션 raw SQL에만 있고, 그래서 스키마에는 평범한 `@@index`가
-적혀 있다.
+**`@unique`를 되살리지 말 것. 지금 partial unique index는 둘이다.**
+`Member.phoneHash`와 `AuthIdentity[provider, providerUserId]`(둘 다
+`WHERE "withdrawnAt" IS NULL`). Prisma 스키마 언어로 표현할 수 없어서 마이그레이션 raw
+SQL에만 있고, 그래서 스키마에는 평범한 `@@index`가 적혀 있다.
 
 되돌리면 **두 가지를 동시에 깨뜨린다.** 하나는 기능이다 — 탈퇴한 사용자가 영구히 재가입
-불가가 되고, 한 번 지운 링크를 영구히 다시 저장할 수 없다(소프트 삭제된 행이 그
-`sourceUrl`을 그대로 들고 있다). 다른 하나가 더 위험하다: **그 키의 `findUnique`/`upsert`가
-조용히 다시 컴파일된다.** 그 컴파일 에러를 잃는 것이 `withdrawnAt`/`deletedAt` 필터가
-사라지는 경로다. 실제로 `SavedPost` 쪽 유니크를 떼어낸 것이 `api/posts/route.ts`의
-`userId_sourceUrl` 호출부 두 곳을 컴파일 에러로 깨뜨려 `upsert`를 `findFirst` +
-`create`/`update`로 쪼개게 만들었고, 그게 소프트 삭제된 행을 update로 부활시키는 버그를
-사전에 막았다. **`findFirst` + 상태 필터를 쓴다.**
+불가가 된다. 다른 하나가 더 위험하다: **그 키의 `findUnique`/`upsert`가 조용히 다시
+컴파일된다.** 그 컴파일 에러를 잃는 것이 `withdrawnAt` 필터가 사라지는 경로다.
+**`findFirst` + 상태 필터를 쓴다.**
 
-**`@@index([userId, deletedAt, createdAt])`은 장식이 아니다.** 모든 목록 읽기가
-`(userId, deletedAt IS NULL)` 필터에 `createdAt` 정렬이다 — 홈 지도, `/links`, `/settings`의
-개수, `GET /api/posts`. 이전의 `@@index([userId, createdAt])`은 필터를 덮지 못해 교체됐다.
+**옛 `SavedPost[userId, sourceUrl]` partial unique index는 사라졌다.** 링크가 회원별
+행이었을 때는 소프트 삭제된 행이 자기 `sourceUrl`을 들고 있어서 전역 unique를 두면 한 번
+지운 링크를 다시 저장할 수 없었다. post/bookmark 분리가 그 문제를 없앴다 — `sourceUrl`은
+공유 `Post`에 한 행으로 있고(전역 unique이며, 그게 인제스트의 중복 판정 키다), 회원의
+북마크는 `Bookmark`이며 그 유니크는 `[memberId, postId]`와 `[memberId, memberSeq]`로
+**둘 다 진짜 유니크**다. 재저장이 옆에 새 행을 만드는 대신 소프트 삭제된 행을 되살릴 수
+있는 이유가 바로 이것이다(`deletedAt`을 `null`로).
+
+**`@@index([memberId, deletedAt, createdAt])`은 장식이 아니다.** 모든 목록 읽기가
+`(memberId, deletedAt IS NULL)` 필터에 `createdAt` 정렬이다 — 홈 지도, `/links`,
+`/settings`의 개수, `GET /api/posts`.
 
 **전화번호 두 컬럼은 항상 함께 움직인다.** DB CHECK 제약
 (`("phoneHash" IS NULL) = ("phoneEnc" IS NULL)`)이 반쪽 행을 거부한다. 이 제약을 빼면

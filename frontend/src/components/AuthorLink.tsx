@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Platform } from "@/lib/types";
+import type { AuthorDTO } from "@/lib/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 /**
@@ -13,13 +13,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
  */
 export function AuthorLink({
   author,
-  authorImage,
-  platform,
   variant = "plain",
 }: {
-  author: string;
-  authorImage: string | null;
-  platform: Platform;
+  author: AuthorDTO;
   /**
    * `overlay` is the copy that sits on top of the post's picture, where the
    * page's own colours are not available — it carries its own light-on-dark
@@ -31,10 +27,10 @@ export function AuthorLink({
 
   return (
     <Link
-      href={authorHref(author, platform)}
+      href={authorHref(author)}
       // The visible text is a bare handle, so the accessible name has to say
       // what following it does or the link reads as a label.
-      aria-label={`${author}님의 게시물 보기`}
+      aria-label={`${author.handle}님의 게시물 보기`}
       className={
         overlay
           ? // The scrim is on the pill rather than the whole image: a full
@@ -45,8 +41,8 @@ export function AuthorLink({
       }
     >
       <AuthorAvatar
-        author={author}
-        authorImage={authorImage}
+        author={author.handle}
+        authorImage={author.image}
         className={overlay ? "size-7 ring-1 ring-white/60" : "size-7"}
       />
       <span
@@ -54,7 +50,7 @@ export function AuthorLink({
           overlay ? "" : "text-muted-foreground"
         }`}
       >
-        {author}
+        {author.handle}
       </span>
     </Link>
   );
@@ -93,17 +89,18 @@ export function AuthorAvatar({
 }
 
 /**
- * Where an author's handle leads inside this app.
+ * Where an author leads inside this app.
  *
- * The handle is a path segment, so it is encoded — Instagram handles are
- * `[A-Za-z0-9._]` and safe, but YouTube's `author` is a channel *title*, which
- * is free text and routinely contains spaces, slashes and Korean.
+ * Just the id now. This used to be
+ * `/links/author/${encodeURIComponent(handle)}?platform=${platform}` — the
+ * handle needed encoding because YouTube's is a channel *title*, free text with
+ * spaces and Korean in it, and `platform` had to ride in the query string
+ * because a handle is only unique within its platform, so a page keyed on the
+ * handle alone would present two different people as one.
  *
- * `platform` rides along in the query string rather than the path because it
- * scopes the listing without identifying it: two platforms could in principle
- * hand us the same handle string, and a page that mixed them would present
- * them as one person.
+ * Both of those were symptoms of the author not having an identifier. `Author`
+ * has one, so the encoding and the scoping parameter are both gone.
  */
-export function authorHref(author: string, platform: Platform): string {
-  return `/links/author/${encodeURIComponent(author)}?platform=${platform}`;
+export function authorHref(author: AuthorDTO): string {
+  return `/author/${author.id}`;
 }

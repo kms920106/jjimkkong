@@ -7,12 +7,12 @@
 
 ```
    사람 하나                  로그인 수단 여러 개              기기 여러 개
-  UserProfile ──────┬──────► AuthIdentity (네이버)      ┌──► Session (폰)
+  Member ───────────┬──────► AuthIdentity (네이버)      ┌──► Session (폰)
    phoneHash ←병합키 │        AuthIdentity (카카오)      └──► Session (노트북)
    phoneEnc         └──────────────────────────────────┘
 ```
 
-한 사람이 네이버로도 카카오로도 로그인하면 **`AuthIdentity` 두 행, `UserProfile`
+한 사람이 네이버로도 카카오로도 로그인하면 **`AuthIdentity` 두 행, `Member`
 한 행**이다. 그 둘을 한 사람으로 묶어 주는 값이 전화번호다.
 
 ## 계정 병합의 키는 전화번호다 (이메일이 아니다)
@@ -66,9 +66,9 @@ LoginDrawer
 
 번호가 증명된 뒤, 한 트랜잭션 안에서:
 
-1. `phoneHash`로 **살아 있는** `UserProfile`을 찾는다
+1. `phoneHash`로 **살아 있는** `Member`를 찾는다
 2. 있으면 그 사람에게 `AuthIdentity`를 붙인다 → **병합**
-3. 없으면 `UserProfile`을 새로 만들고 붙인다 → **신규 가입**
+3. 없으면 `Member`를 새로 만들고 붙인다 → **신규 가입**
 
 트랜잭션인 이유: 같은 번호로 두 개의 첫 로그인이 동시에 오면 둘 다 "없음"을 보고
 둘 다 insert한다. 그러면 unique 제약이 막긴 하지만 **로그인이 아니라 500**으로
@@ -172,18 +172,18 @@ binding과 맞아야만 열린다.**
 
 ## 탈퇴는 삭제가 아니라 상태 변경이다
 
-`DELETE /api/account`는 아무것도 지우지 않는다. `UserProfile`·`AuthIdentity`·
-`SavedPost`는 전부 남고 `withdrawnAt`만 찍힌다.
+`DELETE /api/account`는 아무것도 지우지 않는다. `Member`·`AuthIdentity`·
+`Bookmark`는 전부 남고 `withdrawnAt`만 찍힌다.
 
 **`Session`만 예외로 삭제한다.** 남겨두면 살아 있는 쿠키가 탈퇴 계정을 가리킨
-채 `requireUser()` 검사 하나에만 의존하게 된다. 행을 지우면 모든 브라우저가
+채 `requireMember()` 검사 하나에만 의존하게 된다. 행을 지우면 모든 브라우저가
 한 번에 무효화되는데, 그게 DB 세션 설계가 존재하는 이유다.
 
 ### 이 플래그를 장식이 아니게 만드는 세 곳의 필터
 
 **셋은 반드시 함께 움직인다.**
 
-1. **`requireUser()`가 `withdrawnAt: null`로 조회한다.**
+1. **`requireMember()`가 `withdrawnAt: null`로 조회한다.**
    하드 삭제와 달리 행이 남아 있으므로, 이 필터를 빼면 **탈퇴 계정이 그대로
    정상 로그인 상태가 된다.**
 
@@ -198,7 +198,7 @@ binding과 맞아야만 열린다.**
 탈퇴 행이 전화번호와 제공자 id를 그대로 들고 있으므로, 전역 unique를 그대로 두면
 **같은 사람이 다시 가입할 수 없다.**
 
-`UserProfile.phoneHash`와 `AuthIdentity[provider, providerUserId]`는 둘 다
+`Member.phoneHash`와 `AuthIdentity[provider, providerUserId]`는 둘 다
 **partial unique index**(`WHERE "withdrawnAt" IS NULL`)로 바뀌었다. Prisma
 스키마 언어로는 표현할 수 없어서 **마이그레이션 raw SQL에만 있다.** 그래서
 스키마에는 `@unique`가 아니라 평범한 `@@index`가 적혀 있다.
@@ -208,15 +208,19 @@ binding과 맞아야만 열린다.**
 전화번호로 `findUnique`를 쓸 수 없게 된 것도 의도된 것이다(컴파일이 깨진다).
 반드시 `findFirst` + `withdrawnAt: null`을 쓸 것.
 
-`AuthIdentity.withdrawnAt`은 `UserProfile`의 것을 **비정규화한 값**이다 —
+`AuthIdentity.withdrawnAt`은 `Member`의 것을 **비정규화한 값**이다 —
 partial unique index가 자기 테이블 컬럼만 읽을 수 있어서 필요하고, 같은
 트랜잭션에서 함께 쓰므로 어긋날 수 없다.
 
 ### 재로그인하면 새 사람이 생긴다
 
-탈퇴 계정은 그대로 보존되고, 같은 네이버 계정으로 다시 들어와도 **이전 링크는
-보이지 않는다.** 로그인이 닿는 조회는 전부 `withdrawnAt: null`로 걸러지기
+탈퇴 계정은 그대로 보존되고, 같은 네이버 계정으로 다시 들어와도 **이전에 찜한
+것은 보이지 않는다.** 로그인이 닿는 조회는 전부 `withdrawnAt: null`로 걸러지기
 때문이다.
+
+정확히 말하면 잃는 것은 `Bookmark` 행들이고 `Post`는 아니다. 게시물은 전역 공유라
+탈퇴와 무관하게 남아 있고, 다른 사람이 같은 링크를 저장하면 그 행을 그대로 쓴다 —
+없어지는 것은 "내가 그걸 찜했다"는 사실이다.
 
 **탈퇴를 되돌리는 경로는 없다.** 되돌릴 수 있는 유일한 형태는 **이미 아는
 프로필 id에 대고 직접 `upsert`/`update`를 하는 것**이고, 지금 그런 호출부는 없다.
@@ -241,7 +245,7 @@ partial unique index가 자기 테이블 컬럼만 읽을 수 있어서 필요�
 ## 페이지는 막지 않고, API가 막는다
 
 **모든 페이지는 로그인 없이 열린다.** 로그인 페이지도, 미들웨어도 없다. 페이지는
-`requireUser()` 대신 `getUser()`를 부르고, 세션이 없으면 빈 지도·빈 목록을
+`requireMember()` 대신 `getMember()`를 부르고, 세션이 없으면 빈 지도·빈 목록을
 렌더링한 뒤 `LoginDrawer`로 로그인을 권한다.
 
 **유일한 예외가 `/verify-phone`이다.** 이건 로그인 진입점이 아니라 **이미 시작된

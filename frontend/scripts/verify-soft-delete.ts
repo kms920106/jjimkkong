@@ -1,22 +1,37 @@
 /**
- * Exercises the SavedPost soft delete against the real database.
+ * Exercises the Bookmark soft delete against the real database.
  *
- * There is no test suite in this repository, and everything this change could
- * actually get wrong sits at the database boundary: whether the partial unique
- * index really permits re-saving a deleted link, whether the blob reference
- * count still reaches zero now that a deleted row survives to be counted.
- * Typechecking proves none of that.
+ * There is no test suite in this repository, and everything this could actually
+ * get wrong sits at the database boundary: whether re-saving a deleted link
+ * really revives the same row with its memos and its number, whether the unique
+ * indexes hold, whether the guard still refuses to remove a row. Typechecking
+ * proves none of that.
+ *
+ * **The invariants here changed with the post/bookmark split, and the changes
+ * are the point of the rewrite:**
+ *
+ * - The uniqueness on the member's link is a *real* unique on
+ *   [memberId, postId] now, not a partial index scoped to live rows. It used to
+ *   have to be partial so a deleted link could be saved again as a second row.
+ * - Re-saving therefore *revives* the existing row rather than inserting beside
+ *   it. That is what brings back the member's memos and keeps the
+ *   `/links/<memberSeq>` URL they may have bookmarked.
+ * - There is no blob reference counting left to check. Thumbnails belong to the
+ *   shared `Post`, which is written once and never updated, so a blob has exactly
+ *   one owning row and is never displaced.
+ * - The unauthenticated sources route no longer needs a `deletedAt` filter at
+ *   all: it reads `PostPlace`, which hangs off the shared post and has no member
+ *   and no soft delete. The privacy bug that filter guarded cannot occur.
  *
  * The client is wrapped in the guard exactly as the app's is, because the point
  * is to exercise what production runs — including watching the guard refuse a
- * delete.
+ * removal.
  *
  * **This script leaves its probe rows behind, soft-deleted.** Not an oversight:
- * it has no way to remove them, because nothing here may hard-delete a
- * SavedPost, and carving a hole for a verification script would compromise the
- * thing being verified. Two soft-deleted rows, invisible to every read path,
- * are cheaper than that hole. Each run uses a fresh sourceUrl so repeat runs
- * never collide.
+ * it has no way to remove them, because nothing here may hard-delete a Bookmark
+ * or a Post, and carving a hole for a verification script would compromise the
+ * thing being verified. A few invisible rows are cheaper than that hole. Each run
+ * uses a fresh sourceUrl so repeat runs never collide.
  *
  *   npx tsx --env-file=.env scripts/verify-soft-delete.ts
  */
@@ -47,134 +62,208 @@ function check(label: string, ok: boolean, detail = "") {
 
 async function main() {
   // A real account, so the FK holds. Nothing about it is modified.
-  const user = await prisma.userProfile.findFirst({
+  const member = await prisma.member.findFirst({
     where: { withdrawnAt: null },
     select: { id: true },
   });
   const place = await prisma.place.findFirst({ select: { id: true } });
-  if (!user || !place) {
-    console.log("No live UserProfile or Place to probe with; nothing verified.");
+  if (!member || !place) {
+    console.log("No live Member or Place to probe with; nothing verified.");
     await raw.$disconnect();
     return;
   }
 
-  // ---- 1. A new save starts live and is visible ----
-  const first = await prisma.savedPost.create({
+  // The shared post. Created once here, exactly as the first save of a link
+  // would, and never updated again — that immutability is what lets two members
+  // bookmark it without either changing what the other sees.
+  const post = await prisma.post.create({
     data: {
-      userId: user.id,
       sourceUrl: SOURCE_URL,
       platform: Platform.INSTAGRAM,
       title: "probe",
       thumbnail: THUMB,
+      places: { create: { placeId: place.id, position: 0 } },
     },
   });
-  await prisma.savedPostPlace.create({
-    data: { postId: first.id, placeId: place.id, position: 0, memo: "probe memo" },
-  });
-  check("a new save starts live", first.deletedAt === null);
 
-  const liveBefore = await prisma.savedPost.count({
-    where: { userId: user.id, sourceUrl: SOURCE_URL, deletedAt: null },
+  // ---- 1. A new bookmark starts live, numbered, and visible ----
+  const highest = await prisma.bookmark.aggregate({
+    where: { memberId: member.id },
+    _max: { memberSeq: true },
+  });
+  const seq = (highest._max.memberSeq ?? 0) + 1;
+
+  const bookmark = await prisma.bookmark.create({
+    data: { memberId: member.id, postId: post.id, memberSeq: seq },
+  });
+  await prisma.bookmarkMemo.create({
+    data: { bookmarkId: bookmark.id, placeId: place.id, memo: "probe memo" },
+  });
+  check("a new bookmark starts live", bookmark.deletedAt === null);
+
+  const liveBefore = await prisma.bookmark.count({
+    where: { memberId: member.id, postId: post.id, deletedAt: null },
   });
   check("live reads see it", liveBefore === 1, `count=${liveBefore}`);
 
-  // ---- 2. A second LIVE row for the same link is still refused ----
+  // ---- 2. A second bookmark of the same post is refused outright ----
+  // A real unique now, not a live-only one: there is never a second row for this
+  // pair, deleted or not, because a re-save revives instead of inserting.
   let duplicateRefused = false;
   try {
-    await prisma.savedPost.create({
-      data: { userId: user.id, sourceUrl: SOURCE_URL, platform: Platform.INSTAGRAM },
+    await prisma.bookmark.create({
+      data: { memberId: member.id, postId: post.id, memberSeq: seq + 1 },
     });
   } catch {
     duplicateRefused = true;
   }
-  check("partial unique index still refuses a second live row", duplicateRefused);
+  check("[memberId, postId] refuses a second row", duplicateRefused);
 
-  // ---- 3. The guard refuses to hard-delete it ----
+  // ---- 3. Two members may bookmark one post, each with their own number ----
+  // The whole reason for the split: the second member pays no crawl, no model
+  // call and no geocoding, because the post already exists.
+  const other = await prisma.member.findFirst({
+    where: { withdrawnAt: null, id: { not: member.id } },
+    select: { id: true },
+  });
+  if (other) {
+    const otherHighest = await prisma.bookmark.aggregate({
+      where: { memberId: other.id },
+      _max: { memberSeq: true },
+    });
+    const otherBookmark = await prisma.bookmark.create({
+      data: {
+        memberId: other.id,
+        postId: post.id,
+        memberSeq: (otherHighest._max.memberSeq ?? 0) + 1,
+      },
+    });
+    check(
+      "a second member bookmarks the same post",
+      otherBookmark.postId === post.id,
+    );
+  } else {
+    results.push("SKIP only one live member, cannot check post sharing");
+  }
+
+  // ---- 4. The guard refuses to remove the row ----
   let guarded = false;
   try {
-    await prisma.savedPost.delete({ where: { id: first.id } });
+    await prisma.bookmark.delete({ where: { id: bookmark.id } });
   } catch (error) {
     guarded = error instanceof HardDeleteBlockedError;
   }
-  check("runtime guard refuses a hard delete", guarded);
+  check("runtime guard refuses to remove a Bookmark", guarded);
 
-  // ---- 4. Soft delete, as DELETE /api/posts/[id] now does ----
-  await prisma.savedPost.update({
-    where: { id: first.id },
+  // ---- 5. So does the guard for the two tables that replaced SavedPostPlace ----
+  // Both left the allowlist with the split, because nothing rewrites them any
+  // more. This is the assertion that catches either being quietly re-added.
+  let postPlaceGuarded = false;
+  try {
+    await prisma.postPlace.deleteMany({ where: { postId: post.id } });
+  } catch (error) {
+    postPlaceGuarded = error instanceof HardDeleteBlockedError;
+  }
+  check("runtime guard refuses to remove PostPlace rows", postPlaceGuarded);
+
+  let memoGuarded = false;
+  try {
+    await prisma.bookmarkMemo.deleteMany({ where: { bookmarkId: bookmark.id } });
+  } catch (error) {
+    memoGuarded = error instanceof HardDeleteBlockedError;
+  }
+  check("runtime guard refuses to remove BookmarkMemo rows", memoGuarded);
+
+  // ---- 6. Soft delete, as DELETE /api/posts/[id] does ----
+  await prisma.bookmark.update({
+    where: { id: bookmark.id },
     data: { deletedAt: new Date() },
   });
 
-  const liveAfter = await prisma.savedPost.count({
-    where: { userId: user.id, sourceUrl: SOURCE_URL, deletedAt: null },
+  const liveAfter = await prisma.bookmark.count({
+    where: { memberId: member.id, postId: post.id, deletedAt: null },
   });
   check("live reads stop seeing it", liveAfter === 0, `count=${liveAfter}`);
 
-  const survivor = await prisma.savedPost.findUnique({
-    where: { id: first.id },
-    select: { deletedAt: true },
+  const survivor = await prisma.bookmark.findUnique({
+    where: { id: bookmark.id },
+    select: { deletedAt: true, memberSeq: true },
   });
   check("the row survives with deletedAt stamped", survivor?.deletedAt != null);
+  check(
+    "its number survives, so its URL is still its own",
+    survivor?.memberSeq === seq,
+    `seq=${survivor?.memberSeq}`,
+  );
 
-  // ---- 5. Its places survive, so a restore would be possible ----
-  const link = await prisma.savedPostPlace.findFirst({
-    where: { postId: first.id },
+  // ---- 7. The memo survives, which is what makes the revive worth having ----
+  const memo = await prisma.bookmarkMemo.findFirst({
+    where: { bookmarkId: bookmark.id },
     select: { memo: true },
   });
-  check("SavedPostPlace and its memo survive", link?.memo === "probe memo");
+  check("BookmarkMemo survives the soft delete", memo?.memo === "probe memo");
 
-  // ---- 6. The sources route's relation filter hides it from strangers ----
-  const strangerVisible = await prisma.savedPostPlace.count({
-    where: { placeId: place.id, postId: first.id, post: { deletedAt: null } },
+  // ---- 8. The shared post is untouched by one member's delete ----
+  // It must be: other members may still have it bookmarked, and the picture and
+  // places belong to the post rather than to anyone's save of it.
+  const sharedStillThere = await prisma.post.findUnique({
+    where: { id: post.id },
+    select: { thumbnail: true, places: { select: { placeId: true } } },
   });
   check(
-    "the unauthenticated sources route no longer lists it",
-    strangerVisible === 0,
-    `count=${strangerVisible}`,
+    "the shared Post keeps its thumbnail and places",
+    sharedStillThere?.thumbnail === THUMB &&
+      sharedStillThere.places.length === 1,
   );
 
-  // ---- 7. What the partial index exists for: re-saving the same link ----
-  const second = await prisma.savedPost.create({
-    data: {
-      userId: user.id,
-      sourceUrl: SOURCE_URL,
-      platform: Platform.INSTAGRAM,
-      title: "probe again",
-      thumbnail: THUMB,
-    },
+  // ---- 9. Re-saving revives the same row rather than making a new one ----
+  const revived = await prisma.bookmark.update({
+    where: { memberId_postId: { memberId: member.id, postId: post.id } },
+    data: { deletedAt: null },
+    select: { id: true, memberSeq: true, deletedAt: true },
   });
-  check("re-saving a deleted link succeeds", second.id !== first.id);
+  check("re-saving revives the same row", revived.id === bookmark.id);
+  check("it is live again", revived.deletedAt === null);
+  check(
+    "with the number it always had",
+    revived.memberSeq === seq,
+    `seq=${revived.memberSeq}`,
+  );
 
-  // ---- 8. Blob reference counting ----
-  // No deletedAt filter, deliberately: the soft-deleted row still points at the
-  // blob and would render it if restored, so it counts as a reference.
-  // Excluding only the row being removed, the total is 1 — the blob must NOT be
-  // collected.
-  const refs = await prisma.savedPost.count({
-    where: { thumbnail: THUMB, id: { not: second.id } },
+  const memoAfterRevive = await prisma.bookmarkMemo.findFirst({
+    where: { bookmarkId: bookmark.id },
+    select: { memo: true },
   });
   check(
-    "the count includes the soft-deleted row, so the blob is kept",
-    refs === 1,
-    `count=${refs}`,
+    "and the memo the member wrote before deleting",
+    memoAfterRevive?.memo === "probe memo",
   );
 
-  await prisma.savedPost.update({
-    where: { id: second.id },
+  // ---- 10. The sources route lists the post regardless of anyone's delete ----
+  // No `deletedAt` filter is possible here, and none is needed: PostPlace hangs
+  // off the shared post. The pin is communal, so the sheet answers "which posts
+  // name this place", not "which members currently keep it".
+  const communal = await prisma.postPlace.count({
+    where: { placeId: place.id, postId: post.id },
+  });
+  check(
+    "the unauthenticated sources route reads the shared post",
+    communal === 1,
+    `count=${communal}`,
+  );
+
+  // Left soft-deleted rather than live, so the probe does not show up in anyone's
+  // grid. The revive above is undone here for that reason only.
+  await prisma.bookmark.update({
+    where: { id: bookmark.id },
     data: { deletedAt: new Date() },
   });
-  const refsIgnoringBoth = await prisma.savedPost.count({
-    where: { thumbnail: THUMB, id: { notIn: [first.id, second.id] } },
-  });
-  check(
-    "the count reaches zero when nothing else points at the blob",
-    refsIgnoringBoth === 0,
-    `count=${refsIgnoringBoth}`,
-  );
 
   console.log(results.join("\n"));
   console.log(
     `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURES`}\n` +
-      `Left behind, soft-deleted and invisible to every read path: ${first.id}, ${second.id}`,
+      `Left behind and invisible to every read path: post ${post.id}, ` +
+      `bookmark ${bookmark.id}`,
   );
   if (failures > 0) process.exitCode = 1;
   await raw.$disconnect();

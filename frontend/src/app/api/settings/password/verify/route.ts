@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { requireSameOrigin, toErrorResponse } from "@/lib/api";
-import { requireUser } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
 import { verifyPassword } from "@/lib/auth/password";
 import {
   clearPasswordAttempts,
@@ -32,7 +32,7 @@ const BodySchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     requireSameOrigin(request);
-    const user = await requireUser();
+    const user = await requireMember();
     const { currentPassword } = BodySchema.parse(await request.json());
 
     // Counted before the comparison, so a caller cannot spend guesses uncounted

@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Same reason /links has one: this page is `force-dynamic`, so its HTML cannot
- * exist until getUser() returns and a prefetch has nothing to pre-build. Without
+ * exist until getMember() returns and a prefetch has nothing to pre-build. Without
  * this the drawer closes and the previous screen sits there for the whole server
  * round trip, which reads as the pencil not working rather than as slow.
  *

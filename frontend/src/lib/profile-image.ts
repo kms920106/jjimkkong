@@ -46,7 +46,7 @@ async function sniff(file: File): Promise<string | null> {
 export const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
 
 /**
- * Stores `file` as `userId`'s profile picture and returns its public URL.
+ * Stores `file` as `memberId`'s profile picture and returns its public URL.
  *
  * Keyed by user id with a random suffix (`addRandomSuffix`), not by id alone.
  * A stable key would be overwritten in place, and the blob CDN would keep
@@ -55,7 +55,7 @@ export const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
  * change visible immediately; the superseded blob is deleted by the caller.
  */
 export async function putProfileImage(
-  userId: string,
+  memberId: string,
   file: File,
 ): Promise<string> {
   if (file.size === 0) {
@@ -83,7 +83,7 @@ export async function putProfileImage(
     // serves is the type the bytes actually are. The extension is on the
     // pathname as well, which is what makes the stored object self-describing
     // in the Blob dashboard.
-    const blob = await put(`profile/${userId}.${extension}`, file, {
+    const blob = await put(`profile/${memberId}.${extension}`, file, {
       access: "public",
       addRandomSuffix: true,
       contentType: sniffed,

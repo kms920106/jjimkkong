@@ -1,8 +1,8 @@
 import { Suspense } from "react";
-import { getUser } from "@/lib/auth";
+import { getMember } from "@/lib/auth";
 import { maskedPhoneOf } from "@/lib/auth/phone-crypto";
 import { prisma } from "@/lib/prisma";
-import { savedPostInclude, toSavedPostDTO } from "@/lib/serialize";
+import { bookmarkInclude, toSavedPostDTO } from "@/lib/serialize";
 import { MapProvider } from "@/generated/prisma/enums";
 import HomeClient from "@/components/HomeClient";
 
@@ -12,13 +12,13 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   // Public: a logged-out visitor gets the map with no pins on it and a login
   // drawer behind the controls, rather than a redirect.
-  const user = await getUser();
+  const member = await getMember();
 
-  const posts = user
-    ? await prisma.savedPost.findMany({
-        where: { userId: user.id, deletedAt: null },
+  const posts = member
+    ? await prisma.bookmark.findMany({
+        where: { memberId: member.id, deletedAt: null },
         orderBy: { createdAt: "desc" },
-        include: savedPostInclude,
+        include: bookmarkInclude,
       })
     : [];
 
@@ -31,17 +31,17 @@ export default async function HomePage() {
         // Signed out there is no stored preference, so the map falls back to
         // the same default a new account starts on.
         profile={
-          user
+          member
             ? {
-                nickname: user.nickname,
-                statusMessage: user.statusMessage,
-                imageUrl: user.imageUrl,
-                email: user.email,
-                phoneMasked: maskedPhoneOf(user),
-                mapProvider: user.mapProvider,
+                nickname: member.nickname,
+                statusMessage: member.statusMessage,
+                imageUrl: member.imageUrl,
+                email: member.email,
+                phoneMasked: maskedPhoneOf(member),
+                mapProvider: member.mapProvider,
                 // The flag, never the verifier — it only picks the wording of the
                 // settings row.
-                hasPassword: user.passwordHash !== null,
+                hasPassword: member.passwordHash !== null,
               }
             : {
                 nickname: null,
@@ -53,7 +53,7 @@ export default async function HomePage() {
                 hasPassword: false,
               }
         }
-        signedIn={user !== null}
+        signedIn={member !== null}
       />
     </Suspense>
   );

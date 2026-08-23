@@ -177,7 +177,8 @@ function canonicalize(
   if (mapPlace && "id" in mapPlace) {
     // The share sheet, the mobile site and the desktop map all point at one
     // place through different paths; collapsing them onto the canonical entry
-    // keeps the (userId, sourceUrl) dedupe key stable.
+    // keeps `Post.sourceUrl` — the key every member's save of this link resolves
+    // to — stable.
     return mapPlace.vendor === "naver"
       ? `https://map.naver.com/p/entry/place/${mapPlace.id}`
       : `https://place.map.kakao.com/${mapPlace.id}`;
@@ -185,8 +186,13 @@ function canonicalize(
   if (platform === Platform.INSTAGRAM) {
     const [, kind, shortcode] = url.pathname.split("/");
     // The same post is reachable as /reel/, /reels/, /tv/ and /p/. Collapsing
-    // them keeps the (userId, sourceUrl) dedupe key stable and stores a
-    // permalink that actually resolves — /reels/<code>/ 404s.
+    // them keeps `Post.sourceUrl` stable and stores a permalink that actually
+    // resolves — /reels/<code>/ 404s.
+    //
+    // This matters more than it used to: that column is now the identity of a
+    // globally shared row, so a variant that escapes normalisation does not just
+    // duplicate one member's save — it makes the next member re-run the whole
+    // crawl + model + geocode pipeline for a post we already have.
     const canonicalKind = kind === "reels" ? "reel" : kind === "tv" ? "p" : kind;
     return `https://www.instagram.com/${canonicalKind}/${shortcode}/`;
   }
