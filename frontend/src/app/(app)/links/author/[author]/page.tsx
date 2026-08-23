@@ -116,7 +116,7 @@ export default async function AuthorPostsPage({
             size="sm"
           >
             <ExternalLink aria-hidden />
-            {platform ? platformLabel(platform) : "프로필"} 프로필
+            {platform ? platformLabel(platform) : "프로필"}
           </Button>
         )}
       </section>
