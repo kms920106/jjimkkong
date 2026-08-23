@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, Copy, MapPin, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,16 @@ export type PlaceDetail = {
 };
 
 type Props = {
-  detail: PlaceDetail;
+  /**
+   * Null closes the sheet. Base UI only animates a `false → true` transition
+   * on `open`, and this component's `<Sheet>` root must therefore stay
+   * mounted across opens — a parent that conditionally mounts it (`{detail &&
+   * <PlaceSheet .../>}`) makes every "open" a fresh mount with `open` already
+   * `true`, so there is no transition to animate and the sheet just appears.
+   * Passing `detail` through unconditionally, letting this component own the
+   * mount, is what makes the slide-up real.
+   */
+  detail: PlaceDetail | null;
   mapProvider: MapProvider;
   onClose: () => void;
 };
@@ -59,15 +68,51 @@ type Props = {
  * a second marker replaces the contents rather than stacking a second sheet.
  */
 export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
-  const { place, sources } = detail;
+  // Held across `detail` going null so the closing animation has something
+  // to render while it plays — the parent clears `detail` the instant the
+  // close is requested, before the sheet has slid back down.
+  const [shown, setShown] = useState(detail);
+  if (detail && detail !== shown) setShown(detail);
+
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 
-  // No reset-on-place-change effect is needed: HomeClient keys this component
-  // by place id, so switching pins remounts it and `copied` starts false. If
-  // that key is ever dropped, a stale check would claim the *new* address had
-  // been copied — the key is load-bearing, not a rendering nicety.
+  // Resets `copied` and the scroll position when the pin switches while the
+  // sheet stays up. The component itself must not remount on that switch —
+  // remounting would drop `open` back to a fresh `true` and skip the
+  // close/open transition Base UI can only animate across an actual
+  // `false → true` change.
+  //
+  // `copied` is reset during render (derived-state adjustment, not an
+  // effect — lint's `react-hooks/set-state-in-effect` forbids the latter)
+  // so it never paints stale for even one frame. The scroll offset still
+  // needs a layout effect: it is DOM state Base UI's re-render does not
+  // touch on its own.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const shownId = shown?.place.id ?? null;
+  const previousShownIdRef = useRef(shownId);
+  if (previousShownIdRef.current !== shownId) {
+    previousShownIdRef.current = shownId;
+    if (copied) setCopied(false);
+  }
+  useLayoutEffect(() => {
+    contentRef.current?.scrollTo(0, 0);
+    // Fires only when the pin actually changes, not on every `shown` update
+    // (which also happens for reasons that should not reset scroll, like a
+    // communal-sources refresh landing on the same place) — `shownId` is
+    // the only dependency.
+  }, [shownId]);
+
+  // `shown` is null only before the very first pin is ever clicked — after
+  // that, closing keeps the last place around (above) so the sheet has
+  // content to slide down with. The `<Sheet>` below still renders in this
+  // state, at `open={false}`, rather than this component returning null:
+  // returning null would unmount the whole subtree on first close, and the
+  // first *re*-open after that would hit the same "already open" mount this
+  // component exists to avoid.
+  const place = shown?.place ?? null;
+  const sources = shown?.sources ?? [];
 
   // Only a map-provider post carries an exact permalink, and only for its own
   // provider. Everything else searches by name.
@@ -80,6 +125,7 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
     sources.find((source) => source.platform === provider);
 
   async function copyAddress() {
+    if (!place) return;
     try {
       await navigator.clipboard.writeText(place.address);
       setCopied(true);
@@ -96,7 +142,11 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
 
   return (
     <Sheet
-      open
+      // `detail !== null` rather than a bare `open`: this component now stays
+      // mounted whether or not a pin is selected (see the `detail` prop doc),
+      // so Base UI needs the real `false → true` / `true → false` edge to
+      // have anything to animate.
+      open={detail !== null}
       // Non-modal so the map underneath stays pannable and its other pins stay
       // clickable while the sheet is up. A modal sheet would put an overlay
       // over the map and make every further marker click a dismiss.
@@ -106,6 +156,7 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
       }}
     >
       <SheetContent
+        ref={contentRef}
         side="bottom"
         // Anchored to the dynamic viewport, matching UrlSheet: on iOS the
         // layout viewport ignores the browser chrome, so the primitive's
@@ -115,7 +166,7 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
         // z-20 sits above the map but below the floating controls (z-30), so
         // the + and menu buttons stay reachable with the sheet open — it is
         // non-modal precisely so the page keeps working.
-        className="mx-auto z-20 max-h-[65dvh] w-full max-w-lg gap-0 overflow-y-auto rounded-t-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl data-[side=bottom]:inset-x-0 data-[side=bottom]:top-[100dvh] data-[side=bottom]:bottom-auto data-[side=bottom]:-translate-y-full data-[side=bottom]:data-ending-style:-translate-y-full data-[side=bottom]:data-starting-style:-translate-y-full sm:rounded-2xl sm:border sm:pb-5"
+        className="mx-auto z-20 max-h-[65dvh] w-full max-w-lg gap-0 overflow-y-auto rounded-t-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl data-[side=bottom]:inset-x-0 data-[side=bottom]:top-[100dvh] data-[side=bottom]:bottom-auto data-[side=bottom]:-translate-y-full data-[side=bottom]:data-ending-style:translate-y-0 data-[side=bottom]:data-starting-style:translate-y-0 sm:rounded-2xl sm:border sm:pb-5"
         showCloseButton={false}
         // The backdrop is what actually makes a sheet modal: `modal={false}`
         // on the Root leaves it rendered as `fixed inset-0`, so it goes on
@@ -124,55 +175,63 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
         // the map and tap another pin with the card still up.
         showOverlay={false}
       >
-        <SheetHeader className="flex-row items-start justify-between gap-3 p-0 pb-3">
-          <div className="flex min-w-0 flex-col gap-1">
-            <SheetTitle className="text-lg leading-snug">
-              {place.name}
-            </SheetTitle>
-            {/* Category is the only classifier the geocoder gives us, and it
-                is often empty — rendered only when it says something. */}
-            {place.category && (
-              <SheetDescription className="text-xs">
-                {place.category}
-              </SheetDescription>
-            )}
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={onClose}
-            aria-label="닫기"
-            className="shrink-0 rounded-full text-muted-foreground"
-          >
-            <X aria-hidden />
-          </Button>
-        </SheetHeader>
+        {/* `place` is only null before the first pin click, while `open` is
+            still `false` (see the prop doc above) — nothing here is ever
+            visible in that state, but it still has to render without
+            throwing. */}
+        {place && (
+          <>
+            <SheetHeader className="flex-row items-start justify-between gap-3 p-0 pb-3">
+              <div className="flex min-w-0 flex-col gap-1">
+                <SheetTitle className="text-lg leading-snug">
+                  {place.name}
+                </SheetTitle>
+                {/* Category is the only classifier the geocoder gives us, and
+                    it is often empty — rendered only when it says something. */}
+                {place.category && (
+                  <SheetDescription className="text-xs">
+                    {place.category}
+                  </SheetDescription>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={onClose}
+                aria-label="닫기"
+                className="shrink-0 rounded-full text-muted-foreground"
+              >
+                <X aria-hidden />
+              </Button>
+            </SheetHeader>
 
-        <div className="flex items-start gap-1.5 text-sm text-muted-foreground">
-          <MapPin aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0 flex-1">{place.address}</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={copyAddress}
-            aria-label="주소 복사"
-            className="-mt-1 -mr-1 shrink-0 rounded-full text-muted-foreground"
-          >
-            {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-          </Button>
-        </div>
+            <div className="flex items-start gap-1.5 text-sm text-muted-foreground">
+              <MapPin aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1">{place.address}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={copyAddress}
+                aria-label="주소 복사"
+                className="-mt-1 -mr-1 shrink-0 rounded-full text-muted-foreground"
+              >
+                {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+              </Button>
+            </div>
 
-        {/* 지도앱에서 열기: 네이버맵 · 카카오맵 · 구글맵을 전부 나열한다.
-            Scrolls on a narrow phone rather than wrapping into a second line
-            that pushes the source list below the fold. */}
-        <MapAppLinks
-          place={place}
-          exactSourceFor={exactSourceFor}
-          mapProvider={mapProvider}
-          className="-mx-5 mt-3 flex-nowrap overflow-x-auto scrollbar-none px-5"
-        />
+            {/* 지도앱에서 열기: 네이버맵 · 카카오맵 · 구글맵을 전부 나열한다.
+                Scrolls on a narrow phone rather than wrapping into a second
+                line that pushes the source list below the fold. */}
+            <MapAppLinks
+              place={place}
+              exactSourceFor={exactSourceFor}
+              mapProvider={mapProvider}
+              className="-mx-5 mt-3 flex-nowrap overflow-x-auto scrollbar-none px-5"
+            />
+          </>
+        )}
 
         {/* What this app knows that a map app does not: which of the user's
             own saved posts put this pin here. That is the whole reason the

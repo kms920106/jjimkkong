@@ -762,31 +762,34 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         initialError={loginError}
       />
 
-      {/* Stood down while the URL sheet or the caption prompt is up: those are
-          modal and would trap focus over a non-modal sheet the user can no
-          longer reach or dismiss. The selection survives, so closing them
-          brings the place card back. */}
-      {selectedPlace && !sheetOpen && !captionNeeded && (
-        <PlaceSheet
-          // Keyed by place so switching pins remounts rather than animating
-          // one card's contents into another's while the old scroll position
-          // stays put.
-          key={selectedPlace.place.id}
-          detail={selectedPlace}
-          mapProvider={profile.mapProvider}
-          onClose={() => setSelectedPlaceId(null)}
-        />
-      )}
+      {/* Always mounted — PlaceSheet owns its own open/closed transition (see
+          its `detail` prop doc) and needs a real `false → true` edge on
+          `open` to animate the slide-up, which a conditionally-mounted
+          `{selectedPlace && <PlaceSheet .../>}` cannot provide since the
+          first render would already have `open` at its final value.
+          Stood down (passed null) while the URL sheet or the caption prompt
+          is up: those are modal and would trap focus over a non-modal sheet
+          the user can no longer reach or dismiss. The selection survives, so
+          closing them brings the place card back. */}
+      <PlaceSheet
+        detail={!sheetOpen && !captionNeeded ? selectedPlace : null}
+        mapProvider={profile.mapProvider}
+        onClose={() => setSelectedPlaceId(null)}
+      />
 
-      {sheetOpen && (
-        <UrlSheet
-          busy={ingesting}
-          busyLabel={stageLabel(stage, "읽는 중…")}
-          progress={stageProgress(stage, ingesting)}
-          onClose={() => setSheetOpen(false)}
-          onSubmit={(targetUrl) => void ingestAndSave(targetUrl)}
-        />
-      )}
+      {/* Always mounted, matching PlaceSheet above: `open` must go from an
+          actual `false` to `true` for Base UI to have a transition to
+          animate. A conditionally-mounted `{sheetOpen && <UrlSheet .../>}`
+          starts every open already at `open`'s final value, so the sheet
+          just appears instead of sliding up. */}
+      <UrlSheet
+        open={sheetOpen}
+        busy={ingesting}
+        busyLabel={stageLabel(stage, "읽는 중…")}
+        progress={stageProgress(stage, ingesting)}
+        onClose={() => setSheetOpen(false)}
+        onSubmit={(targetUrl) => void ingestAndSave(targetUrl)}
+      />
 
       {captionNeeded && (
         <CaptionPrompt
