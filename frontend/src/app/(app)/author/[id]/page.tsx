@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { bookmarkInclude, toSavedPostDTO } from "@/lib/serialize";
 import { AuthorAvatar } from "@/components/AuthorLink";
 import { PostGrid } from "@/components/PostGrid";
-import { SettingsHeader } from "@/components/SettingsHeader";
+import { BackHeader } from "@/components/BackHeader";
 import { Button } from "@/components/ui/button";
 import { authorProfileUrl } from "@/lib/author-profile-url";
 import { platformLabel } from "@/lib/platform-labels";
@@ -86,10 +86,12 @@ export default async function AuthorPostsPage({
 
   return (
     <div className="flex w-full flex-col pb-8">
-      {/* Back to the grid, not to the post that linked here: the author page is
-          a listing, so the listing it belongs beside is the natural parent. The
-          browser's own back gesture still returns to the post. */}
-      <SettingsHeader href="/links" ariaLabel="링크 목록으로" title="작성자" />
+      {/* BackHeader, not SettingsHeader: this page is normally reached from a
+          post, so a *pushed* /links would grow the history instead of unwinding
+          it and the next back press would go forward to the post again. The
+          pop keeps back meaning back — see useBackLink. /links stays as the
+          href for a cold entry, where the listing is the natural parent. */}
+      <BackHeader href="/links" ariaLabel="링크 목록으로" title="작성자" />
 
       <section className="flex flex-col items-center gap-3 px-4 py-6">
         <AuthorAvatar author={author.handle} authorImage={author.image} className="size-20" />

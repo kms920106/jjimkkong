@@ -23,6 +23,7 @@ React 컴포넌트. 제품의 상호작용이 사실상 `HomeClient` 하나에 �
 | `LoginDrawer.tsx` | 제공자 선택. 보던 화면을 떠나지 않아야 하는 진입점이라 drawer |
 | `PhoneVerifyForm.tsx` | 번호 입력 → 코드 입력 2단계(`Step`). `/verify-phone` 페이지가 렌더 |
 | `AppDrawer.tsx` | 왼쪽 메뉴 — 프로필 헤더(연필은 `/profile`), `링크`, 설정 진입, 지도 제공자 선택 |
+| `BackHeader.tsx` | `SettingsHeader` + `useBackLink`. 서버 컴포넌트가 뒤로가기 화살표를 달 때 쓴다 — 아래 "뒤로가기 화살표는 push가 아니라 pop이어야 한다" |
 | `SettingsClient.tsx` | `/settings` 목록 — 비밀번호 변경, 약관·개인정보, 로그아웃, 회원탈퇴(`AlertDialog`). 전부 같은 모양의 행 |
 | `PasswordSettingPageClient.tsx` | `/settings/password` 크롬. `PasswordSettingForm`을 감싸고 완료 시 `/settings`로 보낸다 |
 | `PasswordSettingForm.tsx` | 현재 비밀번호 → 새 비밀번호 2단계. 세션만으로 credential을 새로 발급하지 않는다 |
@@ -216,3 +217,36 @@ revoke를 한 번 놓치면 고를 때마다 blob이 하나씩 샌다.
 보여주고 있으므로, 401 같은 실패를 그대로 두면 **지워지지 않은 사진이 지워진 것처럼 보이고**
 다음에 성공하는 저장이 그걸 실제로 지운다. `saving`은 `finally`에서 푼다 — `router.push()`가
 동기적으로 언마운트하지 않으므로, 이동이 중단되면 버튼이 "저장 중…"에 영구히 갇힌다.
+
+## 뒤로가기 화살표는 push가 아니라 pop이어야 한다
+
+**헤더의 뒤로가기 화살표를 `SettingsHeader`에 `href`만 주고 달면 히스토리가 풀리는
+대신 자란다.** `/links` → `/links/9` → `/author/4`에서 화살표가 `/links`를 *push*하면
+사용자는 뒤로를 눌렀는데 스택은 네 칸이 되고, 다음 뒤로가기가 `/author/4`로 **앞으로**
+간다. 이 버그는 한 번 고쳐졌다가 `/author/[id]`가 새로 생기면서 재발했다 — 실제로
+사용자가 두 번 신고한 형태다.
+
+고치는 장치는 [use-back-link.ts](../lib/use-back-link.ts)의 `useBackLink()`이고,
+클릭을 `router.back()`으로 바꿔 브라우저가 이미 들고 있는 항목을 되살린다. `href`는
+그대로 남는다 — cold entry(새로고침·북마크·외부 링크)에서는 되돌릴 항목이 없으므로
+평범한 링크로 동작해야 하고, 판정은 `window.navigation.currentEntry.index > 0`이다.
+
+**쓰는 방법이 컴포넌트 종류에 따라 갈린다:**
+
+- **클라이언트 컴포넌트**(`LinksClient`, `PostDetailClient`)는 훅을 직접 부르고
+  `onBackClick`을 `SettingsHeader`에 넘긴다.
+- **서버 컴포넌트**(`/author/[id]`)는 훅을 부를 수 없으므로
+  [BackHeader.tsx](BackHeader.tsx)를 쓴다. `SettingsHeader`를 직접 쓰지 말 것 —
+  그게 정확히 위 버그다.
+
+**단 push가 언제나 틀린 것은 아니다.** `/profile`·`/settings`·`/settings/password`는
+여전히 `SettingsHeader`를 그대로 쓴다. 이 셋은 닿는 경로가 하나뿐이라 `href`가 곧
+뒤에 있는 항목이고, push의 대가는 잘못된 목적지가 아니라 서버 왕복 한 번이다.
+**목적지가 틀어지는 조건은 "그 화면에 두 개 이상의 부모가 있는 것"이다** —
+`/author/[id]`가 게시글에서도 열리고 목록에서도 열리는 것처럼. 새 화면을 만들 때
+그 조건에 해당하면 `BackHeader`(또는 훅)를 쓸 것.
+
+**타이머나 `history.length`로 판정하지 말 것.** 이유는 `use-back-link.ts`의 주석에
+전부 적혀 있다(`history.state.idx`는 Pages Router 필드, `history.length`는 탭 전체를
+센다). Navigation API가 없는 브라우저(Safari·Firefox)에서는 평범한 링크로 떨어지는
+것이 의도된 동작이다.
