@@ -12,6 +12,7 @@
 | File | Description |
 |------|-------------|
 | `db-permissions.md` | DELETE 권한 없는 Postgres role로 하드 삭제를 막는 절차. 아직 라이브에 미적용 |
+| `dev-port-kill.md` | 4000번 포트를 점유한 dev 서버 프로세스를 찾아 종료하는 방법 |
 
 ## Subdirectories
 | Directory | Purpose |
