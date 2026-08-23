@@ -7,50 +7,80 @@ import type { MapProvider, Platform, SavedPlaceDTO } from "@/lib/types";
  * search lands on the right place in every app and degrades to a result list
  * rather than a 404 when the name is ambiguous.
  *
- * All three are **Apple Universal Links**, and on iOS that is the whole design:
- * this app is used from the Home Screen (standalone), where iOS hands a
+ * Kakao and Google are **Apple Universal Links**, and on iOS that is the whole
+ * design: this app is used from the Home Screen (standalone), where iOS hands a
  * Universal Link straight to the native app without navigating our own window —
  * so the post stays on screen and in the app switcher. With the app absent the
  * same URL just loads the provider's web map. That is why the Instagram button
- * always worked, and why none of these needs a custom scheme or a fallback
- * timer of ours. Every host/path below was measured; see `AGENTS.md` here.
+ * always worked.
+ *
+ * **Naver is the one exception and uses `nmap://`**, because no Naver host
+ * universal-links from outside their own app. See `naverMapUrl()` — it carries
+ * the whole investigation, including what was ruled out. Every host, path and
+ * scheme below was measured; see `AGENTS.md` here.
+ *
+ * Whatever the shape, it goes in an anchor's `href` and nothing else: no
+ * `onClick`, no timer, no scheme/URL branching at the call site.
  */
 
 /**
- * `inapp.map.naver.com/launchApp/place`, and every part of that is load-bearing.
+ * `nmap://place` — the one mechanism Naver actually documents, and the only one
+ * that opens the app from here.
  *
- * **`map.naver.com` has no apple-app-site-association file, but
- * `launchApp/*` on both `m.map.naver.com` and `inapp.map.naver.com` does**
- * (verified) — registered to `com.nhncorp.NaverMap`, the shipping app. We name
- * the `inapp.` host because the `m.` one **302s to it and drops the query
- * string** (measured), so a user without the app would land on a bare map page
- * instead of this place. iOS never performs that redirect when the app *is*
- * installed — it claims the URL first — so the `m.` host looks fine on a test
- * device with the app and silently degrades for everyone else.
- *
- * Missing that subdomain+path is what made an earlier version conclude a scheme
- * was the only option and hand-roll `nmap://` plus a timed fallback. That
- * fallback then raced the scheme and *won*, so the app received the fallback's
+ * **Naver is the exception to the Universal Link rule above, and it took two
+ * wrong turns to establish that.** `map.naver.com` serves no
+ * apple-app-site-association file, so an earlier version reached for
+ * `nmap://` — correctly — but bolted a 1.5s timer fallback onto it. That
+ * fallback raced the scheme and *won*, so the app received the fallback's
  * `/search?query=` and showed a name search ("위치 정보 없음, 서울특별시 중구
- * 중심으로 …") instead of the pin. Deleting the timer is what fixes it, and no
- * replacement is possible: standalone mode cannot tell whether the hand-off
- * succeeded, because Page Visibility fires with the wrong state there
- * (WebKit #202399).
+ * 중심으로 …") instead of the pin, and with the app absent it replaced the post
+ * with a web map.
  *
- * `place` with `lat`/`lng`/`name` matches the documented `nmap://place`
- * contract, and Naver's own launch page re-encodes these query params into
- * `navermaps://place?…` for us — so coordinates give an exact pin rather than a
- * name guess, and Naver, not us, owns the scheme name and App Store id.
+ * The next version found `launchApp/*` in the association files of
+ * `m.map.naver.com` and `inapp.map.naver.com` and used that https URL instead.
+ * **It does not work from here.** On a device with the app installed, the tap
+ * navigated our own window to that page, the URL gained an `#applink` hash, and
+ * the app never launched. That hash is the proof: Naver's own launch SPA sets
+ * it (`location.hash.indexOf("applink")<0 && …`) *before* trying
+ * `navermaps://`, so the page had fully loaded and run its own script — iOS
+ * never claimed the URL. Its `navermaps://` attempt then failed too, that being
+ * an internal scheme absent from the docs.
  *
- * No `appname`: that is required on a raw `nmap://` URL, but this page reads
- * only `appSchemeName` (allowed values `nmap`/`navermaps`), so our own label
- * would do nothing. `fallbackUrl` is likewise useless to us — the page accepts
- * it only for `*.naver.com` hosts, so we cannot ask it to return the user here.
- * With the app missing this lands on Naver's install page, the same trade the
- * Kakao and Google links already make.
+ * Everything checkable on the server side says that link should have worked,
+ * which is why the list matters — do not re-test these:
+ *
+ * - Apple's own CDN copy (`app-site-association.cdn-apple.com/a/v1/…`, the file
+ *   iOS actually reads) returns 200 and lists `/launchApp/*` for the shipping
+ *   `6379BPE45W.com.nhncorp.NaverMap`.
+ * - `/launchApp/place` matches the `/launchApp/*` pattern.
+ * - Naver serves it as `application/json`; Kakao serves *its* file as
+ *   `text/plain` and Kakao works anyway.
+ * - It was a real anchor tap, not a scripted navigation.
+ *
+ * So the association file is not the problem. What cannot be checked from
+ * outside is the other half — whether the app binary's Associated Domains
+ * entitlement claims these hosts — and the host name `inapp` suggests the
+ * answer: it is Naver's in-app webview surface, not a link target for outside
+ * apps. Universal Links themselves are fine here; the Kakao and Google buttons
+ * below are plain https and both hand off while this app stays alive.
+ *
+ * **No timer, no App Store fallback, no `onClick` — deliberately, even though
+ * the official docs suggest one.** A fallback has to decide whether the
+ * hand-off worked, and standalone mode cannot: Page Visibility fires with the
+ * wrong state there (WebKit #202399). That guess is exactly what broke the
+ * first attempt. The cost is that a visitor without the app gets iOS's "Cannot
+ * Open Page" and nothing else, where Kakao and Google would show a web map —
+ * accepted, because the alternative trades a rare dead end for routinely losing
+ * the post, and Naver is this app's default provider.
+ *
+ * `appname` is required on every `nmap://` URL per the docs (a caller label;
+ * they say to use the site's domain). It is a constant rather than
+ * `window.location.hostname` because this runs during the server render too —
+ * both call sites build the href in their render body — so a window-dependent
+ * value would bake the SSR branch's answer into the hydrated tree.
  */
 function naverMapUrl(place: SavedPlaceDTO): string {
-  return `https://inapp.map.naver.com/launchApp/place?lat=${place.lat}&lng=${place.lng}&name=${encodeURIComponent(place.name)}`;
+  return `nmap://place?lat=${place.lat}&lng=${place.lng}&name=${encodeURIComponent(place.name)}&appname=jjimkkong.com`;
 }
 
 /**
@@ -120,12 +150,13 @@ export function mapAppsFor(preferred: MapProvider): MapApp[] {
  * `map.naver.com` has **no** association file at all (verified), so returning it
  * would replace the post with Naver's web map.
  *
- * A NAVER post therefore falls through to `naverMapUrl()` — a coordinate pin on
- * a host that does hand off. Slightly less precise than the saved permalink,
- * but precision the user cannot see is worth less than not losing the page.
- * Do not "restore" the NAVER branch without a `launchApp` form that is verified
- * on a device to open the place by id; a 200 from that SPA proves nothing,
- * because it answers 200 for every path.
+ * A NAVER post therefore falls through to `naverMapUrl()` — a coordinate pin
+ * through the `nmap://` scheme, which does open the app. Slightly less precise
+ * than the saved permalink, but precision the user cannot see is worth less
+ * than not losing the page. Restoring the NAVER branch needs a form verified on
+ * a device to open the place by id; the `launchApp` page is not it (see
+ * `naverMapUrl()`), and that SPA answers 200 for every path, so a status code
+ * proves nothing.
  */
 export function exactLinkFor(post: {
   platform: Platform;

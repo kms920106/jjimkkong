@@ -1151,20 +1151,30 @@ unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없�
 | `instagram.com` (`/p/*`·`/reel/*`) | O | https 그대로 앱이 열린다. **인스타그램 버튼이 원래부터 잘 동작했던 이유** |
 | `m.map.kakao.com/actions/*` | O | https 그대로. 단 `map.kakao.com`은 AASA가 깨져 있고 `/?q=`가 안내 페이지로 302된다 |
 | `google.com/maps/search/?api=1` | O | https 그대로 |
-| `inapp.map.naver.com/launchApp/*` | O | https 그대로. 단 `map.naver.com`에는 AASA가 없고, `m.map.naver.com`은 이 호스트로 302하면서 쿼리스트링을 버린다 |
 | `place.map.kakao.com/<id>` | O (`/*`) | 카카오 지도 링크에서 저장한 게시글의 퍼머링크 |
-| `map.naver.com/p/entry/place/<id>` | **X** | 네이버 지도 링크의 퍼머링크. **그래서 쓰지 않는다** — 좌표 핀으로 떨어진다 |
+| **모든 네이버 호스트** | **X** | `map.naver.com`·`naver.me`에는 AASA가 없고, `m./inapp.map.naver.com`의 `launchApp/*`은 AASA가 있어도 **외부에서 오는 탭을 claim하지 않는다**(아래) |
 
-**네이버에 `nmap://` 스킴을 다시 만들지 말 것.** `map.naver.com`에 AASA가 없는 것만 보고
-스킴이 유일한 길이라고 판단한 적이 있는데, `launchApp/*`에는 있다. 그때 만든 스킴 + 1.5초
-타이머 폴백은 폴백이 스킴과 **경쟁해서 이겨서** 앱이 좌표가 아닌 이름 검색을 받았고, 앱이
-없을 때는 게시글을 웹 지도로 덮었다. 근본 이유는 **standalone에서 핸드오프 성공을 감지할
-방법이 없다는 것**이다 — Page Visibility API가 잘못된 상태로 발화한다(WebKit
-[#202399](https://bugs.webkit.org/show_bug.cgi?id=202399)).
+**그래서 네이버만 `nmap://place?…&appname=` 스킴이다.** 이 앱에서 커스텀 스킴을 쓰는 유일한
+자리이고, 거기 도달하기까지 두 번 틀렸다:
+
+1. 스킴은 맞게 골랐지만 **1.5초 타이머 폴백**을 붙였다 → 폴백이 스킴과 경쟁해 이겨서 앱이
+   좌표가 아닌 이름 검색을 받았고, 앱이 없을 때는 게시글을 웹 지도로 덮었다.
+2. `launchApp/*`이 AASA에 있는 것을 보고 그 https URL로 바꿨다 → **앱이 설치돼 있는데도**
+   우리 창이 그 페이지로 이동하고 URL에 `#applink`가 붙고 앱은 안 떴다. 그 해시는 네이버
+   SPA가 자기 JS로 붙인 것이므로 **iOS가 claim하지 않았다는 증거**다.
+
+**standalone에서 Universal Link 자체가 안 되는 것은 아니다** — 카카오·구글이 평범한 https로
+앱을 띄우며 이 앱을 유지한다(확인됨). Apple CDN 사본·경로 매칭·Content-Type 전부 통과하는데도
+안 되므로, 남는 원인은 외부에서 볼 수 없는 앱 엔타이틀먼트다(호스트 이름 `inapp`이 시사한다).
+
+**타이머 폴백을 다시 만들지 말 것.** 공식 문서가 권해도 그렇다 — standalone에서는 핸드오프
+성공을 판정할 수 없다(Page Visibility가 잘못된 상태로 발화, WebKit
+[#202399](https://bugs.webkit.org/show_bug.cgi?id=202399)). 대가로 앱 없는 방문자는 iOS 알림만
+보고 아무 일도 일어나지 않는다 — 감수한 트레이드오프다.
 
 세부 규칙과 실측 근거는
-[frontend/src/lib/map/AGENTS.md](frontend/src/lib/map/AGENTS.md)에 있다(제공자별 URL 형태와
-그 형태를 고른 이유, `appname`/`fallbackUrl`이 무의미한 이유).
+[frontend/src/lib/map/AGENTS.md](frontend/src/lib/map/AGENTS.md)에 있다(제공자별 형태와 그
+형태를 고른 이유, 배제된 가설 목록, `appname`이 필수인 이유).
 
 **`statusBarStyle`을 `black-translucent`로 바꾸지 말 것.** 콘텐츠가 상태바 밑으로
 올라가는데 이 앱의 레이아웃은 그 자리를 비워 두지 않아서, 헤더가 시계 뒤로 들어간다.

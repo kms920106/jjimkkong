@@ -56,41 +56,70 @@ resolve한다. 카카오는 `autoload=false`로 주입되므로 `kakao.maps.load
 | NAVER | `map.naver.com/p/entry/place/<id>` | **X** | 퍼머링크를 버리고 `naverMapUrl()`의 좌표 핀으로 떨어진다 |
 
 네이버 퍼머링크를 "복원"하지 말 것. 사용자가 볼 수 없는 정확도보다 페이지를 잃지 않는 것이
-낫다. `launchApp`에 id로 장소를 여는 형태가 있는지는 **실기기로만 확인된다** — 그 SPA는 아무
-경로에나 200을 돌려주므로 HTTP 상태는 근거가 되지 않는다.
+낫다.
 
-**생성되는 세 URL은 전부 Apple Universal Link이고, iOS 홈화면 앱에서는 그게 설계의 전부다.**
+**카카오·구글은 Apple Universal Link이고, iOS 홈화면 앱에서는 그게 설계의 전부다. 네이버만
+`nmap://` 스킴이다**(아래 "네이버만 `nmap://` 스킴이고" 참고).
 루트 AGENTS.md의 "이 앱은 iOS 홈화면에 추가해서 쓴다" 절이 근거다. Universal Link는 iOS가
 네이티브 앱에 바로 넘기므로 **우리 창이 navigate하지 않아** 보던 게시글이 그대로 남고, 앱이
-없으면 같은 URL이 제공자의 웹 지도를 띄운다. 그래서 커스텀 스킴도, 우리가 만드는 폴백
-타이머도 필요하지 않다.
+없으면 같은 URL이 제공자의 웹 지도를 띄운다 — 그 두 성질을 공짜로 얻는 것이 이 방식을 쓰는
+이유다. 네이버는 그 선택지가 없어서 스킴을 쓰고, 앱 미설치 시의 거동도 그만큼 다르다.
+
+**어느 쪽이든 앵커의 `href`에 들어가는 것이 전부다.** `onClick`도, 타이머도, 호출부에서
+스킴/URL을 갈라 보는 분기도 없다 — `hrefForApp()`이 돌려주는 문자열을 그대로 쓴다.
 
 **호스트와 경로는 임의로 바꾸지 말 것. 각각 실측으로 고른 형태다.**
 
 | 제공자 | 형태 | 이유 |
 |---|---|---|
-| 네이버 | `inapp.map.naver.com/launchApp/place?lat=&lng=&name=` | `map.naver.com`에는 AASA가 **없지만** `launchApp/*`에는 있다. `m.` 호스트는 이 호스트로 302하면서 **쿼리스트링을 버리므로**(실측) 앱 없는 사용자가 장소가 아닌 빈 지도로 떨어진다 |
+| 네이버 | `nmap://place?lat=&lng=&name=&appname=` | 어느 네이버 호스트도 외부 앱에서 오는 탭을 claim하지 않는다. 공식 문서가 주는 유일한 수단 |
 | 카카오 | `m.map.kakao.com/actions/searchView?q=` | `map.kakao.com`의 AASA는 문자열이 닫히지 않은 **깨진 JSON**이고, 모바일 UA에서 `/?q=`는 `applink.map.kakao.com`(앱 설치 안내 페이지)으로 302된다 |
 | 구글 | `google.com/maps/search/?api=1&query=` | 공식 문서상 Universal Link |
 
-**네이버에 `nmap://` 스킴을 다시 만들지 말 것. 그게 이 파일이 한 번 실패한 지점이다.**
-`map.naver.com`에 AASA가 없는 것만 보고 스킴이 유일한 길이라고 판단해 `nmap://place` +
-1.5초 타이머 폴백을 직접 구현한 적이 있다. 그 폴백이 스킴과 경쟁해서 **이겼고**, 앱은 우리
-폴백의 `/search?query=`를 받아 좌표로 지목한 핀 대신 **이름 검색 결과**
-("위치 정보 없음 / 서울특별시 중구 중심으로 …")를 띄웠다. 앱이 없을 때는 같은 폴백이
-게시글을 웹 지도로 덮었다.
+**네이버만 `nmap://` 스킴이고, 거기 도달하기까지 두 번 틀렸다. 둘 다 되돌리지 말 것.**
 
-**타이머로 핸드오프 성공을 감지할 수 없다는 것이 근본 이유다.** standalone 모드에서는 Page
-Visibility API가 잘못된 상태로 발화한다(WebKit
-[#202399](https://bugs.webkit.org/show_bug.cgi?id=202399)) — 취소 신호를 그 API에 걸면 앱이
-정상적으로 떴는데도 폴백이 살아남는다. 네이버 자신의 launch 페이지도 같은 문제를 못 풀어서
-2500ms 타이머 휴리스틱을 쓴다. **정확성을 그 API에 걸지 말 것.**
+1. **첫 번째**: `map.naver.com`에 AASA가 없는 것을 보고 `nmap://`을 골랐는데 — 여기까지는
+   맞았다 — 거기에 **1.5초 타이머 폴백**을 붙였다. 그 폴백이 스킴과 경쟁해서 **이겼고**, 앱은
+   폴백의 `/search?query=`를 받아 좌표로 지목한 핀 대신 **이름 검색 결과**("위치 정보 없음 /
+   서울특별시 중구 중심으로 …")를 띄웠다. 앱이 없을 때는 같은 폴백이 게시글을 웹 지도로 덮었다.
+2. **두 번째**: `m.map.naver.com`·`inapp.map.naver.com`의 AASA에서 `launchApp/*`을 발견하고
+   그 https URL로 바꿨다. **홈화면 앱에서 동작하지 않는다** — 앱이 설치돼 있는데도 우리 창이
+   그 페이지로 **이동**하고 URL에 `#applink`가 붙고 앱은 실행되지 않았다.
 
-**`appname`과 `fallbackUrl`은 이 URL에서 아무 일도 하지 않는다.** `appname`은 raw `nmap://`의
-필수 파라미터이지만 launch 페이지는 `appSchemeName`(허용값 `nmap`/`navermaps`)만 읽는다.
-`fallbackUrl`은 `^https?://([a-z0-9.]+)\.naver\.com` 검사를 통과해야 하므로 우리 도메인을
-넘길 수 없다 — 앱이 없을 때 찜꽁으로 돌아오게 만들 방법은 없고, 이건 카카오·구글과 같은
-수용한 트레이드오프다.
+**`#applink`가 두 번째 실패의 증거다.** 그 해시는 네이버 launch SPA가 자기 JS로 붙인다
+(`location.hash.indexOf("applink")<0 && …`) — `navermaps://` 시도 *이전에*. 즉 페이지가
+끝까지 로드되어 스크립트를 실행했다는 뜻이고, **iOS가 URL을 claim하지 않았다는** 뜻이다.
+이어진 `navermaps://`도 실패했다(문서에 없는 내부 스킴이다).
+
+**서버 쪽에서 검사할 수 있는 것은 전부 통과한다. 다시 확인하지 말 것:**
+
+- Apple **자신의 CDN 사본**(`app-site-association.cdn-apple.com/a/v1/…`, iOS가 실제로 읽는
+  파일)이 200이고 배포 앱 `6379BPE45W.com.nhncorp.NaverMap`에 `/launchApp/*`을 준다.
+- `/launchApp/place`는 `/launchApp/*` 패턴에 매칭된다.
+- 네이버는 `application/json`으로 서빙한다. **카카오는 `text/plain`인데도 동작한다.**
+- 실제 앵커 탭이었다(프로그래매틱 이동이 아니다).
+
+그래서 AASA는 원인이 아니다. 외부에서 확인할 수 없는 나머지 절반이 **앱 바이너리의
+Associated Domains 엔타이틀먼트**이고, 호스트 이름 `inapp`이 답을 시사한다 — 네이버 자기 앱의
+인앱 웹뷰용이고 외부 앱에서 오는 링크 대상이 아니다. **standalone에서 Universal Link 자체가
+안 되는 것은 아니다** — 카카오·구글이 평범한 https로 앱을 띄우며 찜꽁을 유지한다(확인됨).
+
+**타이머·App Store 폴백·`onClick`을 붙이지 말 것. 공식 문서가 타이머를 권해도 그렇다.**
+폴백은 핸드오프 성공 여부를 판정해야 하는데 standalone에서는 판정할 수 없다 — Page Visibility
+API가 잘못된 상태로 발화한다(WebKit
+[#202399](https://bugs.webkit.org/show_bug.cgi?id=202399)). 그 추측이 첫 번째 실패의 원인
+그 자체다. 대가는 앱 없는 방문자가 iOS의 "페이지를 열 수 없습니다"만 보는 것이고(카카오·구글은
+웹 지도로 떨어진다), 반대쪽 대가가 "보던 게시글을 잃는 것"이라 감수했다. 네이버가 이 앱의
+기본 제공자라는 점도 근거다.
+
+**`appname`은 필수다.** 공식 문서상 모든 `nmap://` URL에 있어야 하는 호출자 라벨이고, 웹에서는
+사이트 도메인을 쓰라고 한다. `window.location.hostname`으로 읽지 말 것 — 이 함수는 서버
+렌더에서도 평가되므로(두 호출부가 렌더 본문에서 href를 만든다) SSR 분기의 값이 하이드레이션된
+트리에 박힌다.
+
+**공식 문서는 `nmap://` 하나뿐이다.** `launchApp`은 NCloud 문서에 **없다**(리버스 엔지니어링한
+내부 페이지였다). `navermaps://`도 없다. 공식 스킴 문서는
+[NCloud maps-url-scheme](https://guide.ncloud-docs.com/docs/maps-url-scheme).
 
 **지도 버튼에 `target="_blank"`를 붙이지 말 것.** standalone에서 그건 새 탭이 아니라
 **in-app 브라우저 오버레이**이고, 사용자가 닫아야 하는 시트를 만들면서 Universal Link
