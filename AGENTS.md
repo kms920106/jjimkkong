@@ -1262,6 +1262,7 @@ unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없�
 | [docs/](docs/AGENTS.md) | 외부 제공자 설정 절차 |
 | [docs/oauth/](docs/oauth/AGENTS.md) | 네이버 로그인 설정과 레퍼런스 |
 | [docs/blob/](docs/blob/AGENTS.md) | 프로필 사진 저장소(Vercel Blob) 설정 절차 |
+| [docs/youtube/](docs/youtube/AGENTS.md) | 유튜브 설명 전문 조회용 API 키 발급 절차 |
 | [docs/db-permissions.md](docs/db-permissions.md) | 하드 삭제를 막는 층 4(Postgres role). **아직 적용되지 않은 절차 문서** |
 
 `frontend/AGENTS.md` 위쪽의 `nextjs-agent-rules` 블록은 `next dev`가 다시 써 넣는
