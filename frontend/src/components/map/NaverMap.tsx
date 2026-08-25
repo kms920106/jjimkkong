@@ -14,7 +14,7 @@ import {
 
 type Props = {
   markers: MapMarker[];
-  onMarkerClick?: (id: string) => void;
+  onMarkerClick?: (placeId: number) => void;
   focusRequest?: FocusRequest | null;
 };
 
@@ -116,10 +116,11 @@ export default function NaverMap({
         map,
         title: item.name,
       });
-      if (onMarkerClick) {
-        maps.Event.addListener(marker, "click", () =>
-          onMarkerClick(item.id),
-        );
+      // Only saved pins are clickable: an optimistic one has no row yet, so
+      // there are no sources to open. `placeId` being null is that state.
+      const placeId = item.placeId;
+      if (onMarkerClick && placeId !== null) {
+        maps.Event.addListener(marker, "click", () => onMarkerClick(placeId));
       }
       markerRefs.current.push(marker);
       bounds.extend(position);

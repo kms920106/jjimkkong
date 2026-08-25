@@ -31,8 +31,14 @@ type Props = {
 
 /**
  * Marks a pin that exists only until POST /api/posts answers. Prefixed so it
- * can never equal a real Place cuid — `markers` keys on id, so a collision
+ * can never equal a saved pin's key — `markers` keys on `key`, so a collision
  * would let a pending pin shadow a saved one.
+ *
+ * A saved pin's key is `String(place.id)`, i.e. bare decimal digits since
+ * Place.id became an int in 20260825. That is what the prefix separates these
+ * from, and it is why MapMarker.key is a string at all: with both kinds sharing
+ * one numeric id space there would be nowhere to put this mark. The generation
+ * number after it distinguishes concurrent saves, so each clears only its own.
  */
 const PENDING_MARKER_PREFIX = "pending:";
 
@@ -163,7 +169,17 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   // ("이 게시글의 6곳 보기") and not just one pin.
   const requestedPlace = searchParams.get("place");
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(() => {
-    const ids = (requestedPlace ?? "").split(",").filter(Boolean);
+    // Converted, not passed through. `placeIds` holds numbers because
+    // useMarkerLookup matches with ===, so a string "12" straight out of the
+    // query string would match no marker — and the pan effects treat "no
+    // targets" as "nothing to do", so the camera would silently never move
+    // instead of failing loudly. Junk segments are dropped rather than kept as
+    // NaN, which would do the same thing one step later.
+    const ids = (requestedPlace ?? "")
+      .split(",")
+      .filter(Boolean)
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && id >= 1);
     return ids.length > 0 ? { placeIds: ids, nonce: 0 } : null;
   });
 
@@ -182,18 +198,18 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   // detail object so a refresh of `posts` — deleting the post from another
   // tab, re-saving the link — flows through to the open sheet instead of
   // leaving a snapshot of data that no longer exists.
-  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<number | null>(null);
 
   // Every user's saved links for the currently open pin, fetched separately
   // from `posts` (which is scoped to the caller). Keyed by place id so a
   // stale response from a pin the user has since closed cannot land on the
   // wrong sheet.
   const [communalSources, setCommunalSources] = useState<{
-    placeId: string;
+    placeId: number;
     sources: PlaceSourceDTO[];
   } | null>(null);
 
-  const requestFocus = useCallback((placeId: string) => {
+  const requestFocus = useCallback((placeId: number) => {
     setFocusRequest((prev) => ({
       placeIds: [placeId],
       nonce: (prev?.nonce ?? 0) + 1,
@@ -206,7 +222,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
    * opening the sheet was the old behaviour and said nothing about the place.
    */
   const handleMarkerClick = useCallback(
-    (placeId: string) => {
+    (placeId: number) => {
       setSelectedPlaceId(placeId);
       requestFocus(placeId);
     },
@@ -245,12 +261,15 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   }, [requestedPlace, authParam, router]);
 
   const markers = useMemo<MapMarker[]>(() => {
-    const byId = new Map<string, MapMarker>();
+    // Keyed by `key`, not `placeId`: pending pins have no place id, and this map
+    // has to hold both kinds without one erasing the other.
+    const byKey = new Map<string, MapMarker>();
     for (const post of posts) {
       for (const place of post.places) {
         // The same place saved from two posts is one pin.
-        byId.set(place.id, {
-          id: place.id,
+        byKey.set(String(place.id), {
+          key: String(place.id),
+          placeId: place.id,
           name: place.name,
           lat: place.lat,
           lng: place.lng,
@@ -262,8 +281,8 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     // pending copy sits on top of it until the refresh drops it. Two pins at
     // one coordinate for a second or two is invisible; suppressing it would
     // need the name/address match the server has not made yet.
-    for (const marker of pendingMarkers) byId.set(marker.id, marker);
-    return [...byId.values()];
+    for (const marker of pendingMarkers) byKey.set(marker.key, marker);
+    return [...byKey.values()];
   }, [posts, pendingMarkers]);
 
   /**
@@ -277,7 +296,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
    * both of them listed.
    */
   const placeDetails = useMemo(() => {
-    const byId = new Map<string, PlaceDetail>();
+    const byId = new Map<number, PlaceDetail>();
     for (const post of posts) {
       for (const place of post.places) {
         // The shared post id, not the bookmark id: the sheet merges these with
@@ -305,9 +324,13 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
 
   // Resolved through the index rather than stored, so a place that disappears
   // — its only post deleted — closes the sheet instead of showing stale data.
-  const ownPlaceDetail = selectedPlaceId
-    ? (placeDetails.get(selectedPlaceId) ?? null)
-    : null;
+  // `!== null`, not truthy: the id is an int now, and a falsy test would treat
+  // place 0 as "nothing selected". Identity columns start at 1 so it is
+  // unreachable, but the check should mean what it says.
+  const ownPlaceDetail =
+    selectedPlaceId !== null
+      ? (placeDetails.get(selectedPlaceId) ?? null)
+      : null;
 
   /**
    * What PlaceSheet actually renders: the caller's own sources (always
@@ -451,8 +474,14 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         throw new Error(await readError(res, "저장하지 못했습니다."));
       }
 
+      // An assertion, so it is not checked: keep it in step with
+      // SavedPostDTO.id by hand. It was `string` until Bookmark.id became an
+      // int (20260825), and leaving it stale would not have failed to compile —
+      // the `post.id === id` match below would just have stopped matching, and
+      // the count in the success toast would silently fall back to the ingest
+      // number, which is exactly the silence that toast exists to end.
       const { id, reusedPost } = (await res.json()) as {
-        id: string;
+        id: number;
         reusedPost: boolean;
       };
       // Returned so the caller can count what the row actually holds. The
@@ -570,8 +599,11 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         // Coordinates are used for display only; `save()` still sends names
         // and hints, so the "never trust client coordinates" rule is intact.
         const generation = ++saveGenerationRef.current;
-        const optimistic = matched.map((candidate, index) => ({
-          id: `${PENDING_MARKER_PREFIX}${generation}:${merged.post.sourceUrl}#${index}`,
+        const optimistic = matched.map<MapMarker>((candidate, index) => ({
+          key: `${PENDING_MARKER_PREFIX}${generation}:${merged.post.sourceUrl}#${index}`,
+          // No row exists yet, so there is no Place id to carry. Null is what
+          // makes this pin non-clickable — there are no sources to open.
+          placeId: null,
           name: candidate.name,
           lat: candidate.lat,
           lng: candidate.lng,
@@ -590,7 +622,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           setPendingMarkers((prev) =>
             prev.filter(
               (marker) =>
-                !marker.id.startsWith(`${PENDING_MARKER_PREFIX}${generation}:`),
+                !marker.key.startsWith(`${PENDING_MARKER_PREFIX}${generation}:`),
             ),
           );
 

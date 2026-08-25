@@ -200,7 +200,10 @@ export async function spendProvenPhone(
     request.cookies.get(PHONE_CHALLENGE_BINDING_COOKIE)?.value,
   );
   if (!challenge || challenge.intent !== intent) return null;
-  if (!challenge.verificationId) return null;
+  // `== null`, not falsy: the id is an int since 20260825, and a falsy test
+  // would also reject 0. Unreachable today (identity columns start at 1), but
+  // the predicate should say what it means.
+  if (challenge.verificationId == null) return null;
 
   // Re-normalized rather than cast. The cookie is signed, so the value is ours and
   // was normalized when written — but the brand exists precisely so that no

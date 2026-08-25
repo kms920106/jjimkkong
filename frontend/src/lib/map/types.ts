@@ -1,7 +1,28 @@
 import type { MapProvider } from "@/generated/prisma/enums";
 
+/**
+ * A pin on the map. Two kinds live in one list, which is why the identity is
+ * split across two fields rather than carried by one:
+ *
+ * - a saved place, `placeId` set, `key` its decimal form;
+ * - an optimistic pin drawn while POST /api/posts is still running, `placeId`
+ *   null because the row does not exist yet, `key` a synthetic string.
+ *
+ * `key` is what dedupes and addresses a pin (React keys, the lookup in
+ * useMarkerLookup), and it stays a string precisely so those two kinds can
+ * never collide: a pending pin's key is prefixed and could not be produced by
+ * `String(placeId)`. Do not collapse this back into a single id — Place.id
+ * became an int in 20260825, so a numeric id has no room for the prefix that
+ * keeps a pending pin from shadowing a saved one.
+ *
+ * `placeId` is the real, server-owned identity and the only one safe to send
+ * anywhere: it addresses GET /api/places/[id]/sources and survives a reload.
+ * Null means "not saved yet", so a null check is the test for whether a pin can
+ * be clicked through to its sources.
+ */
 export type MapMarker = {
-  id: string;
+  key: string;
+  placeId: number | null;
   name: string;
   lat: number;
   lng: number;
@@ -20,14 +41,18 @@ export type MapMarker = {
  * the user has saved, not the ones this post named.
  */
 export type FocusRequest = {
-  placeIds: string[];
+  placeIds: number[];
   nonce: number;
 };
 
 export type MapViewProps = {
   provider: MapProvider;
   markers: MapMarker[];
-  onMarkerClick?: (id: string) => void;
+  /**
+   * Only fires for saved pins — an optimistic one has no row to show sources
+   * for, so it is not clickable.
+   */
+  onMarkerClick?: (placeId: number) => void;
   /**
    * Kept separate from `markers` so focusing moves the camera without
    * rebuilding every pin.

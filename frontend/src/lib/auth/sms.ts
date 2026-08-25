@@ -246,7 +246,7 @@ export async function verifyPhoneCode(
   phone: LocalMobile,
   purpose: string,
   code: string,
-): Promise<string> {
+): Promise<number> {
   const phoneHash = blindIndex(phone);
 
   const challenge = await prisma.phoneVerification.findFirst({

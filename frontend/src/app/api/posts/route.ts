@@ -306,12 +306,12 @@ async function withUniqueRetry<T>(attempt: () => Promise<T>): Promise<T> {
  * its number, so skipping them would hand a new bookmark a number that is
  * already taken and fail the unique every time.
  */
-async function nextMemberSeq(tx: Tx, memberId: string): Promise<number> {
+async function nextMemberSeq(tx: Tx, memberId: number): Promise<number> {
   const highest = await tx.bookmark.aggregate({
     where: { memberId },
     _max: { memberSeq: true },
   });
-  return (highest._max.memberSeq ?? 0) + 1;
+  return (highest._max?.memberSeq ?? 0) + 1;
 }
 
 /**
@@ -400,7 +400,7 @@ async function ensurePost(
     `${a.name} ${a.address}`.localeCompare(`${b.name} ${b.address}`),
   );
 
-  const linked = new Set<string>();
+  const linked = new Set<number>();
   for (const place of ordered) {
     const stored = await tx.place.upsert({
       where: { name_address: { name: place.name, address: place.address } },
@@ -489,7 +489,7 @@ async function memosFor(
   tx: Tx,
   postId: number,
   memoByName: Map<string, string | null>,
-): Promise<Array<{ placeId: string; memo: string | null }>> {
+): Promise<Array<{ placeId: number; memo: string | null }>> {
   if (memoByName.size === 0) return [];
 
   const links = await tx.postPlace.findMany({

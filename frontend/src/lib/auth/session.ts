@@ -43,7 +43,7 @@ function cookieOptions(maxAgeSeconds: number) {
  * The plaintext secret exists only here and in the user's cookie.
  */
 export async function createSession(
-  memberId: string,
+  memberId: number,
   { userAgent }: { userAgent?: string | null } = {},
 ): Promise<SessionCookie> {
   const secret = randomBytes(32).toString("base64url");
@@ -70,7 +70,7 @@ export async function createSession(
  */
 export async function resolveSession(
   cookieValue: string | undefined,
-): Promise<{ memberId: string; sessionId: string } | null> {
+): Promise<{ memberId: number; sessionId: number } | null> {
   const resolved = await resolveSessionWithUser(cookieValue);
   if (!resolved) return null;
   return { memberId: resolved.memberId, sessionId: resolved.sessionId };
@@ -94,15 +94,25 @@ export async function resolveSession(
 export async function resolveSessionWithUser(
   cookieValue: string | undefined,
 ): Promise<
-  { memberId: string; sessionId: string; member: Member | null } | null
+  { memberId: number; sessionId: number; member: Member | null } | null
 > {
   if (!cookieValue) return null;
 
+  // indexOf, not lastIndexOf: the secret half is base64url and may contain no
+  // separator of its own, so the *first* one ends the id.
   const separator = cookieValue.indexOf(COOKIE_SEPARATOR);
   if (separator <= 0) return null;
-  const sessionId = cookieValue.slice(0, separator);
+  const rawSessionId = cookieValue.slice(0, separator);
   const secret = cookieValue.slice(separator + 1);
   if (!secret) return null;
+
+  // Parsed rather than passed through: the id half is attacker-controlled text,
+  // and Prisma throws on a malformed Int rather than returning no rows — which
+  // would turn a junk cookie into a 500 instead of a signed-out visitor.
+  // `Number.parseInt` would accept "1abc" and silently look up session 1; this
+  // does not. Same guard as the route params, for the same reason.
+  const sessionId = Number(rawSessionId);
+  if (!Number.isInteger(sessionId) || sessionId < 1) return null;
 
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
@@ -135,9 +145,15 @@ export async function resolveSessionWithUser(
 /**
  * Revokes one session. Called on sign-out.
  *
- * Resolves first rather than deleting by the id half alone: the id is a cuid,
- * which is guessable enough that deleting on it unverified would let anyone
- * force-log-out a targeted user. The secret is the proof of ownership.
+ * Resolves first rather than deleting by the id half alone: the id is a
+ * sequential integer, so anyone holding one valid cookie can name every other
+ * session by counting, and deleting on it unverified would let them force-log-
+ * out any chosen user. The secret is the proof of ownership.
+ *
+ * This was already true when the id was a cuid — "guessable enough to matter" —
+ * and the 20260825 int migration made it certain rather than likely. The
+ * verification is what the design rests on; do not add a revoke path that
+ * trusts the id alone.
  */
 export async function destroySession(cookieValue: string | undefined): Promise<void> {
   const resolved = await resolveSession(cookieValue);
@@ -168,6 +184,6 @@ export function clearSessionCookie(response: NextResponse): void {
  * Called before the new session is created, so the caller's fresh cookie is not
  * caught by it.
  */
-export async function destroyAllSessionsForUser(memberId: string): Promise<void> {
+export async function destroyAllSessionsForUser(memberId: number): Promise<void> {
   await prisma.session.deleteMany({ where: { memberId } });
 }

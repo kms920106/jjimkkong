@@ -2,7 +2,7 @@ import type { MapProvider, Platform } from "@/generated/prisma/enums";
 
 /** Shape returned by GET /api/posts. */
 export type SavedPlaceDTO = {
-  id: string;
+  id: number;
   name: string;
   address: string;
   lat: number;
@@ -56,7 +56,7 @@ export type PlaceSourceDTO = {
 
 export type SavedPostDTO = {
   /** The bookmark row's own id, used by the mutation endpoints. */
-  id: string;
+  id: number;
   /**
    * The shared post this bookmarks. Never a link target — `/links/<seq>` is what
    * addresses a bookmark, and publishing a global id would leak how many links

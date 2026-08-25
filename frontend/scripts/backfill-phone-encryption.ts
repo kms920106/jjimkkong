@@ -37,7 +37,7 @@ const prisma = withDeleteGuard(
 );
 
 /** One row of the pre-migration shape, which the generated client no longer types. */
-type LegacyRow = { id: string; phone: string };
+type LegacyRow = { id: number; phone: string };
 
 /**
  * Fails before touching anything if PHONE_ENCRYPTION_KEY is not the key the app
@@ -129,10 +129,14 @@ async function main() {
     }
 
     const { hash, enc } = sealPhone(local);
+    // No cast on the id. It used to be `${row.id}::uuid`, which stopped being
+    // valid when Member.id became an int (20260825) — Postgres has no cast from
+    // integer to uuid, so the statement would have thrown at runtime with
+    // nothing in the type system to catch it. The parameter binds as an int now.
     await prisma.$executeRaw`
       UPDATE "Member"
       SET "phoneHash" = ${hash}, "phoneEnc" = ${enc}
-      WHERE "id" = ${row.id}::uuid
+      WHERE "id" = ${row.id}
     `;
     sealed += 1;
   }

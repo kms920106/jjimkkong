@@ -14,7 +14,7 @@ import { useMarkerLookup } from "@/lib/map/useMarkerLookup";
 
 type Props = {
   markers: MapMarker[];
-  onMarkerClick?: (id: string) => void;
+  onMarkerClick?: (placeId: number) => void;
   focusRequest?: FocusRequest | null;
 };
 
@@ -93,8 +93,11 @@ export default function GoogleMap({
         map,
         title: item.name,
       });
-      if (onMarkerClick) {
-        marker.addListener("click", () => onMarkerClick(item.id));
+      // Only saved pins are clickable: an optimistic one has no row yet, so
+      // there are no sources to open. `placeId` being null is that state.
+      const placeId = item.placeId;
+      if (onMarkerClick && placeId !== null) {
+        marker.addListener("click", () => onMarkerClick(placeId));
       }
       markerRefs.current.push(marker);
       bounds.extend(position);

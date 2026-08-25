@@ -14,6 +14,7 @@
 | `backfill-thumbnail-backup.ts` | 백업 도입 전에 저장된 인스타그램 썸네일을 Blob으로 복구. `saved_post_thumbnail_backup` 마이그레이션 **적용 후** 실행 |
 | `reingest-post.ts` | 지정한 `Post` 행을 다시 인제스트해 덮어쓴다. **생성 이후 `Post`를 고칠 수 있는 유일한 쓰기 경로.** 아래 참고 |
 | `verify-soft-delete.ts` | 소프트 삭제와 재저장 되살리기를 라이브 DB에 대고 확인. 프로브 행을 남긴다 |
+| `verify-int-id-readiness.ts` | `int_ids` 마이그레이션의 사전 점검. 읽기만 한다 — 아래 참고 |
 
 ## For AI Agents
 
@@ -72,6 +73,30 @@ npx tsx --env-file=.env scripts/backfill-thumbnail-backup.ts
 
 **라우트 핸들러에 이 능력을 주지 말 것.** "저장이 공유 행을 고칠 수 있다"는 것이
 게시물/찜 분리가 부정하려고 존재하는 바로 그 성질이다.
+
+### `verify-int-id-readiness.ts` — 마이그레이션 사전 점검
+
+```bash
+npx tsx --env-file=.env scripts/verify-int-id-readiness.ts
+```
+
+`20260825120000_int_ids`를 적용해도 되는 상태인지 **읽기만 해서** 답한다. 아무것도
+쓰지 않고 아무것도 지우지 않으며, 마이그레이션이 실패할 상태면 exit 1이다.
+
+보는 것은 셋이다. **`Session`·`PhoneVerification`·`PasswordAttempt`가 비어 있는지**
+(두 테이블의 id가 서명 쿠키에 실려 있어서, 번호가 바뀌면 살아 있는 쿠키가 다른 회원의
+행을 가리킨다 — 로그아웃이 아니라 계정 탈취다), **부모 없는 자식 행이 없는지**(모든 FK가
+drop·recreate되므로 orphan 하나가 재생성을 중간에 깨뜨린다), 그리고 **탈퇴 계정용 partial
+unique index 두 개가 제자리인지**(이 마이그레이션이 건드리지 않아야 하는 것들이라, 트러스트가
+아니라 확인으로 둔다).
+
+**세 테이블을 비우는 것은 이 스크립트가 하지 않는다.** 훅이 마이그레이션 안의 행 삭제를
+거부하고 `withDeleteGuard()`가 앱 코드의 `deleteMany`를 거부하므로, 손으로 실행하는 단계다.
+이 스크립트는 그게 됐는지만 보고한다. 마이그레이션 자신도 같은 가드를 갖고 있지만 그쪽은
+컬럼을 이미 만들고 채운 *뒤에* Postgres 예외로 터지므로, 먼저 물어볼 자리가 필요했다.
+
+적용이 끝난 DB에서는 "이미 적용되었습니다"만 출력하고 통과한다 — 변환된 DB에서 돌려도
+경고처럼 보이지 않게 하려는 것이다.
 
 ## Dependencies
 

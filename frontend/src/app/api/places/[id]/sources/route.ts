@@ -33,8 +33,22 @@ export async function GET(
   try {
     const { id } = await context.params;
 
+    // Parsed rather than passed through: the segment is free text, and a
+    // non-numeric value has to answer empty instead of reaching Prisma as a
+    // malformed Int, which throws and surfaces as a 500. `Number.parseInt`
+    // would accept "1abc" and answer for place 1; this does not.
+    //
+    // An unknown id is not an error here — this route answers "which posts name
+    // this place", and "none" is a valid answer for a place that does not
+    // exist. It is unauthenticated, so it must not distinguish a missing place
+    // from an empty one.
+    const placeId = Number(id);
+    if (!Number.isInteger(placeId) || placeId < 1) {
+      return NextResponse.json({ sources: [] as PlaceSourceDTO[] });
+    }
+
     const links = await prisma.postPlace.findMany({
-      where: { placeId: id },
+      where: { placeId },
       select: {
         post: {
           select: {

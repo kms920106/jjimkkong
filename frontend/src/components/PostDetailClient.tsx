@@ -93,10 +93,18 @@ export default function PostDetailClient({
     router.refresh();
   }
 
-  /** The map lives on the home page, so focusing a place is a navigation. */
-  function focusOnMap(placeIds: string[]) {
+  /**
+   * The map lives on the home page, so focusing a place is a navigation.
+   *
+   * Ids are decimal digits, so they need no escaping — but the encode stays:
+   * it costs nothing and it is the guard that keeps this correct if the value
+   * ever stops being a plain number again.
+   */
+  function focusOnMap(placeIds: number[]) {
     if (placeIds.length === 0) return;
-    router.push(`/?place=${placeIds.map(encodeURIComponent).join(",")}`);
+    router.push(
+      `/?place=${placeIds.map((id) => encodeURIComponent(id)).join(",")}`,
+    );
   }
 
   return (
@@ -294,7 +302,7 @@ function PlaceList({
   places: SavedPlaceDTO[];
   post: SavedPostDTO;
   mapProvider: MapProvider;
-  onFocus: (placeIds: string[]) => void;
+  onFocus: (placeIds: number[]) => void;
   className?: string;
 }) {
   return (

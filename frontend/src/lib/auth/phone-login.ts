@@ -78,8 +78,14 @@ const ChallengeSchema = z.object({
   /**
    * The PhoneVerification row the proof came from, so the password step can spend
    * it exactly once. Null until the code is redeemed, alongside `verifiedPhone`.
+   *
+   * An int since 20260825. A cookie minted before that carries a string here and
+   * no longer parses — openPhoneChallenge() swallows the ZodError and returns
+   * null, which reads as "no proof" and costs the user one more SMS. Bounded by
+   * the 10-minute TTL, so the window closes on its own; it is not worth a
+   * permanent union type to widen.
    */
-  verificationId: z.string().nullable(),
+  verificationId: z.number().int().nullable(),
   /** HMAC of the binding cookie, tying this payload to one browser. */
   binding: z.string(),
   expiresAt: z.number(),
@@ -209,7 +215,7 @@ export function phoneLoginPurpose(challenge: PhoneChallenge): string {
 export function sealVerifiedChallenge(
   challenge: PhoneChallenge,
   verifiedPhone: LocalMobile,
-  verificationId: string,
+  verificationId: number,
 ): { value: string } {
   const verified: PhoneChallenge = {
     ...challenge,

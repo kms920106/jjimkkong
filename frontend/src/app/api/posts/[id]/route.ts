@@ -33,13 +33,28 @@ export async function DELETE(
     const member = await requireMember();
     const { id } = await context.params;
 
+    // Parsed rather than passed through: the segment is free text, and a
+    // non-numeric value has to become a 404 instead of reaching Prisma as a
+    // malformed Int, which throws and surfaces as a 500. `Number.parseInt`
+    // would accept "1abc" and delete bookmark 1; this does not. Same guard as
+    // /links/[id] and /author/[id].
+    const bookmarkId = Number(id);
+    if (!Number.isInteger(bookmarkId) || bookmarkId < 1) {
+      return NextResponse.json(
+        { error: "저장한 링크를 찾을 수 없습니다." },
+        { status: 404 },
+      );
+    }
+
     // Scoping by memberId is the ownership check — Prisma connects as the table
-    // owner and bypasses row-level security. `deletedAt: null` is one of the
-    // read filters the root AGENTS.md lists as moving together: without it,
-    // deleting an already-deleted link would stamp a fresh timestamp and answer
-    // 204 as though something had happened.
+    // owner and bypasses row-level security. It matters more now that the id is
+    // sequential and therefore enumerable: the id alone names any member's
+    // bookmark, and this filter is what makes naming one useless.
+    // `deletedAt: null` is one of the read filters the root AGENTS.md lists as
+    // moving together: without it, deleting an already-deleted link would stamp
+    // a fresh timestamp and answer 204 as though something had happened.
     const found = await prisma.bookmark.findFirst({
-      where: { id, memberId: member.id, deletedAt: null },
+      where: { id: bookmarkId, memberId: member.id, deletedAt: null },
       select: { id: true },
     });
 

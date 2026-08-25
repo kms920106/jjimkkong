@@ -12,7 +12,7 @@ import { useMarkerLookup } from "@/lib/map/useMarkerLookup";
 
 type Props = {
   markers: MapMarker[];
-  onMarkerClick?: (id: string) => void;
+  onMarkerClick?: (placeId: number) => void;
   focusRequest?: FocusRequest | null;
 };
 
@@ -110,9 +110,12 @@ export default function KakaoMap({
       });
       marker.setMap(map);
 
+      // Only saved pins are clickable: an optimistic one has no row yet, so
+      // there are no sources to open. `placeId` being null is that state.
+      const placeId = item.placeId;
       let handler: (() => void) | undefined;
-      if (onMarkerClick) {
-        handler = () => onMarkerClick(item.id);
+      if (onMarkerClick && placeId !== null) {
+        handler = () => onMarkerClick(placeId);
         window.kakao.maps.event.addListener(marker, "click", handler);
       }
       markerRefs.current.push({ marker, handler });
