@@ -263,8 +263,31 @@ async function fetchYouTube(
             snippet.thumbnails?.maxres?.url ??
             snippet.thumbnails?.high?.url ??
             base.thumbnail,
+          // An empty description is not a caption. Inheriting `false` from
+          // `base` would send the title alone to the model — titles almost
+          // never name a place — and end at the dead-end "no places" toast.
+          // `true` routes to CaptionPrompt, which the user can recover from,
+          // and matches what the oEmbed branch below already decides.
+          needsManualCaption: !snippet.description?.trim(),
         };
       }
+      // 200 with no items: private, deleted, or region-blocked. The oEmbed
+      // fallback below fails too, so the user ends at manual caption — this
+      // line is the only place that says why.
+      console.warn(
+        `[ingest:youtube] data api returned no items videoId=${videoId}`,
+      );
+    } else {
+      // Falling through to oEmbed loses the description, which is where
+      // creators list places. Without this line an invalid key looks exactly
+      // like a video that has no description: `if (apiKey)` checks presence
+      // only, so a placeholder enters this branch, fails, and falls back
+      // silently. Status alone is enough to tell those apart (400 = bad key,
+      // 403 = quota/referrer, 404 = no such video); the body is not logged
+      // because the request URL carries the key.
+      console.warn(
+        `[ingest:youtube] data api failed status=${res.status} videoId=${videoId}`,
+      );
     }
   }
 
