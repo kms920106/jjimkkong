@@ -4,8 +4,9 @@
 # docs/youtube
 
 ## Purpose
-유튜브 게시글의 설명 전문을 가져오는 데 쓰는 `YOUTUBE_API_KEY`(YouTube Data API v3)를
-발급하는 콘솔 절차. 코드는 이미 다 들어가 있고, 이 문서는 코드 밖에서 해야 하는 일만 다룬다.
+유튜브 게시글의 설명 전문과 채널 아바타를 가져오는 데 쓰는 `YOUTUBE_API_KEY`
+(YouTube Data API v3)를 발급하는 콘솔 절차. 코드는 이미 다 들어가 있고, 이 문서는 코드 밖에서
+해야 하는 일만 다룬다.
 
 ## Key Files
 | File | Description |
@@ -17,7 +18,11 @@
 ### Working In This Directory
 - `YOUTUBE_API_KEY`는 **선택** 환경변수다. 없으면 유튜브 인제스트가 oEmbed로 떨어져
   `needsManualCaption: true`가 될 뿐 앱 전체가 막히지는 않는다 — 루트
-  [AGENTS.md](../../AGENTS.md)의 "인제스트 파이프라인" 1번 참고.
+  [AGENTS.md](../../AGENTS.md)의 "인제스트 파이프라인" 1번 참고. 아바타도 이 폴백에서는
+  비는데, oEmbed가 사진을 주지 않기 때문이다(`AuthorAvatar`가 이니셜을 그린다).
+- **이 키는 호출 두 개에 쓰인다: `videos.list`(설명 전문)와 `channels.list`(채널 아바타).**
+  둘 다 API 활성화 하나로 덮이므로 콘솔 절차는 바뀌지 않지만, 할당량 계산은 저장당
+  1 unit이 아니라 2 units이다 — `SETUP.md`의 "할당량" 절 참고.
 - 이 키는 네이버 지역검색 키(`NAVER_CLIENT_ID`)나 네이버 로그인 키
   (`NAVER_LOGIN_CLIENT_ID`)와 전혀 다른 제공자·다른 콘솔이다. 섞어서 문서를 쓰지 말 것.
 - 코드 쪽 이유(설명 전문이 필요한 이유, oEmbed 폴백의 한계)는 여기가 아니라 루트

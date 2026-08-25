@@ -1052,6 +1052,15 @@ non-null이다 — 위 "인스타그램 썸네일은 만료된다" 참고.
 
 `Author.image`/`Author.imageSource`는 작성자 아바타에 대해 정확히 같은 쌍이다.
 
+**유튜브 아바타는 `channels.list`를 한 번 더 불러 가져오고, 백업하지 않는다.**
+`videos.list`의 snippet은 채널 *이름*만 주고 사진은 `channels.list`의 `snippet.thumbnails`에만
+있어서, 호출 하나를 추가하는 것이 유일한 경로다. 대가는 하루 10,000 units 중 1 unit이고
+**게시물당 최대 1회**다 — `Post`가 불변이라 `findExistingPost()`가 재저장을 `metadata.ts`
+앞에서 받아낸다. 실패하면 조용히 null로 떨어진다(`AuthorAvatar`가 이니셜을 그린다).
+`i.ytimg.com`처럼 이 URL도 서명이 없어 만료되지 않으므로 `image`에 플랫폼 URL이 그대로 들어가고
+`imageSource`는 null이다 — `Post.thumbnail`의 유튜브 행과 같은 모양이며, 그래서
+`backupAuthorImage()`의 인스타그램 전용 가드는 그대로 둔다.
+
 **작성자는 이제 테이블이다.** 예전에는 `author` 핸들 문자열과 아바타 URL이 저장 행마다
 비정규화돼 있었고, 그 판단의 근거는 "이 앱에 작성자라는 엔티티가 없다"였다. `/author/<id>`가
 그 근거를 뒤집었다 — 가리킬 id가 필요해졌고, 없으면 URL이

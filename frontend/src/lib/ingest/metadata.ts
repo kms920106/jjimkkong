@@ -26,9 +26,11 @@ export type PostMetadata = {
    * same signed CDN as post images, so this becomes a blob URL once
    * {@link import("@/lib/post-author-image").backupAuthorImage} has run.
    *
-   * Null for every platform but Instagram: YouTube's oEmbed and Data API
-   * responses carry a channel title but no avatar, and the map platforms have
-   * no author at all.
+   * Non-null for Instagram and YouTube, though only Instagram's is ours: a
+   * YouTube channel avatar is unsigned and never expires, so it is stored as
+   * the platform URL and `authorImageSource` stays null — the same shape
+   * `Post.thumbnail` already has for YouTube. The map platforms have no author
+   * at all.
    */
   authorImage: string | null;
   /**
@@ -207,6 +209,62 @@ async function fetchWithTimeout(url: string, init?: RequestInit) {
   });
 }
 
+/**
+ * The channel's avatar URL, or null.
+ *
+ * A separate request because videos.list's snippet names the channel but does
+ * not picture it — the avatar lives only on channels.list's
+ * `snippet.thumbnails`. Costs one unit of the daily 10,000, paid at most once
+ * per post.
+ *
+ * Never throws. An avatar is decoration on work the user asked for: a post
+ * without one renders AuthorAvatar's initial, which is what every YouTube post
+ * did before this existed, so a failure here must not fail a save. Same
+ * contract as lib/post-author-image.ts, and the reason this returns null rather
+ * than propagating.
+ */
+async function fetchYouTubeChannelImage(
+  channelId: string,
+  apiKey: string,
+): Promise<string | null> {
+  const endpoint = new URL("https://www.googleapis.com/youtube/v3/channels");
+  endpoint.searchParams.set("part", "snippet");
+  endpoint.searchParams.set("id", channelId);
+  endpoint.searchParams.set("key", apiKey);
+
+  try {
+    const res = await fetchWithTimeout(endpoint.toString());
+    if (!res.ok) {
+      // Status only — the request URL carries the key, so neither it nor the
+      // body is logged. Same reason as the videos.list warning below.
+      console.warn(
+        `[ingest:youtube] channels api failed status=${res.status} channelId=${channelId}`,
+      );
+      return null;
+    }
+
+    const body = (await res.json()) as {
+      items?: Array<{
+        snippet?: { thumbnails?: Record<string, { url?: string }> };
+      }>;
+    };
+    const thumbnails = body.items?.[0]?.snippet?.thumbnails;
+    // Largest first: `high` is 800x800 and `default` only 88x88, and
+    // /author/<id> renders this at size-20 where the small one visibly blurs.
+    return (
+      thumbnails?.high?.url ??
+      thumbnails?.medium?.url ??
+      thumbnails?.default?.url ??
+      null
+    );
+  } catch {
+    // Timeout or transport fault. Deliberately silent beyond this: the caller
+    // has a title and a description already, and an absent avatar is a state
+    // this app renders correctly.
+    return null;
+  }
+}
+
 async function fetchYouTube(
   sourceUrl: string,
   videoId: string,
@@ -243,6 +301,7 @@ async function fetchYouTube(
             title?: string;
             description?: string;
             channelTitle?: string;
+            channelId?: string;
             thumbnails?: Record<string, { url?: string }>;
           };
         }>;
@@ -254,10 +313,18 @@ async function fetchYouTube(
           title: snippet.title ?? null,
           caption: snippet.description ?? null,
           author: snippet.channelTitle ?? null,
-          // The Data API's snippet has no channel avatar; fetching one
-          // would be a second quota-costing call to channels.list for a
-          // picture, so YouTube posts render the initial fallback.
-          authorImage: null,
+          // A second call, because videos.list's snippet carries channelTitle
+          // but no picture — the avatar only exists on channels.list. Worth the
+          // unit: it is one of the daily 10,000 and is paid at most once per
+          // post, since `Post` is immutable and findExistingPost() answers
+          // every later save of the same link before this module runs.
+          authorImage: snippet.channelId
+            ? await fetchYouTubeChannelImage(snippet.channelId, apiKey)
+            : null,
+          // Left null on purpose: unlike Instagram's, this URL is unsigned and
+          // never expires, so nothing is backed up and the column must not
+          // claim otherwise. backupAuthorImage() skips non-Instagram platforms
+          // for the same reason.
           authorImageSource: null,
           thumbnail:
             snippet.thumbnails?.maxres?.url ??
@@ -308,7 +375,9 @@ async function fetchYouTube(
     ...base,
     title: body.title ?? null,
     author: body.author_name ?? null,
-    // oEmbed returns author_name and author_url, never a picture.
+    // oEmbed returns author_name and author_url, never a picture, and this path
+    // is reached precisely when there is no usable key — so the channels.list
+    // call the Data API branch makes is not available here either.
     authorImage: null,
     authorImageSource: null,
     thumbnail: body.thumbnail_url ?? base.thumbnail,
