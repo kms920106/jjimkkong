@@ -1119,7 +1119,7 @@ unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없�
 
 ## 지도
 
-세 개의 제공자가 `MapView` 스위치 하나 뒤에 있고, `/settings`에서 사용자별로 고른다: 네이버(기본),
+세 개의 제공자가 `MapView` 스위치 하나 뒤에 있고, `AppDrawer`에서 사용자별로 고른다: 네이버(기본),
 카카오, 구글. 각각 provider를 key로 갖는 별도 컴포넌트라서, 전환하면 이전 지도를 재사용하지
 않고 완전히 해체한다.
 
@@ -1203,7 +1203,9 @@ unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없�
 로그인이 사라졌으므로 이 키들이 없으면 **로그인할 방법이 없다** — 첫 로그인은 예외 없이 SMS
 인증을 거치기 때문이다.
 선택: `AUTH_BASE_URL`(프로덕션 콜백 URL 고정), `YOUTUBE_API_KEY`(없으면 유튜브 캡션은 항상 수동 입력),
-`NEXT_PUBLIC_KAKAO_MAP_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_KEY`, `LLM_*` 오버라이드,
+`NEXT_PUBLIC_KAKAO_MAP_KEY`(없으면 카카오맵을 고른 사용자만 `MapLoadError`를 본다 —
+발급 절차는 [docs/kakao/SETUP.md](docs/kakao/SETUP.md). 지도 *렌더링* 전용이고 카카오
+지도 링크 저장과는 무관하다), `NEXT_PUBLIC_GOOGLE_MAPS_KEY`, `LLM_*` 오버라이드,
 `BLOB_READ_WRITE_TOKEN`(프로필 사진 업로드 + 인스타그램 썸네일 백업. 없으면 `/profile`의
 닉네임·상태메세지 저장은 되고 사진 업로드만 실패하며, 링크 저장은 성공하지만 썸네일이
 만료될 인스타 URL로 저장된다 — 로컬 개발의 정상 상태다).
@@ -1272,6 +1274,7 @@ unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없�
 | [docs/oauth/](docs/oauth/AGENTS.md) | 네이버 로그인 설정과 레퍼런스 |
 | [docs/blob/](docs/blob/AGENTS.md) | 프로필 사진 저장소(Vercel Blob) 설정 절차 |
 | [docs/youtube/](docs/youtube/AGENTS.md) | 유튜브 설명 전문 조회용 API 키 발급 절차 |
+| [docs/kakao/](docs/kakao/AGENTS.md) | 카카오맵 SDK 키 발급 절차(사용설정 ON·포트 포함 도메인 등록) |
 | [docs/db-permissions.md](docs/db-permissions.md) | 하드 삭제를 막는 층 4(Postgres role). **아직 적용되지 않은 절차 문서** |
 
 `frontend/AGENTS.md` 위쪽의 `nextjs-agent-rules` 블록은 `next dev`가 다시 써 넣는

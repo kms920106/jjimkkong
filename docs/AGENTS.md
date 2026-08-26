@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-19 | Updated: 2026-08-19 -->
+<!-- Generated: 2026-08-19 | Updated: 2026-08-26 -->
 
 # docs
 
@@ -20,6 +20,7 @@
 | `oauth/` | 네이버 로그인 설정 절차와 API 레퍼런스 (see `oauth/AGENTS.md`) |
 | `blob/` | 프로필 사진 저장소(Vercel Blob) 설정 절차 (see `blob/AGENTS.md`) |
 | `youtube/` | 유튜브 설명 전문 조회용 API 키 발급 절차 (see `youtube/AGENTS.md`) |
+| `kakao/` | 카카오맵 SDK 키 발급 절차 (see `kakao/AGENTS.md`) |
 | `domain/` | 비어 있음. 도메인/DNS 관련 문서 자리 |
 
 ## For AI Agents
@@ -42,5 +43,6 @@
 ### External
 - 네이버 개발자센터 (로그인 애플리케이션)
 - Solapi (SMS 발송)
+- 카카오 개발자 콘솔 (지도 SDK)
 
 <!-- MANUAL: -->
