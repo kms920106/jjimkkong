@@ -74,6 +74,22 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
   const [shown, setShown] = useState(detail);
   if (detail && detail !== shown) setShown(detail);
 
+  // True only for the moment between this sheet opening and the browser
+  // finishing the click that opened it — see onOpenChange below. Set in an
+  // effect (not during render) because it is exactly a "sync with the
+  // outside world" job, and lint forbids writing refs while rendering.
+  const justOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!detail) return;
+    justOpenedRef.current = true;
+    // A click's own dispatch completes within the same task, so clearing on
+    // the next macrotask covers it without outliving any real interaction.
+    const timer = window.setTimeout(() => {
+      justOpenedRef.current = false;
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [detail]);
+
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
@@ -151,8 +167,27 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
       // clickable while the sheet is up. A modal sheet would put an overlay
       // over the map and make every further marker click a dismiss.
       modal={false}
-      onOpenChange={(open) => {
-        if (!open) onClose();
+      onOpenChange={(open, eventDetails) => {
+        // Kakao fires its marker click on `mouseup`, so this sheet opens
+        // *before* the browser's `click` event finishes. Base UI then sees
+        // that trailing click — which landed on the map, not on the sheet —
+        // as an outside press and dismisses the sheet it just opened.
+        // 네이버/구글 fire their marker click on `click` itself, so the press
+        // is over by the time the sheet exists and they never reach this.
+        //
+        // Only the press belonging to the opening click is ignored: it is
+        // the one that arrives before the browser has finished dispatching
+        // that click, which no later tap on the map can do. Dismissing by
+        // tapping the map keeps working.
+        if (!open) {
+          if (
+            eventDetails?.reason === "outside-press" &&
+            justOpenedRef.current
+          ) {
+            return;
+          }
+          onClose();
+        }
       }}
     >
       <SheetContent
