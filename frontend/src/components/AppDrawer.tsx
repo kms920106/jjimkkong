@@ -13,9 +13,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 const PROVIDERS: Array<{ value: MapProvider; label: string }> = [
-  { value: "NAVER", label: "네이버 지도" },
+  { value: "NAVER", label: "네이버맵" },
   { value: "KAKAO", label: "카카오맵" },
-  { value: "GOOGLE", label: "구글 지도" },
+  { value: "GOOGLE", label: "구글맵" },
 ];
 
 type Props = {
