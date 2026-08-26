@@ -22,7 +22,6 @@ type Props = {
   open: boolean;
   onClose: () => void;
   profile: ProfileDTO;
-  savedCount: number;
 };
 
 /**
@@ -44,7 +43,6 @@ export default function AppDrawer({
   open,
   onClose,
   profile,
-  savedCount,
 }: Props) {
   const router = useRouter();
   // Only holds the value of an in-flight save. The prop is the source of truth
@@ -152,7 +150,6 @@ export default function AppDrawer({
           >
             <span className="text-sm font-medium">링크</span>
             <span className="flex items-center gap-2 text-sm text-muted-foreground">
-              {savedCount}
               <ChevronRight className="h-4 w-4" />
             </span>
           </Link>

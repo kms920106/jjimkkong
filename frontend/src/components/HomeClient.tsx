@@ -783,7 +783,6 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
           profile={profile}
-          savedCount={posts.length}
         />
       )}
 
