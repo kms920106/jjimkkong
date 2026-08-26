@@ -45,19 +45,49 @@ export default function AppDrawer({
   profile,
 }: Props) {
   const router = useRouter();
-  // Only holds the value of an in-flight save. The prop is the source of truth
-  // the rest of the time, so a router.refresh() lands here without the panel
-  // needing an effect to copy props into state.
-  const [pendingProvider, setPendingProvider] = useState<MapProvider | null>(
+  // The provider this panel has chosen, held until the prop agrees with it.
+  //
+  // It is not merely "the value of an in-flight save": clearing it when the
+  // request settles is what made the radio flicker. `router.refresh()` is not
+  // awaitable — it schedules an RSC refetch and returns — so at the moment the
+  // PATCH resolves, `profile.mapProvider` is still the *old* value. Dropping
+  // the local copy there hands the radio back to that stale prop, so it
+  // snapped to the previous provider and only returned once the refetch
+  // landed: a measured ~340ms of showing the wrong answer locally, and longer
+  // on a slow round trip.
+  //
+  // So the local value outlives the request and is released by the prop
+  // catching up (see the render-time reconciliation below) rather than by the
+  // fetch finishing. A failure releases it immediately instead, since a value
+  // the server rejected is not an answer worth keeping.
+  const [chosenProvider, setChosenProvider] = useState<MapProvider | null>(
     null,
   );
-  const provider = pendingProvider ?? profile.mapProvider;
+  const [lastSavedProvider, setLastSavedProvider] = useState(
+    profile.mapProvider,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Adjusting state during render, React's documented pattern for state
+  // derived from props, and the same one `IngestProgressBar` uses to latch its
+  // width. An effect would be wrong twice over: this synchronises no external
+  // system, and it would paint the superseded provider for a frame before
+  // correcting it — which is the very flicker being removed. Lint's
+  // `react-hooks/set-state-in-effect` rejects that shape anyway.
+  if (profile.mapProvider !== lastSavedProvider) {
+    setLastSavedProvider(profile.mapProvider);
+    // The refetch has landed. The prop is authoritative again, so the local
+    // copy is redundant — whether or not it matches, since a change made in
+    // another tab should win here rather than be overridden by a stale choice.
+    setChosenProvider(null);
+  }
+
+  const provider = chosenProvider ?? profile.mapProvider;
+
   async function selectProvider(next: MapProvider) {
     if (next === provider || saving) return;
-    setPendingProvider(next);
+    setChosenProvider(next);
     setSaving(true);
     setError(null);
     try {
@@ -67,16 +97,17 @@ export default function AppDrawer({
         body: JSON.stringify({ mapProvider: next }),
       });
       if (!res.ok) throw new Error("설정을 저장하지 못했습니다.");
+      // Not awaited because it cannot be. `chosenProvider` covers the gap
+      // until the refreshed prop arrives and the reconciliation above drops it.
       router.refresh();
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "설정을 저장하지 못했습니다.",
       );
+      // Snap back: nothing was saved, so the prop is still the truth.
+      setChosenProvider(null);
     } finally {
       setSaving(false);
-      // Cleared either way: on success the refreshed prop carries the new
-      // value, and on failure the radio has to snap back to the old one.
-      setPendingProvider(null);
     }
   }
 
