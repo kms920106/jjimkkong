@@ -141,6 +141,28 @@
   }
 }
 
+/* iOS Safari zooms the whole page in when a focused form control's computed
+   font-size is under 16px, and it does not zoom back out on blur — the user
+   is left on a page wider than the viewport, with the rest of the app
+   shifted. Eight fields in this app override the primitive's `text-base`
+   with `text-sm` (14px) to match the design, so this fires on every login
+   and signup screen.
+
+   Pinning the size here rather than editing those eight call sites is
+   deliberate: the next `text-sm` someone puts on a field would bring the bug
+   back, and this rule catches it before anyone sees it on a phone.
+
+   It is NOT in `@layer base`, and that is the whole point. Tailwind emits
+   `utilities` after `base`, and `.text-sm` is a class (0-1-0) against a bare
+   `input` (0-0-1) — a base rule loses on both counts and does nothing. This
+   sits outside every layer, so it is unlayered and beats all layered CSS
+   regardless of specificity. Do not "tidy" it into `@layer base`. */
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
 /* Not a Tailwind v4 built-in: hides the scrollbar track on an
    `overflow-x-auto` row without disabling the scroll or drag gesture
    itself — used by the /links platform tab row, which must stay
