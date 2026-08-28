@@ -43,7 +43,14 @@ export default function LinksClient({
   initialPosts: SavedPostDTO[];
   signedIn: boolean;
 }) {
-  const [posts] = useState(initialPosts);
+  // Read straight off the prop rather than mirrored into state. Nothing here
+  // ever writes the list, and `useState(initialPosts)` would pin it to the
+  // value at mount: the login drawer below is rendered *inside* this component
+  // and finishes with router.refresh() + router.push("/links"), which refreshes
+  // the props without remounting. A mirrored copy would keep the logged-out
+  // empty array while `signedIn` — a live prop — flipped to true, so the empty
+  // state below would tell a user with saved links that they have none.
+  const posts = initialPosts;
   const [filter, setFilter] = useState<Filter>("ALL");
   const [loginOpen, setLoginOpen] = useState(false);
 

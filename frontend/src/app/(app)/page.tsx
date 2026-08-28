@@ -27,6 +27,21 @@ export default async function HomePage() {
     // under a Suspense boundary.
     <Suspense>
       <HomeClient
+        // Every state HomeClient seeds from props (`posts`, `mapProvider`) is
+        // member-scoped, and useState ignores the prop after mount. The login
+        // forms finish with router.refresh() + router.push("/"), and pushing to
+        // the route you are already on refreshes the props *without*
+        // remounting — so a visitor who logs in from the drawer rendered inside
+        // HomeClient itself would keep the logged-out empty list and draw a map
+        // with no pins. Keying on the member makes the login/logout boundary a
+        // remount, which is the reset; see PostThumbnail's `key={src}` note for
+        // the same "state goes stale unnoticed across a refresh" case, fixed by
+        // the caller rather than by a sync effect (which
+        // `react-hooks/set-state-in-effect` forbids).
+        //
+        // On HomeClient, not on the Suspense above it: keying the boundary
+        // would re-trigger its fallback and flash the loading skeleton.
+        key={member?.id ?? "anon"}
         initialPosts={posts.map(toSavedPostDTO)}
         // Signed out there is no stored preference, so the map falls back to
         // the same default a new account starts on.

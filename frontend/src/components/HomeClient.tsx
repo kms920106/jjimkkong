@@ -131,13 +131,16 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
    * of the server. That round trip used to be `router.refresh()`, which re-runs
    * a force-dynamic page: a session lookup plus the user's entire bookmark tree
    * (a four-table join through `bookmarkInclude`) re-read and re-serialised so
-   * that one enum string could come back. The join's result was then discarded
-   * anyway — `posts` is `useState(initialPosts)`, which ignores the new prop.
-   * The cost scaled with how many links the user had saved, for a value that
-   * has nothing to do with any of them.
+   * that one enum string could come back. The cost scaled with how many links
+   * the user had saved, for a value that has nothing to do with any of them.
    *
    * Holding it in state makes the swap immediate and leaves the PATCH to do
    * nothing but persist. Do not reintroduce a refresh on this path.
+   *
+   * Seeding from a prop is only safe because the member cannot change under
+   * this mount: the page keys HomeClient on the member id, so logging in or out
+   * remounts and re-seeds both this and `posts`. Changing the map provider does
+   * not change that key, so the drawer's PATCH still costs no page re-render.
    */
   const [mapProvider, setMapProvider] = useState(profile.mapProvider);
   const [ingesting, setIngesting] = useState(false);
