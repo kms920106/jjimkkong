@@ -5,6 +5,12 @@ import MapLoadError from "./MapLoadError";
 import { loadNaverMaps } from "@/lib/map/loader";
 import { useMarkerLookup } from "@/lib/map/useMarkerLookup";
 import {
+  MARKER_HEIGHT,
+  MARKER_WIDTH,
+  markerZIndex,
+  markerHtml,
+} from "@/lib/map/markerContent";
+import {
   DEFAULT_CENTER,
   DEFAULT_ZOOM,
   FOCUS_ZOOM,
@@ -16,15 +22,37 @@ type Props = {
   markers: MapMarker[];
   onMarkerClick?: (placeId: number) => void;
   focusRequest?: FocusRequest | null;
+  selectedPlaceId?: number | null;
 };
 
 export default function NaverMap({
   markers,
   onMarkerClick,
   focusRequest,
+  selectedPlaceId,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRefs = useRef<naver.maps.Marker[]>([]);
+  /**
+   * Place id → its marker, so the selection effect can repaint the two pins
+   * whose state changed instead of rebuilding all of them. A ref rather than
+   * state for the same reason `useMarkerLookup` is one: putting markers in the
+   * dependency array of the effect below would rebuild every pin whenever an
+   * unrelated post was saved.
+   */
+  const bySelectableId = useRef(new Map<number, naver.maps.Marker>());
+  /** The pin currently painted as selected, so it can be reverted. */
+  const paintedSelection = useRef<number | null>(null);
+  /**
+   * The live selection, for the marker effect to read when it builds a pin from
+   * scratch. It must not take `selectedPlaceId` as a dependency — that would
+   * rebuild every pin on each tap — but a rebuild triggered by something else
+   * still has to draw the selected pin as selected.
+   */
+  const selectedPlaceIdRef = useRef(selectedPlaceId ?? null);
+  useEffect(() => {
+    selectedPlaceIdRef.current = selectedPlaceId ?? null;
+  }, [selectedPlaceId]);
   const findMarker = useMarkerLookup(markers);
   // Whether a focus request is outstanding, read by the marker effect so it
   // yields the camera. Held in a ref, and updated from an effect rather than
@@ -109,22 +137,42 @@ export default function NaverMap({
     const first = new maps.LatLng(markers[0].lat, markers[0].lng);
     const bounds = new maps.LatLngBounds(first, first);
 
+    bySelectableId.current = new Map();
+    // Re-read on the next selection effect rather than kept: the markers these
+    // ids pointed at were just destroyed above.
+    paintedSelection.current = null;
+
     for (const item of markers) {
       const position = new maps.LatLng(item.lat, item.lng);
-      const marker = new maps.Marker({
-        position,
-        map,
-        title: item.name,
-      });
       // Only saved pins are clickable: an optimistic one has no row yet, so
       // there are no sources to open. `placeId` being null is that state.
       const placeId = item.placeId;
+      const selected = placeId !== null && placeId === selectedPlaceIdRef.current;
+      const marker = new maps.Marker({
+        position,
+        map,
+        // Kept for the OS tooltip and for accessibility: the label below is a
+        // div, so this is the only accessible name the pin has.
+        title: item.name,
+        icon: {
+          content: markerHtml(item, selected),
+          size: new maps.Size(MARKER_WIDTH, MARKER_HEIGHT),
+          // The coordinate sits at the bottom centre, where the stem is.
+          anchor: new maps.Point(MARKER_WIDTH / 2, MARKER_HEIGHT),
+        },
+        zIndex: markerZIndex(item.lat, selected),
+      });
       if (onMarkerClick && placeId !== null) {
         maps.Event.addListener(marker, "click", () => onMarkerClick(placeId));
       }
+      if (placeId !== null) bySelectableId.current.set(placeId, marker);
       markerRefs.current.push(marker);
       bounds.extend(position);
     }
+    // Unconditional: the pins were just drawn from this value, so it is what
+    // is on screen whether or not anything is selected. Guarding on non-null
+    // would leave the ref lying about a cleared selection.
+    paintedSelection.current = selectedPlaceIdRef.current;
 
     // Skipped when a focus request is pending: on arrival from /links both
     // effects run in the same commit, and this one frames *every* saved pin
@@ -141,6 +189,48 @@ export default function NaverMap({
       map.fitBounds(bounds);
     }
   }, [map, markers, onMarkerClick]);
+
+  /**
+   * Repaints only the pin that gained the selection and the one that lost it.
+   *
+   * Deliberately *not* handled by adding `selectedPlaceId` to the marker
+   * effect's dependencies: that effect destroys and recreates every marker, so
+   * a tap would rebuild all pins and — via the fitBounds at its end — drag the
+   * camera away from what the user was looking at.
+   */
+  useEffect(() => {
+    if (!map) return;
+    // `map` being set does not mean the namespace is usable; see the marker
+    // effect. This effect also runs on the first commit, when a seeded
+    // selection (/links/[id]/map) is already in place.
+    if (!window.naver?.maps) return;
+
+    const selected = selectedPlaceId ?? null;
+    const previous = paintedSelection.current;
+    if (previous === selected) return;
+
+    /** True when the pin existed and was redrawn. */
+    const repaint = (placeId: number | null, isSelected: boolean): boolean => {
+      if (placeId === null) return false;
+      const marker = bySelectableId.current.get(placeId);
+      const item = findMarker(placeId);
+      if (!marker || !item) return false;
+      marker.setIcon({
+        content: markerHtml(item, isSelected),
+        size: new window.naver.maps.Size(MARKER_WIDTH, MARKER_HEIGHT),
+        anchor: new window.naver.maps.Point(MARKER_WIDTH / 2, MARKER_HEIGHT),
+      });
+      marker.setZIndex(markerZIndex(item.lat, isSelected));
+      return true;
+    };
+
+    repaint(previous, false);
+    // Only record what was actually drawn. `repaint` bails when the place has
+    // no marker — a post deleted in another tab leaves `selectedPlaceId`
+    // pointing at a pin that is gone — and storing it anyway would make the
+    // ref claim a state the map does not have.
+    paintedSelection.current = repaint(selected, true) ? selected : null;
+  }, [map, selectedPlaceId, findMarker]);
 
   // Panning lives apart from the marker effect so focusing a place does not
   // tear down and rebuild every pin.

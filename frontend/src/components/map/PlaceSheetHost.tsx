@@ -170,6 +170,7 @@ export default function PlaceSheetHost({
         markers={markers}
         onMarkerClick={handleMarkerClick}
         focusRequest={focusRequest}
+        selectedPlaceId={selectedPlaceId}
       />
 
       {children?.(selectedPlace)}

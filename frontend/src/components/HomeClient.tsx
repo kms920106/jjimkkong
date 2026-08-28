@@ -243,6 +243,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           name: place.name,
           lat: place.lat,
           lng: place.lng,
+          category: place.category,
         });
       }
     }
@@ -546,6 +547,10 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           name: candidate.name,
           lat: candidate.lat,
           lng: candidate.lng,
+          // The ingest already resolved this, so the optimistic pin carries the
+          // same label the saved one will — it must not change shape when the
+          // refresh swaps it out.
+          category: candidate.category,
         }));
 
         setCaptionNeeded(null);

@@ -13,6 +13,7 @@
 | `loader.ts` | `loadNaverMaps()`/`loadKakaoMaps()`/`loadGoogleMaps()` — 페이지당 한 번만 주입하고 전역이 실제 사용 가능해진 뒤 resolve |
 | `types.ts` | `MapMarker`, `FocusRequest`, `MapViewProps`, `DEFAULT_CENTER`(서울시청)·`DEFAULT_ZOOM`·`FOCUS_ZOOM` |
 | `useMarkerLookup.ts` | 마커를 ref에 담아 id로 조회하는 훅 |
+| `markerContent.ts` | 마커 라벨 마크업. 세 제공자가 공유한다 |
 | `externalLinks.ts` | 외부 지도 앱 URL·길찾기 링크. `/links` 카드와 `PlaceSheet`가 공유 |
 
 ## For AI Agents
@@ -32,6 +33,22 @@ resolve한다. 카카오는 `autoload=false`로 주입되므로 `kakao.maps.load
 (릴스 하나에 6곳), "이것 보여줘"와 "이것들 보여줘"가 서로 다른 카메라 이동이기 때문이다.
 단일 id로 되돌리면 `/links`의 "N곳 모두 보기"를 표현할 수 없다. 홈은 `?place=`를
 쉼표로 끊어 읽는다.
+
+**마커 라벨의 스타일에 Tailwind 유틸리티 클래스를 쓰지 말 것.** `markerContent.ts`가
+만드는 것은 HTML 문자열과 detached DOM 노드이고 **React가 렌더하지 않으므로**, Tailwind v4의
+스캐너가 그 클래스 이름을 발견하지 못해 **프로덕션 빌드에서 스타일이 통째로 빠진다.** 그런데
+`next dev`는 JIT이 다른 파일에서 같은 유틸리티를 이미 만들어 두므로 **로컬에서는 정상으로
+보인다** — 이 저장소의 Runtime Cache `name` 버그와 정확히 같은 부류의 함정이다.
+스타일은 `app/globals.css`의 실제 `.jk-marker*` 클래스에 있고, 빌드 후
+`grep -o "jk-marker[a-z_-]*" .next/static/chunks/*.css`로 살아 있는지 확인할 수 있다.
+
+**색은 shadcn 토큰이 아니라 하드코딩이다.** 마커는 `--background` 위가 아니라 제공자의 지도
+타일 위에 앉으므로, 베이지색 도로·회색 건물·파란 강 위에서 두 테마 모두 읽혀야 한다. 그래서
+라이트 칩 하나로 고정한다.
+
+**장소 이름과 카테고리는 외부 문자열이므로 HTML 문자열 경로에서는 이스케이프한다.**
+네이버 지역검색이 준 값이 그대로 마크업으로 파싱되면 안 된다. 구글용 엘리먼트 경로는
+`textContent`를 쓰므로 이스케이프가 필요 없다 — 애초에 파싱 단계가 없다.
 
 **마커는 effect 의존성이 아니라 ref(`useMarkerLookup`)에 담는다.** 그러지 않으면 무관한
 게시글을 저장할 때마다 마커 배열이 새로 만들어지고, 카메라가 마지막으로 포커스한 핀으로

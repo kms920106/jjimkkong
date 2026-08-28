@@ -173,3 +173,117 @@ select {
     display: none;
   }
 }
+
+/* The map marker label. Real CSS classes, not Tailwind utilities, and that is
+   load-bearing: this markup is built as an HTML string / detached DOM node in
+   `lib/map/markerContent.ts` and handed to a map SDK, so React never renders
+   it and Tailwind v4's scanner never sees the class names. Utilities composed
+   into that string would be absent from the production bundle — and `next dev`
+   would look fine, because its JIT still has them from other files.
+
+   Colours are hard-coded rather than taken from the shadcn tokens because a
+   marker sits on the provider's own map tiles, not on `--background`: the
+   label has to stay legible over a beige road, a grey building and a blue
+   river in both themes, so it keeps one light chip everywhere. */
+.jk-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  /* The SDKs position the marker by its anchor point; without this the label
+     would swallow map drags across its whole width. Re-enabled on the chip. */
+  pointer-events: none;
+  cursor: pointer;
+  /* `anchor`/`yAnchor` puts the coordinate at the bottom of this box, so the
+     stem lands on the place and the chip floats above it. */
+  transform: translateY(-2px);
+}
+
+.jk-marker__chip {
+  pointer-events: auto;
+  /* Deliberately tight. A label is far wider than the dot it replaced, so two
+     shops in one building produce chips that overlap — and a wide chip can hide
+     a neighbouring pin outright, which a dot never did. Narrower chips shrink
+     both the collision area and the chance that the pin underneath has no
+     clickable edge left. Long names are ellipsised; the sheet shows the full
+     name. */
+  max-width: 7rem;
+  padding: 5px 10px;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 1.5px solid rgb(0 0 0 / 8%);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 12%),
+    0 4px 12px rgb(0 0 0 / 10%);
+  text-align: center;
+  font-family: inherit;
+}
+
+/* The two text spans are `pointer-events: none` so a chip only takes the tap
+   where its own rounded box is: a neighbouring label's text used to sit over
+   an adjacent pin and swallow its clicks (measured at overview zoom: 4 of 15
+   pins unreachable). The chip itself keeps `pointer-events: auto`, so the pin
+   on top still wins its own area — this narrows the dead zone to the visible
+   overlap instead of the full text box. */
+.jk-marker__name,
+.jk-marker__category {
+  pointer-events: none;
+}
+
+.jk-marker__name {
+  display: block;
+  /* Truncation, not wrapping: a long name would otherwise widen the chip past
+     the viewport and push its neighbours off screen. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #1a1a1a;
+}
+
+/* Absent for a place whose lookup returned no category — the chip is then a
+   single line rather than a line plus an empty gap. */
+.jk-marker__category {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #6b7280;
+}
+
+/* The pointer from the chip down to the coordinate. A rotated square rather
+   than a border triangle so the chip's own shadow reads continuously. */
+.jk-marker__stem {
+  width: 7px;
+  height: 7px;
+  margin-top: -4px;
+  background: #ffffff;
+  border-right: 1.5px solid rgb(0 0 0 / 8%);
+  border-bottom: 1.5px solid rgb(0 0 0 / 8%);
+  transform: rotate(45deg);
+}
+
+/* The selected pin. Orange, matching the reference UI, and raised by the
+   provider's own zIndex so it is not covered by a neighbouring chip. */
+.jk-marker--selected .jk-marker__chip {
+  border-color: #f97316;
+  background: #fff7ed;
+}
+
+.jk-marker--selected .jk-marker__stem {
+  border-color: #f97316;
+  background: #fff7ed;
+}
+
+.jk-marker--selected .jk-marker__name {
+  color: #9a3412;
+}
+
+.jk-marker--selected .jk-marker__category {
+  color: #c2410c;
+}

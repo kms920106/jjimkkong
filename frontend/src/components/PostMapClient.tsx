@@ -45,6 +45,7 @@ export default function PostMapClient({
         name: place.name,
         lat: place.lat,
         lng: place.lng,
+        category: place.category,
       })),
     [post.places],
   );

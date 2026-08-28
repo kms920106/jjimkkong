@@ -15,8 +15,9 @@ export default function MapView({
   markers,
   onMarkerClick,
   focusRequest,
+  selectedPlaceId,
 }: MapViewProps) {
-  const shared = { markers, onMarkerClick, focusRequest };
+  const shared = { markers, onMarkerClick, focusRequest, selectedPlaceId };
 
   switch (provider) {
     case "KAKAO":

@@ -99,13 +99,25 @@ export function loadGoogleMaps(): Promise<void> {
   return load("google", async () => {
     const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
     if (!key) throw new Error("NEXT_PUBLIC_GOOGLE_MAPS_KEY가 없습니다.");
+    // `libraries=marker` is required for AdvancedMarkerElement, the replacement
+    // for the deprecated google.maps.Marker and the only Google marker that
+    // takes DOM content. Without it `google.maps.marker` is undefined and the
+    // pins never appear.
     await injectScript(
       "google-maps-sdk",
-      `https://maps.googleapis.com/maps/api/js?key=${key}&language=ko&region=KR`,
+      `https://maps.googleapis.com/maps/api/js?key=${key}&language=ko&region=KR&libraries=marker`,
     );
     if (!window.google?.maps) {
       throw new Error(
         "구글 지도 SDK를 초기화하지 못했습니다. API 키와 허용 도메인을 확인해 주세요.",
+      );
+    }
+    // Checked separately: an authorized key still loads the core namespace when
+    // the marker library fails to come with it, and the failure would otherwise
+    // surface as a map with no pins and nothing in the console.
+    if (!window.google.maps.marker) {
+      throw new Error(
+        "구글 지도 마커 라이브러리를 불러오지 못했습니다. API 키의 Maps JavaScript API 사용 설정을 확인해 주세요.",
       );
     }
   });

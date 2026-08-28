@@ -72,6 +72,65 @@ own+communal의 `sourceUrl` 중복 제거(같은 게시물이 두 번 나오는 
 **마커를 effect 의존성에 넣지 말 것.** `useMarkerLookup`의 ref를 쓴다. 배열을 의존성에
 두면 무관한 게시글을 저장할 때마다 카메라가 마지막 포커스 핀으로 끌려간다.
 
+**세 제공자의 커스텀 마커 API가 서로 다르다. 이건 취향이 아니라 SDK의 제약이다.**
+마크업은 `lib/map/markerContent.ts` 한 곳에서 만들고, 각 제공자는 자기 SDK가 받는 형태로
+넘긴다:
+
+| 제공자 | API | 콘텐츠 형태 | 클릭 |
+|---|---|---|---|
+| 네이버 | `Marker`의 `icon: {content, size, anchor}` | HTML **문자열** | `Event.addListener` (기존과 동일) |
+| 카카오 | `CustomOverlay` | 문자열 또는 **엘리먼트** | **DOM 리스너** — 오버레이는 이벤트 타깃이 아니다 |
+| 구글 | `marker.AdvancedMarkerElement` | **DOM 노드** | `addListener` |
+
+- **카카오는 `Marker`로 할 수 없다** — 이미지만 받고 마크업은 못 받는다. 그리고
+  `CustomOverlay`에는 `addListener`도 `clearInstanceListeners`도 없으므로, 클릭은
+  content 엘리먼트에 붙이고 **같은 노드에서 `removeEventListener`로 떼야 한다.**
+  그래서 `TrackedMarker`가 `{ overlay, element, handler }` 셋을 함께 들고 있다.
+  선택 상태를 `setContent(문자열)`로 갱신하지 말 것 — 노드가 교체되면서 리스너가 조용히
+  사라진다. 클래스만 토글한다.
+- **구글은 `mapId`와 `libraries=marker` 둘 다 필요하고, 없으면 조용히 실패한다**(지도는
+  뜨고 핀만 안 보인다). 로더가 `google.maps.marker`를 따로 확인하는 이유이고,
+  `DEMO_MAP_ID` 폴백은 개발용이다 — 프로덕션에는 실제 Map ID를 넣는다.
+  레거시 `google.maps.Marker`는 v3.56부터 deprecated이고 DOM 콘텐츠를 받지 못한다.
+  `AdvancedMarkerElement`는 `setMap()`이 없고 `map` 대입으로 떼는데, ref 배열에서 꺼낸
+  객체에 직접 대입하면 `react-hooks/immutability`가 error로 막으므로 `detach()` 헬퍼에
+  인자로 넘긴다.
+
+**핀의 z-index는 위도에서 뽑는다(`markerZIndex()`). 상수로 되돌리지 말 것.**
+처음에는 모든 핀이 같은 `zIndex: 100`이었는데, 그러면 순서가 동점이라 **DOM 순서로 결정되고
+같은 칩이 매번 이긴다** — 라벨은 옛 점 마커보다 훨씬 넓어서 겹침이 예외가 아니라 정상이므로,
+아래 깔린 핀은 아예 **클릭이 불가능**했다(실측: 서울 전체 줌에서 15개 중 4개). 위도순은 지도
+앱의 관례이고(남쪽이 앞), 무엇보다 **핀마다 값이 달라진다**는 점이 핵심이다.
+
+**칩 폭도 이 문제의 일부다.** `max-width`를 9.5rem에서 7rem으로 줄인 뒤 완전 차단이 4개 →
+1개(같은 건물의 두 상점)로 떨어졌다. `MARKER_WIDTH`도 같이 맞춰 두지만, 실측해 보면
+**네이버는 선언한 `size`가 아니라 렌더된 내용에 맞춰 wrapper를 잡고 anchor를 거기서 다시
+계산한다**(44px~112px 칩 전부 stem이 좌표 정중앙, dx 0·dy ≤1px). 즉 이 상수가 위치를
+좌우하지는 않으므로, 핀이 좌표에서 밀리는 증상을 이 상수 탓으로 진단하지 말 것.
+
+**SDK 전역 가드는 이제 세 제공자 전부에 있다.** 예전에는 네이버에만 있었고 카카오·구글의
+마커/포커스 effect는 `if (!map)`만 보고 있었다 — 마커 형태를 커스텀 오버레이로 바꾸면서
+그 effect들이 만지는 네임스페이스가 늘었고(`CustomOverlay`,
+`marker.AdvancedMarkerElement`), 구글은 여기에 `libraries=marker` 의존이 추가돼서
+**코어는 인증됐지만 marker 라이브러리가 없는 키**라는 새 실패 경로가 생겼다. 로더는
+페이지당 한 번만 도는데 이 effect는 마커가 바뀔 때마다 도므로, 가드는 effect 안에 있어야
+한다.
+
+**구글은 `gmp-click`을 쓴다.** `addListener("click")`도 동작하지만 SDK가 "superseded"
+경고를 찍고, `gmpClickable: true`를 켜면 **키보드 포커스와 스크린리더 안내(`title`)까지**
+따라온다. 라벨이 div라서 `title`이 유일한 접근성 이름이므로 세 제공자 모두 남겨 둔다.
+
+**`selectedPlaceId`를 마커 effect의 의존성에 넣지 말 것.** 그 effect는 핀을 전부 파괴하고
+다시 만들므로, 핀을 탭할 때마다 전체가 재생성되고 **끝의 `fitBounds`/`setBounds`가 카메라를
+사용자가 보던 곳에서 끌고 간다.** 대신 세 제공자 모두:
+
+1. `bySelectableId` ref에 `placeId → 마커`를 들고,
+2. 별도 effect에서 **이전 선택과 새 선택 두 개만** 다시 그리고,
+3. `paintedSelection` ref로 지금 칠해진 것을 기억한다(마커가 재생성되면 null로 리셋).
+
+마커 effect 쪽은 `selectedPlaceIdRef`로 현재 선택을 **읽기만** 한다 — 다른 이유로 재생성될
+때 선택된 핀이 선택 상태로 그려져야 하기 때문이다.
+
 **SDK 전역은 로더 Promise가 resolve된 뒤에만 만진다.** 타입 선언(`types/maps.d.ts`)이
 있다고 런타임에 존재한다는 뜻이 아니다. 카카오는 `autoload=false`라 `kakao.maps.load()`
 콜백까지 기다려야 한다.

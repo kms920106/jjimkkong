@@ -1139,6 +1139,32 @@ refresh 한 번이 세션 조회와 **사용자의 북마크 전체**(`bookmarkI
 `onMapProviderChange(previous)`로 되돌린다. 이 catch를 지우면 저장되지 않은 제공자가 화면에
 그대로 남는다.
 
+**핀은 기본 마커가 아니라 이름+카테고리를 담은 라벨이다.** 마크업은
+[frontend/src/lib/map/markerContent.ts](frontend/src/lib/map/markerContent.ts) 한 곳에서
+만들고 세 제공자가 각자의 SDK 형태로 넘긴다(네이버는 `icon.content` 문자열, 카카오는
+`CustomOverlay`, 구글은 `AdvancedMarkerElement`). 카테고리는 `categoryLeaf()`로 잎만 쓴다 —
+`음식점`은 이 앱이 저장하는 것의 대부분이라 아무것도 구별하지 않는다. 제공자별 제약과
+선택 강조를 effect 의존성에 넣으면 안 되는 이유는
+[frontend/src/components/map/AGENTS.md](frontend/src/components/map/AGENTS.md)에 있다.
+
+**마커에 장소 사진은 없고, 그건 빠뜨린 것이 아니다.** 세 제공자를 다 확인했다(2026-08):
+네이버 지역검색과 카카오 로컬 API의 응답에는 **이미지 필드 자체가 없고**, 구글 Places는
+사진을 주지만 약관이 그 저장을 금지한다 — "must not pre-fetch, cache, or store Places API
+content beyond the allowed exceptions"이고 **`place_id`만 예외**이며, 사진 `name`은
+"cannot be cached"에 만료된다(ToS 3.2.3(b)).
+
+**"인제스트 시점에 한 번만 받아와 Blob에 저장"도 같은 위반이다.** 인스타그램 썸네일과
+결정적으로 다른 지점이 여기다 — 인스타는 *URL이 만료되는 것*이 문제이고 저장을 금지하는
+조항이 없어서 바이트 복사가 그 만료의 해법이었다. 구글은 **저장 자체가 금지 대상**이므로
+횟수를 줄여도 행위가 달라지지 않는다. `cdn-image-backup.ts`를 재사용해 `Place`에
+`image`/`imageSource` 쌍을 만들지 말 것.
+
+`Post.thumbnail`을 대신 쓰는 것도 안 된다. 그건 릴스 표지이지 그 장소의 모습이 아니고,
+한 장소가 두 게시물에 언급되면 `PlaceSheetHost`의 dedupe가 남긴 쪽이 보이므로 **무관한
+게시물을 저장하는 것이 남의 핀 그림을 바꾼다.** 사진을 다시 도입한다면 출발점은
+`Place.googlePlaceId`(영구 저장이 허용된 유일한 값) + 렌더 시점 조회 + 저작자표시
+UI이고, 비용 모델을 먼저 정해야 한다(Enterprise SKU이며 홈 지도는 모든 핀을 그린다).
+
 `lib/map/loader.ts`는 각 SDK를 페이지당 한 번만 로드하고, 전역 객체가 실제로 사용 가능해진
 뒤에야 resolve한다 — 권한 없는 키도 200을 돌려주지만 그 본문은 네임스페이스를 정의하지
 않으므로 `load` 이벤트만으로는 아무것도 보장되지 않는다. 카카오는 `autoload=false`로
@@ -1253,9 +1279,10 @@ seed하므로 첫 렌더가 이미 `open={true}`다. 이건 맞는 동작이다 
 선택: `AUTH_BASE_URL`(프로덕션 콜백 URL 고정), `YOUTUBE_API_KEY`(없으면 유튜브 캡션은 항상 수동 입력),
 `NEXT_PUBLIC_KAKAO_MAP_KEY`(없으면 카카오맵을 고른 사용자만 `MapLoadError`를 본다 —
 발급 절차는 [docs/kakao/SETUP.md](docs/kakao/SETUP.md). 지도 *렌더링* 전용이고 카카오
-지도 링크 저장과는 무관하다), `NEXT_PUBLIC_GOOGLE_MAPS_KEY`(발급 절차는
+지도 링크 저장과는 무관하다), `NEXT_PUBLIC_GOOGLE_MAPS_KEY`와 `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID`(발급 절차는
 [docs/google/SETUP.md](docs/google/SETUP.md). 카카오와 달리 유료 API라 결제 계정 연결이
-필요하다), `LLM_*` 오버라이드,
+필요하다. Map ID는 `AdvancedMarkerElement`가 요구하며 없으면 **지도는 뜨고 핀만 조용히
+사라진다** — 미설정 시 개발용 `DEMO_MAP_ID`로 떨어지므로 프로덕션에는 실제 값을 넣는다), `LLM_*` 오버라이드,
 `BLOB_READ_WRITE_TOKEN`(프로필 사진 업로드 + 인스타그램 썸네일 백업. 없으면 `/profile`의
 닉네임·상태메세지 저장은 되고 사진 업로드만 실패하며, 링크 저장은 성공하지만 썸네일이
 만료될 인스타 URL로 저장된다 — 로컬 개발의 정상 상태다).

@@ -26,6 +26,21 @@ export type MapMarker = {
   name: string;
   lat: number;
   lng: number;
+  /**
+   * The Naver Local Search category path, rendered as its leaf under the name
+   * (`카레` of `음식점>일식>카레`, via `categoryLeaf()`). Null for a place the
+   * lookup returned no category for, which the marker renders as a name-only
+   * label rather than an empty second line.
+   *
+   * There is deliberately no image field. No provider gives a photo of a place
+   * that this app may store: Naver and Kakao local search return no image at
+   * all, and Google Places forbids storing its photos (only `place_id` is
+   * exempt from its caching rule). `Post.thumbnail` is a reel cover, not the
+   * venue — and a place saved from two posts would show whichever post the
+   * dedupe in HomeClient happened to keep, so an unrelated save would change
+   * this pin's picture.
+   */
+  category: string | null;
 };
 
 /**
@@ -58,6 +73,14 @@ export type MapViewProps = {
    * rebuilding every pin.
    */
   focusRequest?: FocusRequest | null;
+  /**
+   * The pin drawn as selected. Kept out of `markers` for the same reason
+   * `focusRequest` is: a provider must never put this in the marker effect's
+   * dependencies, or every tap would tear down and rebuild all pins and drag
+   * the camera with it. Each provider redraws only the two pins whose state
+   * changed.
+   */
+  selectedPlaceId?: number | null;
 };
 
 /** Seoul city hall — the fallback center when nothing is saved yet. */
