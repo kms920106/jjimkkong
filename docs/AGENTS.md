@@ -21,6 +21,7 @@
 | `blob/` | 프로필 사진 저장소(Vercel Blob) 설정 절차 (see `blob/AGENTS.md`) |
 | `youtube/` | 유튜브 설명 전문 조회용 API 키 발급 절차 (see `youtube/AGENTS.md`) |
 | `kakao/` | 카카오맵 SDK 키 발급 절차 (see `kakao/AGENTS.md`) |
+| `google/` | 구글맵 SDK 키 발급 절차 (see `google/AGENTS.md`) |
 | `domain/` | 비어 있음. 도메인/DNS 관련 문서 자리 |
 
 ## For AI Agents
@@ -44,5 +45,6 @@
 - 네이버 개발자센터 (로그인 애플리케이션)
 - Solapi (SMS 발송)
 - 카카오 개발자 콘솔 (지도 SDK)
+- Google Cloud Console (지도 SDK)
 
 <!-- MANUAL: -->
