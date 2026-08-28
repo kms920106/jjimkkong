@@ -189,7 +189,9 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   // Comma-separated, because /links can ask for a whole post's places at once
   // ("이 게시글의 6곳 보기") and not just one pin.
   const requestedPlace = searchParams.get("place");
-  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(() => {
+  // Never reassigned: a marker click deliberately does not move the camera (see
+  // handleMarkerClick), so ?place= on arrival is the only thing that focuses.
+  const [focusRequest] = useState<FocusRequest | null>(() => {
     // Converted, not passed through. `placeIds` holds numbers because
     // useMarkerLookup matches with ===, so a string "12" straight out of the
     // query string would match no marker — and the pan effects treat "no
@@ -230,25 +232,18 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     sources: PlaceSourceDTO[];
   } | null>(null);
 
-  const requestFocus = useCallback((placeId: number) => {
-    setFocusRequest((prev) => ({
-      placeIds: [placeId],
-      nonce: (prev?.nonce ?? 0) + 1,
-    }));
-  }, []);
-
   /**
-   * A marker click does both: it opens the place's sheet and moves the camera
-   * to the pin, the way tapping a pin on 네이버지도 does. Focusing without
-   * opening the sheet was the old behaviour and said nothing about the place.
+   * A marker click opens the place's sheet and leaves the camera alone. It used
+   * to pan and zoom to the pin as well, but pressing a pin to read about it
+   * moved the view the user had set up, so they had to find their way back.
+   *
+   * The camera only moves when the user explicitly asked for it — arriving from
+   * /links with ?place=<id>, where moving *is* the point of the request. That
+   * path seeds `focusRequest` in initial state above; nothing else writes it.
    */
-  const handleMarkerClick = useCallback(
-    (placeId: number) => {
-      setSelectedPlaceId(placeId);
-      requestFocus(placeId);
-    },
-    [requestFocus],
-  );
+  const handleMarkerClick = useCallback((placeId: number) => {
+    setSelectedPlaceId(placeId);
+  }, []);
 
   // Fetches the communal source list whenever the selected pin changes.
   // Un-scoped by design — the place row is already shared across users, so
