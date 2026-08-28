@@ -147,9 +147,11 @@ export default function NaverMap({
   useEffect(() => {
     if (!map || !focusRequest) return;
     // Same guard as the marker effect, and reachable the same way: `map` is
-    // set even under an unauthorized key, and /?place=<id> from /links seeds
+    // set even under an unauthorized key, and /links/[id]/map?place=<id> seeds
     // `focusRequest` in initial state — so this effect runs on the very first
     // commit and would throw before the marker effect's guard ever mattered.
+    // That arrival is now the common case rather than an edge one: every visit
+    // to a post's map carries a place to focus.
     const maps = window.naver?.maps;
     if (!maps) return;
 

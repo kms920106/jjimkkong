@@ -5,18 +5,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Menu, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import MapView from "@/components/map/MapView";
+import PlaceSheetHost from "@/components/map/PlaceSheetHost";
 import CaptionPrompt from "@/components/CaptionPrompt";
 import AppDrawer from "@/components/AppDrawer";
 import LoginDrawer, { loginErrorMessage } from "@/components/LoginDrawer";
 import UrlSheet from "@/components/UrlSheet";
-import PlaceSheet, { type PlaceDetail } from "@/components/PlaceSheet";
+import { type PlaceDetail } from "@/components/PlaceSheet";
 import type {
   IngestedPost,
   IngestEvent,
   IngestResponse,
   IngestStage,
-  PlaceSourceDTO,
   ProfileDTO,
   SavedPostDTO,
 } from "@/lib/types";
@@ -183,11 +182,17 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   // because React skips the re-render when state is unchanged.
   const router = useRouter();
   const searchParams = useSearchParams();
-  // /links sends the user back here with ?place=<id> to move the camera.
+  // Moves the camera to a place on arrival. **No screen in the app produces
+  // this any more** — the place cards on /links/[id] used to send the user here
+  // and now go to /links/[id]/map, which draws that post's pins alone instead
+  // of burying them among every saved link. It is kept because the URL is
+  // shareable and may already be bookmarked, so do not go looking for the
+  // in-app caller; there isn't one.
+  //
   // Seeding the initial state from it (rather than setting it in an effect)
   // gets the pin centred on the very first paint, with no visible jump.
-  // Comma-separated, because /links can ask for a whole post's places at once
-  // ("이 게시글의 6곳 보기") and not just one pin.
+  // Comma-separated, because the request can name a whole post's places at
+  // once ("이 게시글의 6곳 보기") and not just one pin.
   const requestedPlace = searchParams.get("place");
   // Never reassigned: a marker click deliberately does not move the camera (see
   // handleMarkerClick), so ?place= on arrival is the only thing that focuses.
@@ -216,57 +221,6 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   const [loginError] = useState(() =>
     loginErrorMessage(searchParams.get("error")),
   );
-
-  // The pin whose sheet is open, or null. Held as an id rather than the
-  // detail object so a refresh of `posts` — deleting the post from another
-  // tab, re-saving the link — flows through to the open sheet instead of
-  // leaving a snapshot of data that no longer exists.
-  const [selectedPlaceId, setSelectedPlaceId] = useState<number | null>(null);
-
-  // Every user's saved links for the currently open pin, fetched separately
-  // from `posts` (which is scoped to the caller). Keyed by place id so a
-  // stale response from a pin the user has since closed cannot land on the
-  // wrong sheet.
-  const [communalSources, setCommunalSources] = useState<{
-    placeId: number;
-    sources: PlaceSourceDTO[];
-  } | null>(null);
-
-  /**
-   * A marker click opens the place's sheet and leaves the camera alone. It used
-   * to pan and zoom to the pin as well, but pressing a pin to read about it
-   * moved the view the user had set up, so they had to find their way back.
-   *
-   * The camera only moves when the user explicitly asked for it — arriving from
-   * /links with ?place=<id>, where moving *is* the point of the request. That
-   * path seeds `focusRequest` in initial state above; nothing else writes it.
-   */
-  const handleMarkerClick = useCallback((placeId: number) => {
-    setSelectedPlaceId(placeId);
-  }, []);
-
-  // Fetches the communal source list whenever the selected pin changes.
-  // Un-scoped by design — the place row is already shared across users, so
-  // this only reads what the shared map already implies. A stale in-flight
-  // request from a pin the user has since left is discarded by checking the
-  // placeId still matches the current selection when it resolves.
-  useEffect(() => {
-    if (!selectedPlaceId) return;
-    let cancelled = false;
-    fetch(`/api/places/${selectedPlaceId}/sources`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body: { sources: PlaceSourceDTO[] } | null) => {
-        if (cancelled || !body) return;
-        setCommunalSources({ placeId: selectedPlaceId, sources: body.sources });
-      })
-      .catch(() => {
-        // Silent: PlaceSheet still has the caller's own sources from
-        // `placeDetails` to fall back on.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedPlaceId]);
 
   // Strip the consumed params so a refresh or a back-navigation does not yank
   // the map back to a pin the user has since panned away from, or reopen the
@@ -337,38 +291,6 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     }
     return byId;
   }, [posts]);
-
-  // Resolved through the index rather than stored, so a place that disappears
-  // — its only post deleted — closes the sheet instead of showing stale data.
-  // `!== null`, not truthy: the id is an int now, and a falsy test would treat
-  // place 0 as "nothing selected". Identity columns start at 1 so it is
-  // unreachable, but the check should mean what it says.
-  const ownPlaceDetail =
-    selectedPlaceId !== null
-      ? (placeDetails.get(selectedPlaceId) ?? null)
-      : null;
-
-  /**
-   * What PlaceSheet actually renders: the caller's own sources (always
-   * present, from `posts`) merged with every other user's sources for the
-   * same pin (fetched separately, arrives a beat later). Deduped by
-   * sourceUrl — the same post saved by two different users produces two
-   * SavedPost rows and would otherwise list the same link twice.
-   */
-  const selectedPlace = useMemo<PlaceDetail | null>(() => {
-    if (!ownPlaceDetail) return null;
-    const bySourceUrl = new Map(
-      ownPlaceDetail.sources.map((source) => [source.sourceUrl, source]),
-    );
-    if (communalSources && communalSources.placeId === ownPlaceDetail.place.id) {
-      for (const source of communalSources.sources) {
-        if (!bySourceUrl.has(source.sourceUrl)) {
-          bySourceUrl.set(source.sourceUrl, source);
-        }
-      }
-    }
-    return { place: ownPlaceDetail.place, sources: [...bySourceUrl.values()] };
-  }, [ownPlaceDetail, communalSources]);
 
   /** Returns the refreshed list, or null when the refresh itself failed. */
   const refreshPosts = useCallback(async (): Promise<SavedPostDTO[] | null> => {
@@ -515,11 +437,12 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
    * list itself as its own dependency.
    */
   const ingestAndSaveRef = useRef<
-    ((
-      url: string,
-      manualCaption?: string,
-      fallbackPost?: IngestedPost,
-    ) => Promise<void>) | null
+    | ((
+        url: string,
+        manualCaption?: string,
+        fallbackPost?: IngestedPost,
+      ) => Promise<void>)
+    | null
   >(null);
 
   /**
@@ -638,7 +561,9 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           setPendingMarkers((prev) =>
             prev.filter(
               (marker) =>
-                !marker.key.startsWith(`${PENDING_MARKER_PREFIX}${generation}:`),
+                !marker.key.startsWith(
+                  `${PENDING_MARKER_PREFIX}${generation}:`,
+                ),
             ),
           );
 
@@ -737,100 +662,102 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     // right-hand control under it. On a fixed box width:100% resolves against
     // the same containing block inset-0 used.
     <div className="fixed top-0 left-0 h-dvh w-full">
-      <MapView
-        provider={mapProvider}
+      {/* The map, the pin selection and the place card all live in
+          PlaceSheetHost — /links/[id]/map renders the same surface, and the
+          sources fetch and merge inside it are correctness mechanisms rather
+          than wiring, so a second copy would drift silently. The floating
+          controls come back as children because one of them has to hide while
+          the card is up (see below). */}
+      <PlaceSheetHost
         markers={markers}
-        onMarkerClick={handleMarkerClick}
-        focusRequest={focusRequest}
-      />
-
-      {/* Both controls float over the map, so they carry their own surface
-          colour and shadow rather than the transparent ghost/outline the map
-          would show straight through. */}
-      {/* Both controls ask for a login before doing anything that needs one,
-          so a signed-out visitor meets the drawer rather than a 401. */}
-      <Button
-        type="button"
-        variant="secondary"
-        size="icon"
-        onClick={() => (signedIn ? setDrawerOpen(true) : setLoginOpen(true))}
-        aria-label={signedIn ? "메뉴 열기" : "로그인"}
-        className="absolute top-4 left-4 z-30 h-11 w-11 rounded-full bg-background shadow-lg hover:bg-accent"
-      >
-        <Menu className="h-5 w-5" />
-      </Button>
-
-      <Button
-        type="button"
-        size="icon"
-        onClick={() => {
-          if (!signedIn) {
-            setLoginOpen(true);
-            return;
-          }
-          setSheetOpen(true);
-        }}
-        aria-label="링크 추가"
-        // Hidden while a place card is up. The card is a bottom sheet and this
-        // button sits inside its area, and z-index cannot resolve that: the
-        // sheet is portaled to <body>, so it comes after this whole fixed
-        // container in DOM order and paints over the button whatever z-30
-        // says. Raising the button instead would leave it floating on top of
-        // the card, which is not a control the card wants. Closing the card
-        // brings it straight back.
-        //
-        // No env(safe-area-inset-*) here: the app never sets viewport-fit=cover,
-        // so every inset resolves to 0 and the calc would be decoration. The
-        // same is true of the insets already written into UrlSheet and
-        // LoginDrawer — turning cover mode on activates all of them at once and
-        // needs a pass on a notched device, so it is not bundled into this fix.
-        className={cn(
-          "absolute right-5 bottom-6 z-30 h-11 w-11 rounded-full shadow-lg",
-          selectedPlace && "hidden",
-        )}
-      >
-        <Plus className="h-7 w-7" />
-      </Button>
-
-      {/* Signed out there is no profile to render or settings to change, so
-          the menu is replaced by the login drawer rather than shown empty. */}
-      {signedIn && (
-        <AppDrawer
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          profile={profile}
-          mapProvider={mapProvider}
-          onMapProviderChange={setMapProvider}
-        />
-      )}
-
-      <LoginDrawer
-        open={loginOpen}
-        onOpenChange={setLoginOpen}
-        redirectTo="/"
-        initialError={loginError}
-      />
-
-      {/* Always mounted — PlaceSheet owns its own open/closed transition (see
-          its `detail` prop doc) and needs a real `false → true` edge on
-          `open` to animate the slide-up, which a conditionally-mounted
-          `{selectedPlace && <PlaceSheet .../>}` cannot provide since the
-          first render would already have `open` at its final value.
-          Stood down (passed null) while the URL sheet or the caption prompt
-          is up: those are modal and would trap focus over a non-modal sheet
-          the user can no longer reach or dismiss. The selection survives, so
-          closing them brings the place card back. */}
-      <PlaceSheet
-        detail={!sheetOpen && !captionNeeded ? selectedPlace : null}
+        placeDetails={placeDetails}
         // The live state, not `profile.mapProvider`: the drawer's radio changes
         // the map in the same render, so reading the seed here would leave the
         // external map-app buttons pointing at the previous provider until a
         // server round trip that this path deliberately does not make.
         mapProvider={mapProvider}
-        onClose={() => setSelectedPlaceId(null)}
-      />
+        focusRequest={focusRequest}
+        // Stood down while the URL sheet or the caption prompt is up: those are
+        // modal and would trap focus over a non-modal sheet the user can no
+        // longer reach or dismiss. The selection survives, so closing them
+        // brings the place card back.
+        suppressed={sheetOpen || captionNeeded !== null}
+      >
+        {(selectedPlace) => (
+          <>
+            {/* Both controls float over the map, so they carry their own surface
+              colour and shadow rather than the transparent ghost/outline the map
+              would show straight through. */}
+            {/* Both controls ask for a login before doing anything that needs one,
+              so a signed-out visitor meets the drawer rather than a 401. */}
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              onClick={() =>
+                signedIn ? setDrawerOpen(true) : setLoginOpen(true)
+              }
+              aria-label={signedIn ? "메뉴 열기" : "로그인"}
+              className="absolute top-4 left-4 z-30 h-11 w-11 rounded-full bg-background shadow-lg hover:bg-accent"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
 
-      {/* Always mounted, matching PlaceSheet above: `open` must go from an
+            <Button
+              type="button"
+              size="icon"
+              onClick={() => {
+                if (!signedIn) {
+                  setLoginOpen(true);
+                  return;
+                }
+                setSheetOpen(true);
+              }}
+              aria-label="링크 추가"
+              // Hidden while a place card is up. The card is a bottom sheet and this
+              // button sits inside its area, and z-index cannot resolve that: the
+              // sheet is portaled to <body>, so it comes after this whole fixed
+              // container in DOM order and paints over the button whatever z-30
+              // says. Raising the button instead would leave it floating on top of
+              // the card, which is not a control the card wants. Closing the card
+              // brings it straight back.
+              //
+              // No env(safe-area-inset-*) here: the app never sets viewport-fit=cover,
+              // so every inset resolves to 0 and the calc would be decoration. The
+              // same is true of the insets already written into UrlSheet and
+              // LoginDrawer — turning cover mode on activates all of them at once and
+              // needs a pass on a notched device, so it is not bundled into this fix.
+              className={cn(
+                "absolute right-5 bottom-6 z-30 h-11 w-11 rounded-full shadow-lg",
+                selectedPlace && "hidden",
+              )}
+            >
+              <Plus className="h-7 w-7" />
+            </Button>
+
+            {/* Signed out there is no profile to render or settings to change, so
+              the menu is replaced by the login drawer rather than shown empty. */}
+            {signedIn && (
+              <AppDrawer
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+                profile={profile}
+                mapProvider={mapProvider}
+                onMapProviderChange={setMapProvider}
+              />
+            )}
+
+            <LoginDrawer
+              open={loginOpen}
+              onOpenChange={setLoginOpen}
+              redirectTo="/"
+              initialError={loginError}
+            />
+          </>
+        )}
+      </PlaceSheetHost>
+
+      {/* Always mounted, for the reason PlaceSheet is: `open` must go from an
           actual `false` to `true` for Base UI to have a transition to
           animate. A conditionally-mounted `{sheetOpen && <UrlSheet .../>}`
           starts every open already at `open`'s final value, so the sheet

@@ -10,6 +10,7 @@
 ## Key Files
 | File | Description |
 |------|-------------|
+| `PlaceSheetHost.tsx` | 지도 + 핀 선택 + communal sources 조회 + 장소 시트. **홈과 `/links/[id]/map`이 공유한다** |
 | `MapView.tsx` | 스위치. provider를 **key로** 갖는 별도 컴포넌트를 고른다 |
 | `NaverMap.tsx` | 네이버 지도(기본) |
 | `KakaoMap.tsx` | 카카오맵 |
@@ -19,6 +20,27 @@
 ## For AI Agents
 
 ### Working In This Directory
+
+**`PlaceSheetHost`는 hook이 아니라 컴포넌트다.** 가장 미묘한 계약이 JSX에 있어서다 —
+`<PlaceSheet>`는 열기/닫기 애니메이션을 위해 항상 mount돼 있어야 하고(Base UI는 진짜
+`false→true` edge만 애니메이션한다), hook으로 빼면 그 JSX가 호출부마다 복제된다.
+
+**복제하지 말 것.** 안에 있는 것은 배선이 아니라 **각각 고친 버그가 있는 correctness 장치
+네 개**다: placeId 기준 stale 응답 가드(닫은 핀의 sources가 다른 시트에 도착하는 것),
+own+communal의 `sourceUrl` 중복 제거(같은 게시물이 두 번 나오는 것), 객체가 아니라 id로
+선택 보관(삭제된 게시물의 장소가 계속 렌더되는 것), truthy 아닌 `!== null`(place 0이 "선택
+없음"으로 읽히는 것). **사본만 따로 읽으면 어느 것도 틀려 보이지 않는다** — `PostGrid`를
+공유한 것과 같은 판단이다.
+
+밖으로 빼낸 결합이 둘 있고 둘 다 홈에만 필요하다: `suppressed`(URL 시트·캡션 프롬프트가
+열릴 때 non-modal 시트를 물러나게 한다 — 안 하면 modal이 닿을 수 없는 시트 위에 포커스를
+가둔다)와 `children`이 받는 `selectedPlace`(+ 버튼이 카드가 뜰 때 숨어야 한다. 시트가
+`<body>`로 portal되므로 z-index로는 해결되지 않는다).
+
+**`initialSelectedPlaceId`는 첫 페인트부터 시트를 연다.** 그래서 도착 시 슬라이드업이
+없는데, 그건 버그가 아니라 그 화면의 요구다 — 사용자가 장소를 눌러 지도를 보러 온 것이므로
+없던 것이 들어오는 애니메이션은 거짓이다. **effect로 미루지 말 것**(lint의
+`react-hooks/set-state-in-effect`가 막고, 한 프레임 늦으면 요청하지 않은 두 번째 전환이 된다).
 
 **provider가 key인 것은 의도다.** 전환하면 이전 지도를 재사용하지 않고 완전히 해체한다.
 세 SDK는 인스턴스 수명·마커 API가 서로 달라서, 공용 컨테이너를 재사용하려 들면 이전
