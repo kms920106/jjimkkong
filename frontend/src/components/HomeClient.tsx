@@ -827,7 +827,11 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           closing them brings the place card back. */}
       <PlaceSheet
         detail={!sheetOpen && !captionNeeded ? selectedPlace : null}
-        mapProvider={profile.mapProvider}
+        // The live state, not `profile.mapProvider`: the drawer's radio changes
+        // the map in the same render, so reading the seed here would leave the
+        // external map-app buttons pointing at the previous provider until a
+        // server round trip that this path deliberately does not make.
+        mapProvider={mapProvider}
         onClose={() => setSelectedPlaceId(null)}
       />
 
