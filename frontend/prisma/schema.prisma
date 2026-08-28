@@ -488,7 +488,8 @@ model BookmarkMemo {
 /// [name, address] rather than on anything a client sends.
 ///
 /// `id` reaches the browser — it is in SavedPlaceDTO, it addresses
-/// GET /api/places/[id]/sources, and it round-trips through `/?place=<id>,<id>`.
+/// GET /api/places/[id]/sources, and it round-trips through
+/// `/links/<memberSeq>/map?place=<id>,<id>`.
 /// Sequential since 20260825 (a cuid before). That exposure is only safe
 /// because the row holds nothing private: a place a post already published.
 /// Do not hang member-scoped data off this id.

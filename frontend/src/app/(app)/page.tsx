@@ -23,8 +23,9 @@ export default async function HomePage() {
     : [];
 
   return (
-    // HomeClient reads ?place= via useSearchParams, which Next requires to sit
-    // under a Suspense boundary.
+    // HomeClient reads ?auth=, ?error= and ?place= via useSearchParams, which
+    // Next requires to sit under a Suspense boundary. The auth params are what
+    // keep this necessary — ?place= no longer has an in-app producer.
     <Suspense>
       <HomeClient
         // Every state HomeClient seeds from props (`posts`, `mapProvider`) is

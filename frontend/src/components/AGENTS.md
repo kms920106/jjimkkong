@@ -14,7 +14,8 @@ React 컴포넌트. 제품의 상호작용이 사실상 `HomeClient` 하나에 �
 | `LinksClient.tsx` | `/links`의 썸네일 3열 그리드·플랫폼 탭. 셀 하나가 `/links/[id]` 링크다 |
 | `PostGrid.tsx` | 그 3열 그리드 본체. `/links`와 `/author/[id]`가 공유한다 — 복사하면 두 그리드가 갈라진다 |
 | `AuthorLink.tsx` | 작성자 아바타 + 핸들. 상세 페이지에서는 사진 11시에 얹히는 `overlay`, 그 외에는 `plain` |
-| `PostDetailClient.tsx` | `/links/[id]` — 썸네일·캡션·원본 링크 + 장소 가로 swiper·삭제 |
+| `PostDetailClient.tsx` | `/links/[id]` — 썸네일·캡션·원본 링크 + 장소 세로 목록·삭제. 장소 카드는 `/links/[id]/map`으로 간다 |
+| `PostMapClient.tsx` | `/links/[id]/map`의 클라이언트. 그 게시글의 장소만 핀으로 그리고 도착 즉시 시트를 연다. 헤더 + `map/PlaceSheetHost` |
 | `UrlSheet.tsx` | 링크 붙여넣기 시트 |
 | `PlaceSheet.tsx` | 마커를 누르면 열리는 장소 카드. 비모달 하단 시트 |
 | `CaptionPrompt.tsx` | 캡션을 못 가져왔을 때(`needsManualCaption`) 사용자가 직접 붙여넣는 다이얼로그 |

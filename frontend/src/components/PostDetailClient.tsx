@@ -94,16 +94,26 @@ export default function PostDetailClient({
   }
 
   /**
-   * The map lives on the home page, so focusing a place is a navigation.
+   * The map is its own page, so focusing a place is a navigation.
+   *
+   * It goes to this post's map rather than the home map, which is where this
+   * used to point. The home map draws every pin the member has saved, so the
+   * route this post names arrived buried among unrelated links — and there was
+   * no way back to the post but the browser's own button. `/links/[id]/map`
+   * pins only this post's places and carries a header.
    *
    * Ids are decimal digits, so they need no escaping — but the encode stays:
    * it costs nothing and it is the guard that keeps this correct if the value
-   * ever stops being a plain number again.
+   * ever stops being a plain number again. The comma list is kept even though
+   * every caller currently passes one id, because that is what asking for a
+   * whole post's places at once would send.
    */
   function focusOnMap(placeIds: number[]) {
     if (placeIds.length === 0) return;
     router.push(
-      `/?place=${placeIds.map((id) => encodeURIComponent(id)).join(",")}`,
+      `/links/${post.seq}/map?place=${placeIds
+        .map((id) => encodeURIComponent(id))
+        .join(",")}`,
     );
   }
 
