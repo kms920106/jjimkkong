@@ -122,6 +122,24 @@ function stageProgress(
 
 export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
   const [posts, setPosts] = useState(initialPosts);
+  /**
+   * Which map the user is looking at. Seeded from the server row and owned by
+   * the client from then on, exactly like `posts` above.
+   *
+   * It lives here rather than being read straight off `profile` because the
+   * drawer's radio has to change *this* map, and a prop can only change by way
+   * of the server. That round trip used to be `router.refresh()`, which re-runs
+   * a force-dynamic page: a session lookup plus the user's entire bookmark tree
+   * (a four-table join through `bookmarkInclude`) re-read and re-serialised so
+   * that one enum string could come back. The join's result was then discarded
+   * anyway — `posts` is `useState(initialPosts)`, which ignores the new prop.
+   * The cost scaled with how many links the user had saved, for a value that
+   * has nothing to do with any of them.
+   *
+   * Holding it in state makes the swap immediate and leaves the PATCH to do
+   * nothing but persist. Do not reintroduce a refresh on this path.
+   */
+  const [mapProvider, setMapProvider] = useState(profile.mapProvider);
   const [ingesting, setIngesting] = useState(false);
   // Which pipeline stage the in-flight ingest is on, for the save button's
   // label. Null while idle; the stream sets it before each stage begins.
@@ -722,7 +740,7 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
     // the same containing block inset-0 used.
     <div className="fixed top-0 left-0 h-dvh w-full">
       <MapView
-        provider={profile.mapProvider}
+        provider={mapProvider}
         markers={markers}
         onMarkerClick={handleMarkerClick}
         focusRequest={focusRequest}
@@ -783,6 +801,8 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
           profile={profile}
+          mapProvider={mapProvider}
+          onMapProviderChange={setMapProvider}
         />
       )}
 

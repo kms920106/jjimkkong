@@ -1123,6 +1123,19 @@ unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없�
 카카오, 구글. 각각 provider를 key로 갖는 별도 컴포넌트라서, 전환하면 이전 지도를 재사용하지
 않고 완전히 해체한다.
 
+**지금 보고 있는 제공자는 `HomeClient`의 상태다. `profile.mapProvider`는 그 seed일 뿐이다.**
+드로어의 라디오가 부모 상태를 직접 바꾸므로 전환이 같은 렌더에서 일어나고, `PATCH /api/settings`는
+행에 쓰는 일만 한다. **여기에 `router.refresh()`를 다시 넣지 말 것** — 홈은 `force-dynamic`이라
+refresh 한 번이 세션 조회와 **사용자의 북마크 전체**(`bookmarkInclude`의 4테이블 조인)를 다시
+읽어 RSC로 직렬화하는데, 거기서 쓰이는 값은 enum 문자열 하나이고 그나마 북마크 쪽은
+`useState(initialPosts)`가 무시해서 통째로 버려진다. 비용이 저장된 링크 수에 비례해 커지는데
+그 링크들과 아무 상관 없는 값 하나를 위해서였다.
+
+그 refresh가 await되지 않아서 필요했던 낙관적 로컬 상태와 렌더 중 상태 조정(측정된 ~340ms의
+깜빡임 방지)도 함께 사라졌다. **대신 실패 시 롤백이 유일한 정정 경로가 된다** — 서버가 거부하면
+`onMapProviderChange(previous)`로 되돌린다. 이 catch를 지우면 저장되지 않은 제공자가 화면에
+그대로 남는다.
+
 `lib/map/loader.ts`는 각 SDK를 페이지당 한 번만 로드하고, 전역 객체가 실제로 사용 가능해진
 뒤에야 resolve한다 — 권한 없는 키도 200을 돌려주지만 그 본문은 네임스페이스를 정의하지
 않으므로 `load` 이벤트만으로는 아무것도 보장되지 않는다. 카카오는 `autoload=false`로
@@ -1205,7 +1218,9 @@ unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없�
 선택: `AUTH_BASE_URL`(프로덕션 콜백 URL 고정), `YOUTUBE_API_KEY`(없으면 유튜브 캡션은 항상 수동 입력),
 `NEXT_PUBLIC_KAKAO_MAP_KEY`(없으면 카카오맵을 고른 사용자만 `MapLoadError`를 본다 —
 발급 절차는 [docs/kakao/SETUP.md](docs/kakao/SETUP.md). 지도 *렌더링* 전용이고 카카오
-지도 링크 저장과는 무관하다), `NEXT_PUBLIC_GOOGLE_MAPS_KEY`, `LLM_*` 오버라이드,
+지도 링크 저장과는 무관하다), `NEXT_PUBLIC_GOOGLE_MAPS_KEY`(발급 절차는
+[docs/google/SETUP.md](docs/google/SETUP.md). 카카오와 달리 유료 API라 결제 계정 연결이
+필요하다), `LLM_*` 오버라이드,
 `BLOB_READ_WRITE_TOKEN`(프로필 사진 업로드 + 인스타그램 썸네일 백업. 없으면 `/profile`의
 닉네임·상태메세지 저장은 되고 사진 업로드만 실패하며, 링크 저장은 성공하지만 썸네일이
 만료될 인스타 URL로 저장된다 — 로컬 개발의 정상 상태다).
@@ -1275,6 +1290,7 @@ unique를 두면 **한 번 지운 링크를 영구히 다시 저장할 수 없�
 | [docs/blob/](docs/blob/AGENTS.md) | 프로필 사진 저장소(Vercel Blob) 설정 절차 |
 | [docs/youtube/](docs/youtube/AGENTS.md) | 유튜브 설명 전문 조회용 API 키 발급 절차 |
 | [docs/kakao/](docs/kakao/AGENTS.md) | 카카오맵 SDK 키 발급 절차(사용설정 ON·포트 포함 도메인 등록) |
+| [docs/google/](docs/google/AGENTS.md) | 구글맵 SDK 키 발급 절차(결제 계정 연결·리퍼러 제한) |
 | [docs/db-permissions.md](docs/db-permissions.md) | 하드 삭제를 막는 층 4(Postgres role). **아직 적용되지 않은 절차 문서** |
 
 `frontend/AGENTS.md` 위쪽의 `nextjs-agent-rules` 블록은 `next dev`가 다시 써 넣는
