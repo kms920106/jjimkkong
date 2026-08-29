@@ -1386,6 +1386,7 @@ seed하므로 첫 렌더가 이미 `open={true}`다. 이건 맞는 동작이다 
 | [frontend/scripts/](frontend/scripts/AGENTS.md) | 일회성 운영 스크립트 |
 | [docs/](docs/AGENTS.md) | 외부 제공자 설정 절차 |
 | [docs/oauth/](docs/oauth/AGENTS.md) | 네이버 로그인 설정과 레퍼런스 |
+| [docs/naver-search/SETUP.md](docs/naver-search/SETUP.md) | 네이버 지역검색(지오코딩) API 키 발급 절차. 로그인 키와 다른 애플리케이션 |
 | [docs/blob/](docs/blob/AGENTS.md) | 프로필 사진 저장소(Vercel Blob) 설정 절차 |
 | [docs/youtube/](docs/youtube/AGENTS.md) | 유튜브 설명 전문 조회용 API 키 발급 절차 |
 | [docs/kakao/](docs/kakao/AGENTS.md) | 카카오맵 SDK 키 발급 절차(사용설정 ON·포트 포함 도메인 등록) |

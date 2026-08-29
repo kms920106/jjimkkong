@@ -18,6 +18,7 @@
 | Directory | Purpose |
 |-----------|---------|
 | `oauth/` | 네이버 로그인 설정 절차와 API 레퍼런스 (see `oauth/AGENTS.md`) |
+| `naver-search/` | 네이버 지역검색(지오코딩) API 키 발급 절차. 로그인 키와 다른 애플리케이션 |
 | `blob/` | 프로필 사진 저장소(Vercel Blob) 설정 절차 (see `blob/AGENTS.md`) |
 | `youtube/` | 유튜브 설명 전문 조회용 API 키 발급 절차 (see `youtube/AGENTS.md`) |
 | `kakao/` | 카카오맵 SDK 키 발급 절차 (see `kakao/AGENTS.md`) |
