@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -51,11 +51,14 @@ export default function PhoneSignupForm({
   redirectTo,
   onSuccess,
   onError,
+  onBusyChange,
 }: {
   mode: PhoneSignupMode;
   redirectTo: string;
   onSuccess?: () => void;
   onError?: () => void;
+  /** Lets the drawer refuse to be dismissed while a signup/reset is completing. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("phone");
@@ -65,6 +68,29 @@ export default function PhoneSignupForm({
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [pending, setPending] = useState(false);
+  // router.refresh() returns void and settles asynchronously; a transition is the
+  // only way to observe when the refreshed RSC payload has actually been applied.
+  // See the login form — the drawer must not close before then.
+  const [refreshing, startRefresh] = useTransition();
+  const [succeeded, setSucceeded] = useState(false);
+
+  // Close the drawer on the transition's falling edge, not when the request
+  // returned — that is the whole point: by now the refreshed RSC payload is on
+  // the page, so `signedIn` is true and the menu button behind this drawer opens
+  // the app menu rather than re-opening the login.
+  //
+  // An effect, not the render-phase adjustment used elsewhere in this file: both
+  // callbacks set state in the *parent*, which React forbids during a child's
+  // render. The one frame it costs is unobservable here — the drawer is mid-close
+  // either way — whereas the adjustment logs a console error and is not
+  // guaranteed to flush.
+  const notified = useRef(false);
+  useEffect(() => {
+    if (refreshing || !succeeded || notified.current) return;
+    notified.current = true;
+    onBusyChange?.(false);
+    onSuccess?.();
+  }, [refreshing, succeeded, onBusyChange, onSuccess]);
 
   const copy = COPY[mode];
   const base = `/api/auth/phone/${mode}`;
@@ -130,10 +156,13 @@ export default function PhoneSignupForm({
       return;
     }
     setPending(true);
+    // See the login form: reported from the handler, never during render.
+    onBusyChange?.(true);
 
     const response = await post("password", { password });
     if (!response) {
       setPending(false);
+      onBusyChange?.(false);
       return;
     }
 
@@ -149,14 +178,20 @@ export default function PhoneSignupForm({
         setCode("");
       }
       setPending(false);
+      onBusyChange?.(false);
       return;
     }
 
-    onSuccess?.();
-    router.refresh();
-    router.push(redirectTo);
+    setSucceeded(true);
+    startRefresh(() => {
+      router.refresh();
+      router.push(redirectTo);
+    });
     // `pending` deliberately stays set — see the login form.
   }
+
+  // The request and the refresh that follows it are one wait from the user's side.
+  const busy = pending || refreshing;
 
   return (
     <div className="flex flex-col gap-3">
@@ -285,12 +320,12 @@ export default function PhoneSignupForm({
             // Length is checked here only to disable the button early; the server
             // enforces the policy and returns its own Korean message.
             disabled={
-              pending ||
+              busy ||
               password.length < MIN_PASSWORD_LENGTH ||
               (mode === "signup" && !agreedToTerms)
             }
           >
-            {pending ? "설정 중…" : copy.submit}
+            {busy ? "설정 중…" : copy.submit}
           </SubmitButton>
         </form>
       )}

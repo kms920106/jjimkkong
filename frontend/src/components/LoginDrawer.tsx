@@ -96,8 +96,27 @@ export default function LoginDrawer({
     if (open && mode !== "login") setMode("login");
   }
 
+  // True from the moment a form's request goes out until the session is live on
+  // the page behind this drawer. The forms own the flag because only they know
+  // when their router.refresh() has actually landed.
+  const [busy, setBusy] = useState(false);
+
   return (
-    <Drawer open={open} onOpenChange={onOpenChange} showSwipeHandle>
+    <Drawer
+      open={open}
+      // A login that has succeeded on the server but whose page has not caught up
+      // yet must not be dismissable: closing there hands back a UI that still says
+      // signed out, and the menu button re-opens this drawer instead of the app
+      // menu. `disablePointerDismissal` covers the backdrop; every other route out
+      // (swipe, Escape, the close button) arrives here as a reason we can refuse.
+      // Programmatic closes carry `none`, so the form's own success close passes.
+      onOpenChange={(next, details) => {
+        if (!next && busy && details.reason !== "none") return;
+        onOpenChange(next);
+      }}
+      disablePointerDismissal={busy}
+      showSwipeHandle
+    >
       <DrawerContent className="mx-auto max-w-lg">
         <DrawerHeader className="pb-4 text-center">
           <DrawerTitle>
@@ -125,6 +144,7 @@ export default function LoginDrawer({
               redirectTo={redirectTo}
               onError={() => setProviderError(null)}
               onSuccess={() => onOpenChange(false)}
+              onBusyChange={setBusy}
               onForgotPassword={() => setMode("reset")}
             />
           ) : (
@@ -139,6 +159,7 @@ export default function LoginDrawer({
               redirectTo={redirectTo}
               onError={() => setProviderError(null)}
               onSuccess={() => onOpenChange(false)}
+              onBusyChange={setBusy}
             />
           )}
 
