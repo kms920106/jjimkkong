@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Camera, X } from "lucide-react";
+import { IMAGE_EXTENSIONS } from "@/lib/image-bytes";
 import { displayName } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -28,41 +29,125 @@ type Initial = {
 const MAX_EDGE = 512;
 
 /**
- * Re-encodes a picked image down to `MAX_EDGE` as WEBP.
+ * What the server allowlist accepts, so a file already on it can pass through.
  *
- * Returns the original file when anything in the canvas path fails. For a JPEG
- * or PNG that just costs bytes — the server takes it either way. For HEIC it is
- * the difference between a working upload and a rejection, because the server
- * allowlist has no HEIC in it: a browser that cannot decode HEIC also cannot
- * render it back, so storing one would mean a successful save and an empty
- * avatar. Failing with the route's Korean message is the better end of that.
+ * Derived from the server's own table rather than restated here. A hand-copied
+ * list would drift the moment a format is added or removed there, and the
+ * failure is silent in the worse direction: a type this set still claims is
+ * accepted gets forwarded untouched and rejected at the route, which is exactly
+ * the bug the re-encode path exists to prevent.
+ *
+ * Safe to import into a client component — lib/image-bytes.ts has no imports
+ * and no server-only dependencies; it is a byte-signature table and a function
+ * over a Uint8Array.
+ */
+const SERVER_TYPES = new Set(IMAGE_EXTENSIONS.keys());
+
+/**
+ * Decodes `file` to something drawable on a canvas.
+ *
+ * Two paths because neither alone covers both phones. `createImageBitmap` is
+ * the fast one and is what desktop and Android use, but **Safari does not
+ * decode HEIC through it** — it throws, and every iPhone camera roll picture is
+ * HEIC. Safari *does* decode HEIC in an `<img>`, because that is the same
+ * decoder the OS uses to show the photo. So the bitmap path is tried first and
+ * the `<img>` path is the fallback that makes iPhone photos work at all.
+ *
+ * Do not collapse this to one path. Dropping the `<img>` fallback puts HEIC
+ * back in the broken state; dropping createImageBitmap gives up off-main-thread
+ * decoding on the browsers that have it.
+ */
+async function decode(file: File): Promise<CanvasImageSource & { width: number; height: number }> {
+  try {
+    return await createImageBitmap(file);
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      image.src = url;
+      // decode() rejects on a format the browser cannot read, which is the
+      // signal we want — an onload race would leave a 0x0 image instead.
+      await image.decode();
+      return image;
+    } finally {
+      // Safe immediately after decode(): the bitmap is already in memory and no
+      // longer reads from the object URL.
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
+/**
+ * Re-encodes a picked image to WEBP, capped at `MAX_EDGE`.
+ *
+ * **Always re-encodes**, even when the picture is already small enough. That
+ * looks wasteful and is not: the conversion is what makes a format the server
+ * refuses — HEIC above all — into one it accepts. An early return on
+ * `scale === 1` would let a small HEIC through untouched and the save would
+ * fail with the allowlist message, which is exactly the bug this path exists to
+ * prevent. The one exception is a file that is already on the server allowlist
+ * *and* already small: nothing to gain, and re-encoding only loses quality.
+ *
+ * That exception reads `file.type`, which is written by the picker rather than
+ * by the bytes, so it can be wrong — a HEIC renamed `.jpg` takes the
+ * pass-through branch and is then refused by the server, whose sniff sees what
+ * it really is. The cost of the lie is a re-pick with a message, never a bad
+ * upload; the bytes are still what decide, one layer down.
+ *
+ * An animated GIF over `MAX_EDGE` loses its animation here — the canvas keeps
+ * one frame. Accepted for a 96px avatar, and under `MAX_EDGE` it passes
+ * through intact.
+ *
+ * Returns the original file when decoding fails. For a JPEG or PNG that just
+ * costs bytes — the server takes it either way. For a format the server refuses
+ * the save then fails with the route's Korean message, which is the right end
+ * of that: storing an undecodable file would mean a successful save and an
+ * empty avatar for everyone whose browser cannot render it back.
  */
 async function downscale(file: File): Promise<File> {
   try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-    // Already small enough — re-encoding would only lose quality.
-    if (scale === 1) {
-      bitmap.close();
-      return file;
-    }
+    const source = await decode(file);
+    // Released in one place because the correctness of every path below depends
+    // on it happening; three copies at three early returns is a fourth one
+    // waiting to be forgotten, and a missed release leaks a GPU-backed bitmap.
+    try {
+      // A decoder that resolves with a 0x0 image instead of rejecting would
+      // otherwise produce a 0x0 canvas and upload a blank-but-valid WEBP — a
+      // successful save and an empty avatar, which is the exact outcome the
+      // server allowlist exists to prevent. Bailing out hands the original to
+      // the server, which rejects it with a message the user can act on.
+      if (!source.width || !source.height) return file;
 
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    const context = canvas.getContext("2d");
-    if (!context) {
-      bitmap.close();
-      return file;
-    }
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
+      const scale = Math.min(
+        1,
+        MAX_EDGE / Math.max(source.width, source.height),
+      );
+      // Already small and already a format the server stores — re-encoding
+      // would only lose quality. Anything else falls through to the canvas.
+      if (scale === 1 && SERVER_TYPES.has(file.type)) return file;
 
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/webp", 0.85),
-    );
-    if (!blob) return file;
-    return new File([blob], "profile.webp", { type: "image/webp" });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(source.width * scale);
+      canvas.height = Math.round(source.height * scale);
+      const context = canvas.getContext("2d");
+      if (!context) return file;
+      context.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/webp", 0.85),
+      );
+      if (!blob) return file;
+      // A browser without WEBP encoding silently hands back a PNG here, so the
+      // blob's own type decides the name — a .webp file that is really a PNG
+      // would fail the server's sniff-vs-declared comparison. The `||` covers
+      // a blob with no type at all, which would otherwise be declared as "" and
+      // fail that same comparison with nothing to point at.
+      const type = blob.type || "image/png";
+      const extension = type === "image/webp" ? "webp" : "png";
+      return new File([blob], `profile.${extension}`, { type });
+    } finally {
+      if (source instanceof ImageBitmap) source.close();
+    }
   } catch {
     return file;
   }
@@ -231,14 +316,19 @@ export default function ProfileEditClient({
               </button>
             )}
 
-            {/* HEIC stays in `accept` even though the server rejects it: iOS camera
-                roll pictures are HEIC, and downscale() re-encodes them to WEBP
-                before the upload. Dropping it here would grey out most of an
-                iPhone's photos in the picker. */}
+            {/* Wider than the server allowlist on purpose, and only an
+                affordance — a picker filter is bypassable (drag-drop, "All
+                Files"), so the real gate stays the server's magic-byte check.
+                `image/*` covers the allowlist types and keeps Android gallery
+                apps that ignore an explicit type list from greying out
+                everything. HEIC/HEIF are named separately because iOS does not
+                reliably file them under the wildcard, and they are most of an
+                iPhone's camera roll — downscale() re-encodes them to WEBP on
+                the way out. */}
             <input
               ref={fileInput}
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
+              accept="image/*,image/heic,image/heif"
               className="hidden"
               onChange={(event) => {
                 const file = event.target.files?.[0];

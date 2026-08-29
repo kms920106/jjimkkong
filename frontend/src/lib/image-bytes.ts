@@ -22,10 +22,15 @@
  * that declares a type (a multipart part header, a CDN's Content-Type) is only
  * telling us what it claims, never what the bytes are.
  *
- * HEIC/HEIF are absent deliberately. iOS Safari decodes them, so downscale() in
- * the client re-encodes those to WEBP before they ever arrive; a browser that
- * cannot decode HEIC would send the original through, and then cannot render it
- * back either — the user would get a successful save and an empty avatar.
+ * HEIC/HEIF are absent deliberately, and this is the load-bearing half of a
+ * two-part arrangement. downscale() in ProfileEditClient re-encodes a picked
+ * HEIC to WEBP before it is ever sent, so an honest iPhone upload never reaches
+ * this table as HEIC. What stays out is a HEIC that arrived anyway — from a
+ * browser that could not decode it, or a caller that skipped the client
+ * entirely. Storing that would be a successful save and an empty avatar,
+ * because the browsers that cannot decode HEIC to upload it cannot render it
+ * back either. Adding HEIC here to "fix" a rejected upload moves the failure
+ * from a message the user can act on to a blank picture nobody can explain.
  */
 const ALLOWED_TYPES = new Map<string, { extension: string; signature: number[] }>([
   // SOI marker. The third byte varies by encoder, so only two are fixed.
