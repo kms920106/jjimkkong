@@ -501,6 +501,27 @@ model Place {
   lng       Float
   category  String?
   naverLink String?
+
+  /// Photo of the venue. **Currently unwritten and unread.**
+  ///
+  /// The lookup that populated this (Naver image search -> blob backup) was
+  /// removed from POST /api/posts, and no screen renders it, so every row
+  /// created from now on leaves both columns null. The few rows written while
+  /// the feature was live keep their values.
+  ///
+  /// Kept rather than dropped because the modules behind them are still here
+  /// (lib/ingest/place-image.ts, lib/place-image-backup.ts) and dropping a
+  /// column on the live database is not reversible. If the feature comes back,
+  /// note what the original design settled: written only at row creation,
+  /// never on update — this row is shared across members, so replacing it
+  /// would change the picture on someone else's pin.
+  image String?
+
+  /// The search-result URL `image` was copied from, and the predicate for
+  /// "this row is backed up" — the same pairing thumbnail/thumbnailSource
+  /// uses. Unwritten for the same reason as `image` above.
+  imageSource String?
+
   createdAt DateTime @default(now())
 
   posts PostPlace[]

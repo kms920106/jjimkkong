@@ -1,0 +1,30 @@
+-- Place photos.
+--
+-- Naver local search returns no image field at all, and neither does Kakao's;
+-- Google Places returns photos but its terms forbid storing them (only
+-- place_id is exempt). Naver's *image search* API is a separate endpoint on
+-- the same gateway, and it does answer "what does this place look like" — 18
+-- of 20 real Place rows resolved on 2026-08-29, measured by
+-- scripts/verify-place-image.ts. See docs/naver-search/IMAGE-SEARCH-VERIFY.md.
+--
+-- `image` is the URL to render, mirroring Post.thumbnail exactly: our own blob
+-- once the bytes are copied, so a card does not break when someone else's CDN
+-- rotates a URL. `imageSource` is the search result it was copied from, and
+-- non-null is the predicate for "this row is backed up" — the same pairing
+-- thumbnail/thumbnailSource uses, and for the same reason: testing the blob
+-- host instead would misjudge every row the day that host changes.
+--
+-- Both are written only when the row is created. Place rows are shared across
+-- members, so an UPDATE here would change the picture on someone else's pin —
+-- the identical argument that makes the upsert in POST /api/posts pass
+-- `update: {}`.
+--
+-- Nullable with no backfill. Rows saved before this migration keep a null
+-- image and render the existing no-photo layout; there is nothing to
+-- reconstruct for them without re-querying, which is a backfill script's job
+-- rather than a migration's.
+--
+-- No index. Nothing filters or joins on either column — the only reads are
+-- "render this row's photo" through an id lookup that is already indexed.
+ALTER TABLE "Place" ADD COLUMN     "image" TEXT,
+ADD COLUMN     "imageSource" TEXT;
