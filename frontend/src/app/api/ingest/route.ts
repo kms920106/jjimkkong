@@ -308,7 +308,6 @@ async function findExistingPost(url: string): Promise<IngestResponse | null> {
       lat: place.lat,
       lng: place.lng,
       category: place.category,
-      naverLink: place.naverLink,
     })),
     // A stored post has whatever caption the first ingest managed to read. Even
     // if that was null, asking this member to paste one would be asking them to

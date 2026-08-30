@@ -25,7 +25,6 @@ export type SavedPlaceDTO = {
   lat: number;
   lng: number;
   category: string | null;
-  naverLink: string | null;
   memo: string | null;
   /**
    * Shared, like everything else on the place row — not scoped to the member
@@ -144,7 +143,6 @@ export type IngestCandidate = {
   lat: number;
   lng: number;
   category: string | null;
-  naverLink: string | null;
 };
 
 export type IngestResponse = {

@@ -2,10 +2,13 @@ import type { MapProvider, Platform, SavedPlaceDTO } from "@/lib/types";
 
 /*
  * Search URLs, not permalinks. Neither provider gives us a place id we could
- * link to: `place.naverLink` holds the Local Search API's `link`, which is the
- * merchant's own homepage (often a blog, often empty) — not a map page. A name
- * search lands on the right place in every app and degrades to a result list
- * rather than a 404 when the name is ambiguous.
+ * link to. Naver's Local Search response does carry a `link`, but it is the
+ * merchant's own homepage — whatever they registered, so in practice an
+ * Instagram profile, a reservation page, a bare domain, or nothing at all —
+ * never a map page. It used to be stored as `Place.naverLink` and was dropped
+ * once it was clear nothing could read it; do not reintroduce it hoping to
+ * shorten this path. A name search lands on the right place in every app and
+ * degrades to a result list rather than a 404 when the name is ambiguous.
  *
  * Kakao and Google are **Apple Universal Links**, and on iOS that is the whole
  * design: this app is used from the Home Screen (standalone), where iOS hands a

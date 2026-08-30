@@ -1,0 +1,11 @@
+-- Drops `Place.naverLink`, which stored the Naver Local Search `link` field.
+--
+-- That field is the merchant's own registered homepage, not a map page: in the
+-- live rows it was an Instagram profile, a reservation page, a bare domain, or
+-- NULL. Nothing ever read it — `externalLinks.ts` deliberately builds name
+-- searches instead, and no screen rendered the value — so it was written on
+-- every save and consumed nowhere.
+--
+-- Irreversible, and accepted as such: the values are re-derivable by querying
+-- Naver again for a place's name, and no behaviour depended on them.
+ALTER TABLE "Place" DROP COLUMN "naverLink";

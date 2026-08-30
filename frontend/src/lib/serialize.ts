@@ -53,7 +53,6 @@ export function toSavedPostDTO(bookmark: BookmarkWithPost): SavedPostDTO {
       lat: place.lat,
       lng: place.lng,
       category: place.category,
-      naverLink: place.naverLink,
       memo: memoByPlace.get(place.id) ?? null,
       // Ordered by `position` through the include below, i.e. the order Naver
       // returned them in (newest first).

@@ -500,7 +500,6 @@ model Place {
   lat       Float
   lng       Float
   category  String?
-  naverLink String?
 
   /// Photo of the venue. **Currently unwritten and unread.**
   ///

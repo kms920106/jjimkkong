@@ -226,7 +226,6 @@ async function main() {
             lat: place.lat,
             lng: place.lng,
             category: place.category,
-            naverLink: place.naverLink,
           },
           // Shared with other posts; leave it alone.
           update: {},

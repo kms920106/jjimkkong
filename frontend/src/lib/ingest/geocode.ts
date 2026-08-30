@@ -22,12 +22,10 @@ export type GeocodedCandidate = {
   lat: number;
   lng: number;
   category: string | null;
-  naverLink: string | null;
 };
 
 type NaverLocalItem = {
   title: string;
-  link?: string;
   category?: string;
   address?: string;
   roadAddress?: string;
@@ -70,7 +68,6 @@ const CachedSearchSchema = z.object({
   item: z
     .object({
       title: z.string(),
-      link: z.string().optional(),
       category: z.string().optional(),
       address: z.string().optional(),
       roadAddress: z.string().optional(),
@@ -276,7 +273,6 @@ async function geocodeOne(
     lat: 0,
     lng: 0,
     category: null,
-    naverLink: null,
   } satisfies GeocodedCandidate;
 
   // Try the hint-qualified query first — "성수동 대림창고" beats "대림창고"
@@ -314,7 +310,6 @@ async function geocodeOne(
       lat,
       lng,
       category: item.category || null,
-      naverLink: item.link || null,
     };
   }
 

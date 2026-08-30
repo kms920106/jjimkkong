@@ -376,7 +376,6 @@ async function ensurePost(
       lat: number;
       lng: number;
       category: string | null;
-      naverLink: string | null;
     }>;
     /** Reviews per place, keyed `"<name> <address>"`. Empty for an existing post. */
     blogsByPlace: Map<string, PlaceBlogEntry[]>;
@@ -446,7 +445,6 @@ async function ensurePost(
         lat: place.lat,
         lng: place.lng,
         category: place.category,
-        naverLink: place.naverLink,
         // Nested in `create` and deliberately absent from `update`: these rows
         // are read by every member who saved any post naming this place, so a
         // later save replacing them would rewrite what everyone else sees. Same
