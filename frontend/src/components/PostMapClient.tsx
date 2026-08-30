@@ -126,6 +126,10 @@ export default function PostMapClient({
           // something that was never absent. Later opens on this screen get a
           // real `false → true` edge and animate.
           initialSelectedPlaceId={requestedPlaceIds[0] ?? null}
+          // Always true here, unlike on the home map: this page only renders
+          // for a member who holds a bookmark of the post (the server 404s
+          // otherwise), so there is no signed-out state for the star to have.
+          signedIn
         />
       </div>
     </div>

@@ -42,11 +42,19 @@ function SheetContent({
   side = "right",
   showCloseButton = true,
   showOverlay = true,
+  overlayClassName,
   ref,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
+  /**
+   * Extra classes for the backdrop. Exists so one sheet can dim or blur harder
+   * than the app default without changing it for every other sheet — the
+   * default is deliberately faint because most sheets here open over a page,
+   * while the 즐겨찾기 picker opens over the map and a second sheet.
+   */
+  overlayClassName?: string
   /**
    * Set false for a non-modal sheet that must leave the page underneath
    * usable. `modal={false}` on the Root alone is not enough: the backdrop is
@@ -58,7 +66,7 @@ function SheetContent({
 }) {
   return (
     <SheetPortal>
-      {showOverlay && <SheetOverlay />}
+      {showOverlay && <SheetOverlay className={overlayClassName} />}
       <SheetPrimitive.Popup
         data-slot="sheet-content"
         data-side={side}

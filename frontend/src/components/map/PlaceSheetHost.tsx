@@ -39,6 +39,8 @@ export default function PlaceSheetHost({
   focusRequest,
   initialSelectedPlaceId = null,
   suppressed = false,
+  signedIn = false,
+  onRequireLogin,
   children,
 }: {
   markers: MapMarker[];
@@ -72,6 +74,14 @@ export default function PlaceSheetHost({
    * dismiss. Closing them brings the card back.
    */
   suppressed?: boolean;
+  /**
+   * Passed straight through to PlaceSheet's favourite star. Both screens that
+   * mount this render signed out, so the star has to know which of its two
+   * behaviours to take — open the picker, or ask for a login.
+   */
+  signedIn?: boolean;
+  /** Opens the caller's login drawer when a signed-out visitor taps the star. */
+  onRequireLogin?: () => void;
   /**
    * Floating controls drawn over the map. Given the live selection because at
    * least one of them has to hide while the card is up — the sheet is portaled
@@ -184,6 +194,8 @@ export default function PlaceSheetHost({
         detail={suppressed ? null : selectedPlace}
         mapProvider={mapProvider}
         onClose={() => setSelectedPlaceId(null)}
+        signedIn={signedIn}
+        onRequireLogin={onRequireLogin}
       />
     </>
   );

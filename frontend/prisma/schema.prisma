@@ -133,6 +133,7 @@ model Member {
   posts      Bookmark[]
   identities AuthIdentity[]
   sessions   Session[]
+  placeLists PlaceList[]
 
   /// Support lookups by number can no longer be typed as a literal — the
   /// column holds an HMAC. Hash the number with `blindIndex()` first and query
@@ -526,6 +527,7 @@ model Place {
   posts PostPlace[]
   memos BookmarkMemo[]
   blogs PlaceBlog[]
+  listEntries PlaceListEntry[]
 
   @@unique([name, address])
 }
@@ -598,4 +600,172 @@ model SavedPostPlacePreSplit {
   @@id([postId, placeId])
   @@index([placeId])
   @@map("_SavedPostPlace_pre_split")
+}
+
+/// Who may read a PlaceList.
+///
+/// Ordered by how far the list travels, which is also the order the picker
+/// shows them in. There is deliberately no "unlisted vs private" ambiguity: a
+/// PRIVATE list is unreachable by anyone but its owner even with the URL,
+/// LINK is reachable by URL alone, and PUBLIC additionally appears on the
+/// owner's public index at /u/<memberId>.
+///
+/// The distinction between LINK and PUBLIC is *only* the index listing — both
+/// serve the same page to an anonymous caller. Do not collapse them: a user
+/// who shares one list with a friend has not agreed to publish a directory of
+/// every list they ever shared.
+enum ListVisibility {
+  PRIVATE
+  LINK
+  PUBLIC
+}
+
+/// A member's named collection of places — the "저장" lists in the design.
+///
+/// Owned, unlike Place and Post: this row is one member's, so every read and
+/// write scopes by `memberId` except the two deliberately public paths below.
+/// That makes it the first owned model in this schema that a signed-out
+/// visitor can read, so the scoping rule that AGENTS.md states for owned
+/// models has an explicit carve-out here rather than an accidental one —
+/// `visibility` is the carve-out, and it is checked in exactly two routes.
+///
+/// Never hard-deleted, for the same reason a Bookmark is not: the entries and
+/// the notes the member wrote on them are theirs, and a delete would take the
+/// notes with it through the cascade. `deletedAt` is set instead, and every
+/// read filters on it — the filters move together exactly like Bookmark's.
+model PlaceList {
+  id       Int    @id @default(autoincrement())
+  memberId Int
+
+  /// This list's number within the member's own collection, and what
+  /// `/lists/1` addresses. Per-member for the same privacy reason
+  /// `Bookmark.memberSeq` is: a global id in the URL would publish how many
+  /// lists the whole service holds and let anyone probe for their existence.
+  /// Computed MAX+1 inside the create transaction, with the unique below as
+  /// the arbiter of the race — and computed over *all* rows including
+  /// soft-deleted ones, because a deleted list still holds its number.
+  memberSeq Int
+
+  /// Max 20 characters, matching the design's counter. Enforced in Zod at the
+  /// route boundary, not here — this column stays untyped-length so a future
+  /// limit change is not a migration.
+  name String
+
+  /// One of the seven swatches in the design, stored as the hex the UI
+  /// renders. A string rather than an enum because the palette is presentation
+  /// and will change; an enum would make every repaint a migration. Validated
+  /// against the allowlist in lib/place-list/palette.ts at the boundary, which
+  /// is what stops it becoming an injection into a style attribute.
+  color String
+
+  /// Optional note under the title, max 30 characters in the design.
+  description String?
+
+  /// Optional related link the owner attached. Rendered as an anchor and never
+  /// fetched by this server — the same contract PlaceBlog.link has, and the
+  /// reason neither needs the host allowlist that lib/place-image-backup.ts
+  /// does.
+  linkUrl String?
+
+  visibility ListVisibility @default(PRIVATE)
+
+  /// The unguessable half of the share URL, minted the first time the owner
+  /// presses 공유 and null until then.
+  ///
+  /// **This column is what implements "a LINK list nobody has shared yet is not
+  /// reachable".** Without it, flipping the picker to 일부 공개 would publish the
+  /// list immediately — and because the alternative address is
+  /// `/u/<memberId>/<memberSeq>`, two small sequential integers, "published"
+  /// would mean "enumerable by counting". The token moves the address into a
+  /// space nobody can walk.
+  ///
+  /// Nullable rather than minted at creation: the null *is* the "never shared"
+  /// state, so there is no second flag to keep in step with it. It also
+  /// survives a trip through 비공개 and back — the owner who re-opens a list
+  /// keeps the link they already sent out, which is what they expect, while
+  /// `visibility` alone decides whether that link currently resolves.
+  ///
+  /// Re-minting is therefore the revoke: overwrite this and every link handed
+  /// out before stops working. No route does that yet, but the shape allows it
+  /// without a migration.
+  shareToken String? @unique
+
+  /// The list created for a member on demand the first time they favourite a
+  /// place without choosing a list — "내 장소" in the design. Exactly one per
+  /// member (the partial unique index in the migration enforces "at most one
+  /// live one", matching how Member.phoneHash is scoped), and the UI refuses
+  /// to rename or delete it so there is always somewhere for a one-tap save to
+  /// land.
+  isDefault Boolean @default(false)
+
+  /// Set instead of deleting the row. The entries cascade off this row, so a
+  /// hard delete would destroy the per-entry memos the member wrote — the same
+  /// argument that makes Bookmark soft-deleted.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  member  Member          @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  entries PlaceListEntry[]
+
+  /// Backs `/lists/<memberSeq>` and decides the MAX+1 race above.
+  @@unique([memberId, memberSeq])
+  /// Every listing read is (memberId, deletedAt IS NULL) ordered by recency.
+  @@index([memberId, deletedAt, createdAt])
+  /// Backs the public index at /u/<memberId>, which filters on visibility.
+  @@index([memberId, visibility, deletedAt])
+}
+
+/// One place saved into one list, with the note the member wrote on it.
+///
+/// The join carries `memo` for the same reason BookmarkMemo does and not
+/// PostPlace: the note is the member's, while the place row it points at is
+/// shared with everyone. A place may sit in several of one member's lists and
+/// carry a different note in each.
+model PlaceListEntry {
+  listId  Int
+  placeId Int
+
+  /// Display order within the list. Assigned MAX+1 at insert so the newest
+  /// entry sorts last under an explicit "오래된순", and the default "최신순"
+  /// view reads it descending. Without a column here the rows come back in
+  /// composite-primary-key order, which is the same defect PostPlace.position
+  /// exists to prevent.
+  position Int @default(0)
+
+  /// The member's own note on this place in this list. Null when they saved it
+  /// with one tap and never annotated it, which is the common case.
+  memo String?
+
+  /// Set instead of deleting the row when the member un-favourites the place.
+  ///
+  /// A soft delete for exactly the reason `Bookmark.deletedAt` is one: this row
+  /// carries `memo`, which the member wrote and which nothing else records. A
+  /// hard delete would be the un-favourite tap silently discarding it, and
+  /// re-favouriting would come back blank. Instead the row is revived on
+  /// re-add and the note is still there — the same restore `Bookmark` gives a
+  /// re-saved link.
+  ///
+  /// That is also why this model is absent from HARD_DELETE_ALLOWED. Set
+  /// membership is a tempting thing to model as row presence, but the note
+  /// riding along makes these rows user data.
+  ///
+  /// **Every read filters on this**, and the filters move together: the list
+  /// page, the list summary counts, the "which lists hold this place" lookup
+  /// that fills the star, and the public list page. A missed filter shows a
+  /// removed place as still saved.
+  removedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  list  PlaceList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  place Place     @relation(fields: [placeId], references: [id], onDelete: Cascade)
+
+  @@id([listId, placeId])
+  /// Backs "which of my lists already hold this place", which the favourite
+  /// button asks on every sheet open to decide whether the star is filled.
+  @@index([placeId, removedAt])
+  /// Every list read is (listId, removedAt IS NULL) ordered by position.
+  @@index([listId, removedAt, position])
 }

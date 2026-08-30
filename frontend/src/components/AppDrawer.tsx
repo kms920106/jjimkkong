@@ -169,6 +169,20 @@ export default function AppDrawer({
             </span>
           </Link>
 
+          {/* Beside 링크 rather than in /settings: both are collections the
+              member browses, while that page is a list of things that change
+              settings or leave the app. */}
+          <Link
+            href="/lists"
+            onClick={onClose}
+            className="flex items-center justify-between rounded-xl border border-border px-4 py-3.5 transition hover:bg-muted"
+          >
+            <span className="text-sm font-medium">저장</span>
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
+              <ChevronRight className="h-4 w-4" />
+            </span>
+          </Link>
+
           <h2 className="px-1 pt-5 pb-2 text-xs font-semibold text-muted-foreground">
             지도
           </h2>

@@ -88,6 +88,9 @@ cd .. && node .claude/hooks/block-hard-delete.test.mjs && cd frontend
 # 소프트 삭제와 되살리기를 라이브 DB에 대고 확인한다(프로브 행을 남긴다).
 npx tsx --env-file=.env scripts/verify-soft-delete.ts
 
+# 즐겨찾기 리스트의 불변조건 33개(공개범위 경계·partial unique·CHECK·메모 복원·가드).
+npx tsx --env-file=.env scripts/verify-place-lists.ts
+
 # 일회성: 평문으로 남은 전화번호를 암호화한다. 아래 "전화번호 암호화 마이그레이션" 참고.
 npx tsx --env-file=.env scripts/backfill-phone-encryption.ts
 
@@ -1065,6 +1068,21 @@ index가 중복을 막지 못한다. 그게 바로 이 index가 지키려는 계
 **네이버 로그인 키는 지역검색 키와 다른 애플리케이션이다.** `NAVER_LOGIN_CLIENT_ID`와
 `NAVER_CLIENT_ID`를 섞어 쓰면 불친절한 401이 온다.
 
+## 즐겨찾기(장소 리스트)
+
+`PlaceList`/`PlaceListEntry`. 사용자가 지도 핀의 ★로 **장소**를 이름 붙은 리스트에 모으고,
+비공개/일부공개/전체공개 중에서 고른다. 상세는
+[docs/tasks/PLACE-LISTS.md](docs/tasks/PLACE-LISTS.md)에 있고, 여기서 알아야 할 것은 셋이다:
+
+- **주소가 둘이다.** `/u/<memberId>/<seq>`는 *발견 가능한* 주소라 **전체 공개만** 답하고
+  (`readPublicList()`), 일부 공개는 공유 버튼이 발급한 토큰으로 `/s/<token>`에서만 열린다
+  (`readListByShareToken()`). 전자를 `{ in: [LINK, PUBLIC] }`로 넓히지 말 것 — 순차 정수
+  둘이라 남이 공유한 적 없는 리스트가 열거된다.
+- **일부 공개는 설정이 아니라 "공유를 누른 것"이 활성화한다.** `shareToken`이 null인 동안
+  그 리스트에는 주소가 없다. 공유 URL을 렌더 시점에 만들지 말 것.
+- **`PlaceListEntry`는 소프트 삭제된다**(`removedAt`). 행이 사용자 메모를 들고 있어서
+  `HARD_DELETE_ALLOWED`에 넣을 수 없고, 재추가가 메모를 복원한다.
+
 ## 데이터 모델
 
 `Member`는 사람 하나다. 제공자별 필드는 들고 있지 않다 — 한 사람이 여러 제공자로
@@ -1421,6 +1439,7 @@ seed하므로 첫 렌더가 이미 `open={true}`다. 이건 맞는 동작이다 
 | [docs/youtube/](docs/youtube/AGENTS.md) | 유튜브 설명 전문 조회용 API 키 발급 절차 |
 | [docs/kakao/](docs/kakao/AGENTS.md) | 카카오맵 SDK 키 발급 절차(사용설정 ON·포트 포함 도메인 등록) |
 | [docs/google/](docs/google/AGENTS.md) | 구글맵 SDK 키 발급 절차(결제 계정 연결·리퍼러 제한) |
+| [docs/tasks/PLACE-LISTS.md](docs/tasks/PLACE-LISTS.md) | 즐겨찾기(장소 리스트) 구현 노트. 공개범위 경계와 소프트 삭제 규칙 |
 | [docs/db-permissions.md](docs/db-permissions.md) | 하드 삭제를 막는 층 4(Postgres role). **아직 적용되지 않은 절차 문서** |
 
 `frontend/AGENTS.md` 위쪽의 `nextjs-agent-rules` 블록은 `next dev`가 다시 써 넣는

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, Copy, MapPin, X } from "lucide-react";
+import { Check, Copy, MapPin, Star, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import SavePlaceSheet from "@/components/list/SavePlaceSheet";
 import {
   Sheet,
   SheetContent,
@@ -54,6 +55,14 @@ export type PlaceDetail = {
 
 type Props = {
   /**
+   * Whether the viewer has a session. The star is rendered either way — signed
+   * out it opens the login drawer instead of the picker, which is the same
+   * pattern the rest of the app uses: pages render, writes are what 401.
+   */
+  signedIn?: boolean;
+  /** Opens the login drawer when a signed-out visitor taps the star. */
+  onRequireLogin?: () => void;
+  /**
    * Null closes the sheet. Base UI only animates a `false → true` transition
    * on `open`, and this component's `<Sheet>` root must therefore stay
    * mounted across opens — a parent that conditionally mounts it (`{detail &&
@@ -81,7 +90,13 @@ type Props = {
  * events, because the user pans and taps other pins while it is open. Tapping
  * a second marker replaces the contents rather than stacking a second sheet.
  */
-export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
+export default function PlaceSheet({
+  detail,
+  mapProvider,
+  onClose,
+  signedIn = false,
+  onRequireLogin,
+}: Props) {
   // Held across `detail` going null so the closing animation has something
   // to render while it plays — the parent clears `detail` the instant the
   // close is requested, before the sheet has slid back down.
@@ -107,6 +122,49 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+
+  const [picking, setPicking] = useState(false);
+
+  /**
+   * Which of the viewer's lists hold the open place, keyed by place id.
+   *
+   * Keyed rather than a bare array for the same reason `communalSources` in
+   * PlaceSheetHost is: the fetch is async and the user can tap a second pin
+   * before the first resolves, so a response has to prove it belongs to the
+   * place currently shown before it can fill the star. Without the key, a slow
+   * answer for a saved place lights the star on an unsaved one.
+   */
+  const [saved, setSaved] = useState<{
+    placeId: number;
+    listSeqs: number[];
+  } | null>(null);
+
+  const openPlaceId = detail?.place.id ?? null;
+  useEffect(() => {
+    if (openPlaceId === null || !signedIn) return;
+    let cancelled = false;
+    fetch(`/api/places/${openPlaceId}/lists`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { containing: number[] } | null) => {
+        if (cancelled || !body) return;
+        setSaved({ placeId: openPlaceId, listSeqs: body.containing });
+      })
+      .catch(() => {
+        // Silent: the star simply stays unfilled. It is an indicator, and
+        // failing to read it must not stop the sheet from showing the place.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openPlaceId, signedIn]);
+
+  // `> 0` on a matching response only — a stale one for another pin must not
+  // fill this star. Unknown reads as unsaved, which is the safe direction: the
+  // picker shows the truth the moment it opens.
+  const isSaved =
+    saved !== null &&
+    saved.placeId === openPlaceId &&
+    saved.listSeqs.length > 0;
 
   // Resets `copied` and the scroll position when the pin switches while the
   // sheet stays up. The component itself must not remount on that switch —
@@ -172,6 +230,7 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
   }
 
   return (
+    <>
     <Sheet
       // `detail !== null` rather than a bare `open`: this component now stays
       // mounted whether or not a pin is selected (see the `detail` prop doc),
@@ -194,10 +253,19 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
         // the one that arrives before the browser has finished dispatching
         // that click, which no later tap on the map can do. Dismissing by
         // tapping the map keeps working.
+        //
+        // `picking` covers a second, unrelated source of the same event. The
+        // 즐겨찾기 picker is a *sibling* of this Sheet rather than a child
+        // (see its mount below for why), so Base UI does not treat the two as
+        // stacked — and this sheet is `modal={false}`, so it watches the whole
+        // document for outside presses. A tap on the picker's backdrop is
+        // therefore outside *this* popup too, and dismissed both sheets at
+        // once when the user meant to dismiss only the picker. While the
+        // picker is up it owns every press that is not on this card.
         if (!open) {
           if (
             eventDetails?.reason === "outside-press" &&
-            justOpenedRef.current
+            (justOpenedRef.current || picking)
           ) {
             return;
           }
@@ -244,16 +312,46 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
                   </SheetDescription>
                 )}
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={onClose}
-                aria-label="닫기"
-                className="shrink-0 rounded-full text-muted-foreground"
-              >
-                <X aria-hidden />
-              </Button>
+              <div className="flex shrink-0 items-center gap-1">
+                {/* The favourite star, matching the design's header placement.
+                    Rendered signed out too — tapping it opens the login drawer
+                    rather than the picker, which keeps the control honest
+                    instead of hiding a feature the visitor could have. */}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => {
+                    if (!signedIn) {
+                      onRequireLogin?.();
+                      return;
+                    }
+                    setPicking(true);
+                  }}
+                  aria-label={isSaved ? "저장한 리스트 편집" : "리스트에 저장"}
+                  aria-pressed={isSaved}
+                  className="rounded-full text-muted-foreground"
+                >
+                  <Star
+                    aria-hidden
+                    // Filled from the same colour that strokes it, so the two
+                    // states differ by weight rather than by hue — the sheet
+                    // has no other accent and a coloured star would read as a
+                    // rating.
+                    className={isSaved ? "fill-current text-primary" : ""}
+                  />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onClose}
+                  aria-label="닫기"
+                  className="rounded-full text-muted-foreground"
+                >
+                  <X aria-hidden />
+                </Button>
+              </div>
             </SheetHeader>
 
             <div className="flex items-start gap-1.5 text-sm text-muted-foreground">
@@ -373,6 +471,33 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
           </section>
         )}
       </SheetContent>
+
     </Sheet>
+
+    {/* Mounted only while a place is open, unlike this sheet itself: it has
+        no closing animation to protect (it is modal and fades with its
+        backdrop), and keeping it mounted would leave its picker fetch keyed
+        to a stale place id.
+
+        Deliberately a *sibling* of the `<Sheet>` above rather than a child.
+        Base UI marks a Dialog rendered inside another Dialog's root as
+        `nested`, and `DialogBackdrop` renders nothing at all when it is
+        (`enabled: forceRender || !nested`) — so as a child this picker had no
+        backdrop, and the map plus the place card behind it stayed sharp and
+        fully lit. Nesting also put a focus-trapping modal inside a
+        `modal={false}` parent, which is the combination PlaceSheet's own
+        comments warn about. */}
+    {place && (
+      <SavePlaceSheet
+        placeId={place.id}
+        placeName={place.name}
+        placeCategory={place.category}
+        placeAddress={place.address}
+        open={picking}
+        onOpenChange={setPicking}
+        onSaved={(listSeqs) => setSaved({ placeId: place.id, listSeqs })}
+      />
+    )}
+    </>
   );
 }

@@ -1,4 +1,8 @@
-import type { MapProvider, Platform } from "@/generated/prisma/enums";
+import type {
+  ListVisibility,
+  MapProvider,
+  Platform,
+} from "@/generated/prisma/enums";
 
 /** Shape returned by GET /api/posts. */
 /**
@@ -223,4 +227,55 @@ export function displayName(profile: {
   return local && local.length > 0 ? local : "찜꽁 사용자";
 }
 
-export type { MapProvider, Platform };
+/**
+ * One of the member's favourite lists as the picker and the index render it —
+ * no places, just enough to draw a row.
+ *
+ * Addressed by `seq` (the per-member number), never by the row's own id, for
+ * the same privacy reason `SavedPostDTO` carries `seq`: a global id in a URL
+ * publishes how many lists the whole service holds and lets anyone probe for
+ * their existence.
+ */
+export type PlaceListSummaryDTO = {
+  seq: number;
+  name: string;
+  /** Hex from the palette allowlist; rendered directly as a colour. */
+  color: string;
+  description: string | null;
+  visibility: ListVisibility;
+  /**
+   * The implicit "내 장소". The UI uses this to hide rename and delete — it is
+   * the destination a one-tap save falls back to, so it has to keep existing.
+   */
+  isDefault: boolean;
+  /** Live entries only, matching what the list page will actually show. */
+  count: number;
+};
+
+/** A full list with its places, for the list page. */
+export type PlaceListDTO = PlaceListSummaryDTO & {
+  linkUrl: string | null;
+  createdAt: string;
+  /**
+   * `memo` on each place is the note the member wrote *on this list's entry*,
+   * not the bookmark memo — the same place may sit in two lists with two
+   * different notes. `blogs` is always empty here: the list page draws pins and
+   * cards, and the place sheet fetches reviews itself.
+   */
+  places: SavedPlaceDTO[];
+};
+
+/**
+ * What the place sheet needs to draw its star: the member's lists, and which of
+ * them already hold the place in question.
+ *
+ * Both halves come from one request because the sheet needs them together and a
+ * star that fills a beat after the sheet opens reads as a mis-tap.
+ */
+export type PlaceListPickerDTO = {
+  lists: PlaceListSummaryDTO[];
+  /** `seq` values of the lists containing this place. */
+  containing: number[];
+};
+
+export type { ListVisibility, MapProvider, Platform };

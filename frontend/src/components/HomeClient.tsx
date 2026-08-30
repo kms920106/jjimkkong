@@ -687,6 +687,11 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
         // longer reach or dismiss. The selection survives, so closing them
         // brings the place card back.
         suppressed={sheetOpen || captionNeeded !== null}
+        // The place card's favourite star follows the same rule the two
+        // floating controls below already do: signed out it opens the login
+        // drawer rather than firing a request that can only 401.
+        signedIn={signedIn}
+        onRequireLogin={() => setLoginOpen(true)}
       >
         {(selectedPlace) => (
           <>

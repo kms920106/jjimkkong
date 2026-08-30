@@ -9,6 +9,11 @@ import { PhoneAlreadyRegisteredError } from "@/lib/auth/link";
 import { PasswordAttemptError } from "@/lib/auth/password-attempts";
 import { ProfileImageError } from "@/lib/profile-image";
 import { OAuthConfigError, OAuthFlowError } from "@/lib/auth/providers";
+import {
+  DefaultListLockedError,
+  ListNotFoundError,
+  ListNotSharableError,
+} from "@/lib/place-list";
 
 /** Thrown when a mutating request arrives from another origin. */
 export class CrossOriginError extends Error {
@@ -118,6 +123,24 @@ export function describeError(error: unknown): {
       status: 503,
       message: "장소 추출 서비스에 문제가 있습니다. 잠시 후 다시 시도해 주세요.",
     };
+  }
+  // 404 rather than 403: the list either is not the caller's or does not
+  // exist, and answering those differently would turn the route into a probe
+  // for which list numbers other members hold.
+  if (error instanceof ListNotFoundError) {
+    return { status: 404, message: error.message };
+  }
+  // 409: the request is well formed and the caller owns the list — what
+  // conflicts is that it is the implicit "내 장소", which has to keep existing
+  // and stay private. The message names which of the three edits was refused,
+  // so the sheet can show it verbatim.
+  if (error instanceof DefaultListLockedError) {
+    return { status: 409, message: error.message };
+  }
+  // 409 for the same reason: the caller owns the list and the request is well
+  // formed, but a 비공개 list has nothing to share. The message names the fix.
+  if (error instanceof ListNotSharableError) {
+    return { status: 409, message: error.message };
   }
   if (error instanceof ZodError) {
     return { status: 400, message: "요청 형식이 올바르지 않습니다." };
