@@ -1,6 +1,23 @@
 import type { MapProvider, Platform } from "@/generated/prisma/enums";
 
 /** Shape returned by GET /api/posts. */
+/**
+ * One Naver blog review of a place, already cleaned for rendering — the search
+ * response marks matches with `<b>` and escapes quotes, and both are stripped
+ * before the row is written.
+ *
+ * Frozen at whatever the place's first save found; see the PlaceBlog model for
+ * why there is no refresh.
+ */
+export type PlaceBlogDTO = {
+  title: string;
+  link: string;
+  description: string;
+  bloggername: string;
+  /** Naver's "YYYYMMDD" string, formatted for display at the render site. */
+  postdate: string;
+};
+
 export type SavedPlaceDTO = {
   id: number;
   name: string;
@@ -10,6 +27,12 @@ export type SavedPlaceDTO = {
   category: string | null;
   naverLink: string | null;
   memo: string | null;
+  /**
+   * Shared, like everything else on the place row — not scoped to the member
+   * reading it. Empty when the lookup found nothing or was unavailable at the
+   * time of the first save.
+   */
+  blogs: PlaceBlogDTO[];
 };
 
 /**

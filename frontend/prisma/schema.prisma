@@ -526,8 +526,49 @@ model Place {
 
   posts PostPlace[]
   memos BookmarkMemo[]
+  blogs PlaceBlog[]
 
   @@unique([name, address])
+}
+
+/// One Naver blog review of a place.
+///
+/// Written **only when the Place row is created**, never on update. Place is
+/// shared across every member who saved a post naming it, so a later save that
+/// replaced these rows would change what everyone else reads under their own
+/// pin — the identical argument that makes the upsert in POST /api/posts pass
+/// `update: {}`. There is therefore no refresh path: the list is frozen at
+/// whatever the first save found, and a stale one is fixed by a backfill
+/// script aimed at specific rows, not by a runtime write.
+///
+/// A table rather than a JSON column because this schema has no JSON anywhere
+/// and PostPlace is the same shape: a small ordered list hanging off a row.
+model PlaceBlog {
+  id      Int @id @default(autoincrement())
+  placeId Int
+
+  /// Display order, which is the order Naver returned (newest first — the
+  /// lookup sorts by date). Same role `PostPlace.position` plays: without it
+  /// the rows come back in whatever order the planner picks.
+  position Int @default(0)
+
+  title String
+
+  /// The blog post's own URL. Stored and handed to the browser as a link; this
+  /// server never fetches it. That is why this feature needs no host allowlist
+  /// while lib/place-image-backup.ts does — it copies bytes, this does not.
+  link String
+
+  description String
+  bloggername String
+
+  /// Naver's "YYYYMMDD" string, kept verbatim. Parsing it into a DateTime here
+  /// would invent a failure mode for a value only ever rendered.
+  postdate String
+
+  place Place @relation(fields: [placeId], references: [id], onDelete: Cascade)
+
+  @@index([placeId, position])
 }
 
 /// The pre-split place/memo table, retained and deliberately unread.

@@ -4,6 +4,7 @@ import type {
   Bookmark,
   BookmarkMemo,
   Place,
+  PlaceBlog,
   Post,
   PostPlace,
 } from "@/generated/prisma/client";
@@ -11,7 +12,7 @@ import type {
 type BookmarkWithPost = Bookmark & {
   post: Post & {
     author: Author | null;
-    places: Array<PostPlace & { place: Place }>;
+    places: Array<PostPlace & { place: Place & { blogs: PlaceBlog[] } }>;
   };
   memos: BookmarkMemo[];
 };
@@ -54,6 +55,15 @@ export function toSavedPostDTO(bookmark: BookmarkWithPost): SavedPostDTO {
       category: place.category,
       naverLink: place.naverLink,
       memo: memoByPlace.get(place.id) ?? null,
+      // Ordered by `position` through the include below, i.e. the order Naver
+      // returned them in (newest first).
+      blogs: place.blogs.map((blog) => ({
+        title: blog.title,
+        link: blog.link,
+        description: blog.description,
+        bloggername: blog.bloggername,
+        postdate: blog.postdate,
+      })),
     })),
   };
 }
@@ -85,7 +95,15 @@ export const bookmarkInclude = {
   post: {
     include: {
       author: true,
-      places: { include: { place: true }, orderBy: { position: "asc" } },
+      places: {
+        // The place's blog reviews need their own orderBy for the same reason
+        // the places do: without it the rows arrive in whatever order the
+        // planner picks, and the list would stop being newest-first.
+        include: {
+          place: { include: { blogs: { orderBy: { position: "asc" } } } },
+        },
+        orderBy: { position: "asc" },
+      },
     },
   },
   memos: true,

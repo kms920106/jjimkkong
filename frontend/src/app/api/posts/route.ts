@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { bookmarkInclude, toSavedPostDTO } from "@/lib/serialize";
 import { describePost } from "@/lib/ingest/metadata";
 import { geocodeCandidates } from "@/lib/ingest/geocode";
+import { findPlaceBlogs, type PlaceBlogEntry } from "@/lib/ingest/place-blog";
 import { isOwnThumbnailBlob } from "@/lib/post-thumbnail";
 import { isOwnAuthorImageBlob } from "@/lib/post-author-image";
 import { Platform } from "@/generated/prisma/enums";
@@ -112,6 +113,33 @@ export async function POST(request: NextRequest) {
       .map((place, index) => ({ ...place, memo: places[index].memo ?? null }))
       .filter((place) => place.matched);
 
+    // Blog reviews for the places this request just resolved, fetched outside
+    // the transaction for the reason geocoding is: seconds of network must not
+    // hold a transaction open.
+    //
+    // Only ever paid on a link nobody has saved yet — `matched` is empty for an
+    // existing post, so this is a no-op there rather than a second condition to
+    // keep in sync. That matters because these rows are written once and never
+    // refreshed (see the PlaceBlog model): a re-save must not re-query them.
+    //
+    // Index-aligned with `matched`, and re-keyed onto name/address below rather
+    // than carried by position, because ensurePost() re-sorts for lock ordering.
+    const blogs = await findPlaceBlogs(
+      matched.map(({ name, hint }) => ({ name, hint })),
+    );
+
+    // Keyed exactly as ensurePost() keys `captionOrder`, so the two lookups
+    // agree. The NUL is load-bearing and every one of these keys must keep it:
+    // with a space, {name: "A B", address: "C"} and {name: "A", address: "B C"}
+    // collapse to the same key, and one place is handed the other's reviews.
+    // (These sites all documented a NUL and used a space until 20260830.)
+    const blogsByPlace = new Map(
+      matched.map((place, index) => [
+        `${place.name}\0${place.address}`,
+        blogs[index] ?? [],
+      ]),
+    );
+
     // Refusing here keeps a useless row from becoming the canonical one. `Post`
     // is immutable and shared, so whatever this first save stores is what every
     // later member gets — a post created with no places is not just a bad save,
@@ -189,7 +217,12 @@ export async function POST(request: NextRequest) {
       // split was built for. Left as a bare create, the loser violated
       // `Post_sourceUrl_key` and its save answered 500 for something that should
       // simply have shared the winner's row.
-      const postId = await ensurePost(tx, { post, sourceUrl, matched });
+      const postId = await ensurePost(tx, {
+        post,
+        sourceUrl,
+        matched,
+        blogsByPlace,
+      });
 
       // findUnique on a real unique again: [memberId, postId] holds across all
       // rows, not just live ones, because a re-save now revives the row it
@@ -333,6 +366,7 @@ async function ensurePost(
     post,
     sourceUrl,
     matched,
+    blogsByPlace,
   }: {
     post: z.infer<typeof BodySchema>["post"];
     sourceUrl: string;
@@ -344,6 +378,8 @@ async function ensurePost(
       category: string | null;
       naverLink: string | null;
     }>;
+    /** Reviews per place, keyed `"<name> <address>"`. Empty for an existing post. */
+    blogsByPlace: Map<string, PlaceBlogEntry[]>;
   },
 ): Promise<number> {
   const already = await tx.post.findUnique({
@@ -390,14 +426,14 @@ async function ensurePost(
   // Keyed with the same NUL separator the sort uses, so a name containing
   // whitespace cannot collide with the next field.
   const captionOrder = new Map(
-    matched.map((place, index) => [`${place.name} ${place.address}`, index]),
+    matched.map((place, index) => [`${place.name}\0${place.address}`, index]),
   );
 
   // Sorting makes lock acquisition order deterministic across concurrent
   // transactions touching an overlapping set of shared Place rows. It
   // deliberately does not decide the order the user sees — `position` does.
   const ordered = [...matched].sort((a, b) =>
-    `${a.name} ${a.address}`.localeCompare(`${b.name} ${b.address}`),
+    `${a.name}\0${a.address}`.localeCompare(`${b.name}\0${b.address}`),
   );
 
   const linked = new Set<number>();
@@ -411,6 +447,15 @@ async function ensurePost(
         lng: place.lng,
         category: place.category,
         naverLink: place.naverLink,
+        // Nested in `create` and deliberately absent from `update`: these rows
+        // are read by every member who saved any post naming this place, so a
+        // later save replacing them would rewrite what everyone else sees. Same
+        // argument as the empty `update` below — see the PlaceBlog model.
+        blogs: {
+          create: (
+            blogsByPlace.get(`${place.name}\0${place.address}`) ?? []
+          ).map((blog, index) => ({ ...blog, position: index })),
+        },
       },
       // An existing row is shared with other members' posts; leave it alone.
       update: {},
@@ -428,7 +473,7 @@ async function ensurePost(
         // From the queried name/address rather than the loop index: two
         // distinct queries can dedupe to one Place (the `linked` guard above),
         // which would leave gaps in the sequence.
-        position: captionOrder.get(`${place.name} ${place.address}`) ?? 0,
+        position: captionOrder.get(`${place.name}\0${place.address}`) ?? 0,
       },
     });
   }

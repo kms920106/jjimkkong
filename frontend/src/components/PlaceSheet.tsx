@@ -32,6 +32,20 @@ import type { MapProvider, PlaceSourceDTO, SavedPlaceDTO } from "@/lib/types";
  */
 export type PlaceSource = PlaceSourceDTO;
 
+/**
+ * Naver's "YYYYMMDD" rendered as "2026.08.30".
+ *
+ * String slicing rather than `new Date()`: the value is already the date the
+ * post was written, in KST, and parsing it would reinterpret it in the
+ * viewer's timezone — enough to show the previous day west of Korea. Anything
+ * not eight digits is passed through unchanged, since a display string is
+ * never worth throwing over.
+ */
+function formatPostDate(postdate: string): string {
+  if (!/^\d{8}$/.test(postdate)) return postdate;
+  return `${postdate.slice(0, 4)}.${postdate.slice(4, 6)}.${postdate.slice(6, 8)}`;
+}
+
 /** What the map hands back when a pin is clicked. */
 export type PlaceDetail = {
   place: SavedPlaceDTO;
@@ -129,6 +143,7 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
   // component exists to avoid.
   const place = shown?.place ?? null;
   const sources = shown?.sources ?? [];
+  const blogs = shown?.place.blogs ?? [];
 
   // Only a map-provider post carries an exact permalink, and only for its own
   // provider. Everything else searches by name.
@@ -301,6 +316,52 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
             ))}
           </ul>
         </section>
+
+        {/* Naver blog reviews of this place, and the one thing here the user
+            could not have got from the map app they would otherwise open.
+            Below the sources rather than above: those are the reason this pin
+            exists on their map at all, so they stay the body of the sheet.
+
+            Read off `blogs` (derived from `shown`) rather than from `place`,
+            for the same reason `sources` is — `place` is null until the first
+            pin is ever clicked, and defaulting to an empty list keeps this out
+            of the guard above without a second null check.
+
+            Rendered only when non-empty: a heading over nothing reads as a
+            failure, and an unknown venue legitimately has no reviews. */}
+        {blogs.length > 0 && (
+          <section className="mt-5">
+            <h2 className="mb-2 text-sm font-medium">블로그 리뷰</h2>
+            <ul className="flex flex-col gap-2">
+              {blogs.map((blog) => (
+                <li key={blog.link}>
+                  <a
+                    href={blog.link}
+                    // Matches the sources grid above, not MapAppLinks. That
+                    // component drops `_blank` so iOS can hand a Universal Link
+                    // to a native map app; a blog post has no such hand-off to
+                    // protect, and opening it in place would lose the sheet.
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block rounded-xl border border-border bg-card p-3 transition hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  >
+                    <p className="line-clamp-2 text-sm font-medium">
+                      {blog.title}
+                    </p>
+                    {blog.description && (
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {blog.description}
+                      </p>
+                    )}
+                    <p className="mt-1.5 truncate text-xs text-muted-foreground">
+                      {blog.bloggername} · {formatPostDate(blog.postdate)}
+                    </p>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </SheetContent>
     </Sheet>
   );
