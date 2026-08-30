@@ -273,12 +273,22 @@ export default function PlaceSheet({ detail, mapProvider, onClose }: Props) {
 
             {/* 지도앱에서 열기: 네이버맵 · 카카오맵 · 구글맵을 전부 나열한다.
                 Scrolls on a narrow phone rather than wrapping into a second
-                line that pushes the source list below the fold. */}
+                line that pushes the source list below the fold.
+
+                `shrink-0` is load-bearing: this row is itself a flex item of
+                `SheetContent`'s `flex flex-col`, and `overflow-x-auto` — a
+                one-axis overflow — makes the browser compute the *other*
+                axis as `auto` too (the CSS overflow shorthand cannot mix
+                `visible` with a non-`visible` value, so it promotes both).
+                A flex-col child whose overflow is non-`visible` on either
+                axis drops the usual `min-height: auto` floor to `0`, so
+                without `shrink-0` this row collapsed to zero height and the
+                buttons rendered but were clipped out of view. */}
             <MapAppLinks
               place={place}
               exactSourceFor={exactSourceFor}
               mapProvider={mapProvider}
-              className="-mx-5 mt-3 flex-nowrap overflow-x-auto scrollbar-none px-5"
+              className="-mx-5 mt-3 shrink-0 flex-nowrap overflow-x-auto scrollbar-none px-5"
             />
           </>
         )}
