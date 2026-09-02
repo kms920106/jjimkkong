@@ -19,6 +19,26 @@ import { Platform } from "@/generated/prisma/enums";
 // bookmarked without any of it: no geocoding, no model, no crawl.
 export const maxDuration = 60;
 
+// The save transaction's budget, well above Prisma's 5s default because the
+// round trips inside it scale with the post: three fixed for the shared Post,
+// **two per place** (place.upsert + postPlace.create), three more for the
+// bookmark, then the memo upserts and a four-table read-back. Five places is
+// ~17 sequential statements, and every one of them crosses a pgbouncer in
+// another AZ (DATABASE_URL is the Supabase pooler on 6543) — the default
+// expired at 6406ms on an ordinary save and answered P2028 for a post that had
+// nothing wrong with it.
+//
+// Raising it rather than splitting the transaction: Post immutability and the
+// [memberId, memberSeq] race both depend on this atomicity, so the write is not
+// divisible. Still finite, and well inside the 60s route budget, so a genuinely
+// stuck transaction releases its connection instead of pinning it.
+const TRANSACTION_TIMEOUT_MS = 15_000;
+
+// Time to *acquire* a transaction, distinct from the budget above. Left at the
+// 2s default this fails with the same P2028 under the same load — a save that
+// waited out the queue would be rejected before running a single statement.
+const TRANSACTION_MAX_WAIT_MS = 10_000;
+
 const httpUrl = z.string().refine((value) => {
   try {
     const { protocol } = new URL(value);
@@ -219,62 +239,76 @@ export async function POST(request: NextRequest) {
     // also threw away seconds of Naver geocoding. `matched` is computed above
     // and reused, so a retry costs one more transaction, not another round of
     // lookups.
-    const saved = await withUniqueRetry(() => prisma.$transaction(async (tx) => {
-      // Resolved inside the transaction rather than reusing `existing.id`. The
-      // read above decides only whether to *geocode*; by the time we get here
-      // another request may have created this post, and two members saving the
-      // same brand-new link within a few seconds is exactly the workload this
-      // split was built for. Left as a bare create, the loser violated
-      // `Post_sourceUrl_key` and its save answered 500 for something that should
-      // simply have shared the winner's row.
-      const postId = await ensurePost(tx, {
-        post,
-        sourceUrl,
-        matched,
-        blogsByPlace,
-      });
-
-      // findUnique on a real unique again: [memberId, postId] holds across all
-      // rows, not just live ones, because a re-save now revives the row it
-      // finds. That revival is the whole point — it brings back the memos the
-      // member wrote and keeps the /links/<seq> URL they may have bookmarked.
-      const previous = await tx.bookmark.findUnique({
-        where: { memberId_postId: { memberId: member.id, postId } },
-        select: { id: true, deletedAt: true },
-      });
-
-      const bookmark = previous
-        ? await tx.bookmark.update({
-            where: { id: previous.id },
-            // Clearing deletedAt is the revive. `memberSeq` is deliberately
-            // untouched: it is the URL this bookmark has always had.
-            data: { deletedAt: null },
-          })
-        : await tx.bookmark.create({
-            data: {
-              memberId: member.id,
-              postId,
-              memberSeq: await nextMemberSeq(tx, member.id),
-            },
+    const saved = await withUniqueRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // Resolved inside the transaction rather than reusing `existing.id`. The
+          // read above decides only whether to *geocode*; by the time we get here
+          // another request may have created this post, and two members saving the
+          // same brand-new link within a few seconds is exactly the workload this
+          // split was built for. Left as a bare create, the loser violated
+          // `Post_sourceUrl_key` and its save answered 500 for something that should
+          // simply have shared the winner's row.
+          const postId = await ensurePost(tx, {
+            post,
+            sourceUrl,
+            matched,
+            blogsByPlace,
           });
 
-      // Written after the row exists, and only for places the member annotated.
-      // upsert rather than a wipe-and-insert: nothing here may remove rows (see
-      // prisma-guard.ts — BookmarkMemo is not on the allowlist), and a re-save
-      // should update a note rather than drop the ones it does not mention.
-      for (const { placeId, memo } of await memosFor(tx, postId, memoByName)) {
-        await tx.bookmarkMemo.upsert({
-          where: { bookmarkId_placeId: { bookmarkId: bookmark.id, placeId } },
-          create: { bookmarkId: bookmark.id, placeId, memo },
-          update: { memo },
-        });
-      }
+          // findUnique on a real unique again: [memberId, postId] holds across all
+          // rows, not just live ones, because a re-save now revives the row it
+          // finds. That revival is the whole point — it brings back the memos the
+          // member wrote and keeps the /links/<seq> URL they may have bookmarked.
+          const previous = await tx.bookmark.findUnique({
+            where: { memberId_postId: { memberId: member.id, postId } },
+            select: { id: true, deletedAt: true },
+          });
 
-      return tx.bookmark.findUniqueOrThrow({
-        where: { id: bookmark.id },
-        include: bookmarkInclude,
-      });
-    }));
+          const bookmark = previous
+            ? await tx.bookmark.update({
+                where: { id: previous.id },
+                // Clearing deletedAt is the revive. `memberSeq` is deliberately
+                // untouched: it is the URL this bookmark has always had.
+                data: { deletedAt: null },
+              })
+            : await tx.bookmark.create({
+                data: {
+                  memberId: member.id,
+                  postId,
+                  memberSeq: await nextMemberSeq(tx, member.id),
+                },
+              });
+
+          // Written after the row exists, and only for places the member annotated.
+          // upsert rather than a wipe-and-insert: nothing here may remove rows (see
+          // prisma-guard.ts — BookmarkMemo is not on the allowlist), and a re-save
+          // should update a note rather than drop the ones it does not mention.
+          for (const { placeId, memo } of await memosFor(
+            tx,
+            postId,
+            memoByName,
+          )) {
+            await tx.bookmarkMemo.upsert({
+              where: {
+                bookmarkId_placeId: { bookmarkId: bookmark.id, placeId },
+              },
+              create: { bookmarkId: bookmark.id, placeId, memo },
+              update: { memo },
+            });
+          }
+
+          return tx.bookmark.findUniqueOrThrow({
+            where: { id: bookmark.id },
+            include: bookmarkInclude,
+          });
+        },
+        {
+          timeout: TRANSACTION_TIMEOUT_MS,
+          maxWait: TRANSACTION_MAX_WAIT_MS,
+        },
+      ),
+    );
 
     return NextResponse.json(
       {
@@ -319,14 +353,12 @@ async function withUniqueRetry<T>(attempt: () => Promise<T>): Promise<T> {
     try {
       return await attempt();
     } catch (error) {
-      if (
-        !(
-          error &&
-          typeof error === "object" &&
-          "code" in error &&
-          error.code === UNIQUE_VIOLATION
-        )
-      ) {
+      if (!(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === UNIQUE_VIOLATION
+      )) {
         throw error;
       }
       last = error;
