@@ -73,7 +73,17 @@ export async function GET() {
       include: bookmarkInclude,
     });
 
-    return NextResponse.json({ posts: bookmarks.map(toSavedPostDTO) });
+    // This member's own bookmark list, and the client re-reads it immediately
+    // after a save to swap optimistic pins for real rows. Without an explicit
+    // directive the response is heuristically cacheable, and a hit there
+    // returns the pre-save list — the save succeeds and the map comes back
+    // empty. The caller passes `cache: "no-store"` as well; this header is the
+    // half that also covers intermediaries, which per-member data must never
+    // be shared through.
+    return NextResponse.json(
+      { posts: bookmarks.map(toSavedPostDTO) },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     return toErrorResponse(error);
   }

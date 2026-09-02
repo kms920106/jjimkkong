@@ -295,7 +295,18 @@ export default function HomeClient({ initialPosts, profile, signedIn }: Props) {
 
   /** Returns the refreshed list, or null when the refresh itself failed. */
   const refreshPosts = useCallback(async (): Promise<SavedPostDTO[] | null> => {
-    const res = await fetch("/api/posts");
+    // `no-store` is load-bearing, not hygiene. A bare GET with no
+    // `Cache-Control` on the response is heuristically cacheable, so this call
+    // could answer from the browser's HTTP cache with the list from *before*
+    // the save that just ran. The row is written and the toast still fires
+    // (`savedCount` falls back to the ingest count when it cannot find the new
+    // row), but `setPosts` gets a list without it — and `clearOwnMarkers()`
+    // then drops the optimistic pin because it is guarded only by `save()`
+    // having resolved. Net: a successful save that leaves the map empty until
+    // the next full page load, which reads the DB server-side and so was
+    // always correct. The route sends `Cache-Control: no-store` too; both are
+    // kept so neither side alone is what makes this work.
+    const res = await fetch("/api/posts", { cache: "no-store" });
     if (!res.ok) {
       // Silently keeping a stale list would make the user re-save the post
       // they just saved.
